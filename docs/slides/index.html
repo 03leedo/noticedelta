@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9월 진행상황 및 10월 계획</title>
+<meta name="description" content="정정공고 대응 지원사업 비서(가칭 NoticeDelta) 9월 진행상황과 10월 계획">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300..800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0f131a;overflow:hidden}
+h1,h2,h3,p{margin:0}
+ul{margin:0;padding-left:1.15em}
+li{margin:.15em 0}
+li::marker{color:#9aa3b2}
+table td,table th{font-family:inherit}
+#stage{position:fixed;left:50%;top:50%;width:1920px;height:1080px;transform-origin:center center}
+#stage>section{position:absolute;inset:0;width:1920px;height:1080px;opacity:0;visibility:hidden;transition:opacity .35s ease}
+#stage>section.on{opacity:1;visibility:visible}
+#bar{position:fixed;right:20px;bottom:16px;display:flex;gap:8px;align-items:center;font:14px/1 'Noto Sans KR',sans-serif;color:#9aa3b2;z-index:2}
+#bar button{background:rgba(255,255,255,.08);color:#dfe3ea;border:0;border-radius:6px;width:36px;height:32px;font-size:16px;cursor:pointer}
+#bar button:hover{background:rgba(255,255,255,.18)}
+@media print{
+  @page{size:1920px 1080px;margin:0}
+  html,body{overflow:visible;height:auto;background:none}
+  #bar{display:none}
+  #stage{position:static;transform:none!important;width:auto;height:auto}
+  #stage>section{position:relative;opacity:1;visibility:visible;page-break-after:always;break-after:page}
+}
+</style>
+</head>
+<body>
+<div id="stage">
+<section id="cover" data-transition="fade" style="background:#1c2330;color:#f4f2ec;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;justify-content:space-between">
+<p style="font-size:28px;color:#8fb3f5;font-weight:600;letter-spacing:2px">PROJECT PROGRESS · 2026.10</p>
+<div style="display:flex;flex-direction:column;gap:32px">
+<h1 style="font-size:96px;font-weight:800;line-height:1.15">9월 진행상황 및<br>10월 계획</h1>
+<p style="font-size:40px;color:#c9cfd9;line-height:1.4">정정공고가 나오면 내 자격·마감·금액 변화만 알려 주는<br>지원사업 비서 <span style="color:#f2a65a">(가칭 NoticeDelta)</span></p>
+</div>
+<p style="font-size:28px;color:#9aa3b2">이도헌</p>
+</section>
+
+<section id="summary" data-transition="fade" style="background:#f6f5f1;color:#1c2330;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<h2 style="font-size:64px;font-weight:700">한눈에 보기</h2>
+<div style="display:flex;gap:40px;flex:1">
+<div style="flex:1.1;display:flex;flex-direction:column;gap:24px;background:#ffffff;padding:40px;border:1px solid #e2e0d8;border-radius:16px;padding:48px">
+<p style="font-size:28px;font-weight:700;color:#2f6fde">9월 · 완료</p>
+<ul style="font-size:31px;line-height:1.6">
+<li>주제 탐색과 경쟁 서비스 검증</li>
+<li>주제 확정: 정정공고 대응 지원사업 비서</li>
+<li>설계 문서 v0.1 작성</li>
+<li>API 키 발급 (K-Startup, 기업마당)</li>
+<li>약관·robots·공공누리 확인</li>
+<li>정정공고 표본 28건 수집·분류</li>
+</ul>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:24px;background:#ffffff;padding:40px;border:1px solid #e2e0d8;border-radius:16px;padding:48px">
+<p style="font-size:28px;font-weight:700;color:#d9782d">10월 · 계획</p>
+<ul style="font-size:31px;line-height:1.6">
+<li>조사 결과를 설계 문서에 반영 (v0.2)</li>
+<li>첨부 HWP·PDF 파서 비교</li>
+<li>진행 여부 판단 (10/12)</li>
+<li>10/13부터 수집기·필드 추출·자격 판정기·변경 감지 구현</li>
+</ul>
+</div>
+</div>
+</section>
+
+<section id="explore" data-transition="fade" style="background:#f6f5f1;color:#1c2330;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<p style="font-size:26px;font-weight:700;color:#2f6fde">9월 ② 주제 탐색과 검증</p>
+<h2 style="font-size:60px;font-weight:700">"답이 바뀌는 순간"을 싸게 잡는 곳은 없었다</h2>
+</div>
+<table style="font-size:28px;width:1664px;border-collapse:collapse">
+<tr><th style="text-align:left;padding:18px 20px;background:#1c2330;color:#f4f2ec">구분</th><th style="text-align:left;padding:18px 20px;background:#1c2330;color:#f4f2ec">대표 사례</th><th style="text-align:left;padding:18px 20px;background:#1c2330;color:#f4f2ec">하는 일</th><th style="text-align:left;padding:18px 20px;background:#1c2330;color:#f4f2ec">빈틈</th></tr>
+<tr><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">지원사업 서비스</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">지원금AI, kfund.ai</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">조건 매칭, 신규·마감 알림</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">정정공고에 따른 자격 재판정 없음</td></tr>
+<tr><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">범용 변경 모니터</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">Parallel Monitor, ChatGPT 예약 작업</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">질문마다 주기적으로 재실행</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">질문 수만큼 LLM 비용</td></tr>
+<tr><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">개념 선례</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">Pathway 데모 (2023)</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">문서 변경 시 답 비교</td><td style="padding:18px 20px;border-bottom:1px solid #d9d6cc">규모·비용 측정 없음</td></tr>
+</table>
+<p style="font-size:30px;line-height:1.6">공급망 보안, eBPF 장애 분석, 공공 문서 검색 등 여러 분야를 같은 기준(겹침·데이터 접근·LLM 비용)으로 걸러 낸 끝에 이 주제로 확정했다.</p>
+</section>
+
+<section id="design" data-transition="fade" style="background:#1c2330;color:#f4f2ec;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<p style="font-size:26px;font-weight:700;color:#8fb3f5">9월 ③ 설계 문서 v0.1</p>
+<h2 style="font-size:60px;font-weight:700">바뀐 문단에 걸린 필드만 다시 판정한다</h2>
+</div>
+<div style="display:flex;gap:16px;align-items:center">
+<div style="flex:1;background:#2a3344;padding:28px 16px;border-radius:12px"><p style="font-size:28px;text-align:center">수집</p></div>
+<p style="font-size:32px;color:#8fb3f5">→</p>
+<div style="flex:1;background:#2a3344;padding:28px 16px;border-radius:12px"><p style="font-size:28px;text-align:center">격리 파싱</p></div>
+<p style="font-size:32px;color:#8fb3f5">→</p>
+<div style="flex:1;background:#2a3344;padding:28px 16px;border-radius:12px"><p style="font-size:28px;text-align:center">변경 감지</p></div>
+<p style="font-size:32px;color:#8fb3f5">→</p>
+<div style="flex:1;background:#2a3344;padding:28px 16px;border-radius:12px"><p style="font-size:28px;text-align:center">필드 추출</p></div>
+<p style="font-size:32px;color:#8fb3f5">→</p>
+<div style="flex:1.3;background:#d9782d;padding:28px 16px;border-radius:12px"><p style="font-size:28px;text-align:center;font-weight:700;color:#1c2330">변경 영향 엔진</p></div>
+<p style="font-size:32px;color:#8fb3f5">→</p>
+<div style="flex:1;background:#2a3344;padding:28px 16px;border-radius:12px"><p style="font-size:28px;text-align:center">코드 판정·알림</p></div>
+</div>
+<ul style="font-size:30px;line-height:1.65;color:#dfe3ea">
+<li>LLM 호출은 <b style="color:#f2a65a">바뀐 문단 수</b>만큼만 생기고 사용자 수와 무관하다</li>
+<li>자격 판정은 결정적 코드가 하고, 결과는 해당 / 비해당 / 확인 필요 세 가지에 근거 조항을 붙인다</li>
+<li>Redis Streams 워커, k3s + KEDA로 쓰지 않을 때 0까지 줄어드는 배포</li>
+<li>첨부 파서 격리와 권한 분리는 앞선 과제(에이전트 격리·권한 조사)에서 정리한 내용을 참고했다</li>
+</ul>
+</section>
+
+<section id="terms" data-transition="fade" style="background:#f6f5f1;color:#1c2330;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<p style="font-size:26px;font-weight:700;color:#2f6fde">9월 ④ 수집원 약관·robots 확인</p>
+<h2 style="font-size:56px;font-weight:700">본문은 K-Startup API, 첨부는 기업마당 API로 받는다</h2>
+</div>
+<table style="font-size:26px;width:1664px;border-collapse:collapse">
+<tr><th style="text-align:left;padding:16px 20px;background:#1c2330;color:#f4f2ec;width:260px">항목</th><th style="text-align:left;padding:16px 20px;background:#1c2330;color:#f4f2ec">K-Startup (data.go.kr 15125364)</th><th style="text-align:left;padding:16px 20px;background:#1c2330;color:#f4f2ec">기업마당 (data.go.kr 15157820)</th></tr>
+<tr><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">이용 조건</td><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">이용허락범위 제한 없음, 공고 페이지 공공누리 1유형</td><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">공공누리 3유형 (출처표시 + 변경금지)</td></tr>
+<tr><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">승인</td><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">개발·운영 자동승인, 개발 트래픽 10,000</td><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">운영 단계는 심의 승인</td></tr>
+<tr><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">제공 필드</td><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">본문, 상세 URL · <b style="color:#d9782d">첨부 URL 없음</b></td><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">첨부 파일 경로·파일명 포함</td></tr>
+<tr><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">robots.txt</td><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">첨부(/afile*/)와 공고 목록 페이지 수집 금지</td><td style="padding:16px 20px;border-bottom:1px solid #d9d6cc;vertical-align:top">공고 페이지·첨부 경로는 허용</td></tr>
+</table>
+<ul style="font-size:28px;line-height:1.6">
+<li>웹 스크래핑은 하지 않고 공식 API만 쓴다. 첨부 파일은 재배포하지 않고 원문 링크로 안내</li>
+<li>모든 알림에 출처·공공누리 유형 표기. 원문 인용은 수정 없이, LLM 요약은 "AI 요약"으로 구분</li>
+</ul>
+</section>
+
+<section id="samples" data-transition="fade" style="background:#f6f5f1;color:#1c2330;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;gap:44px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<p style="font-size:26px;font-weight:700;color:#2f6fde">9월 ⑤ 정정공고 표본 28건 (2025~2026)</p>
+<h2 style="font-size:56px;font-weight:700">무엇이 바뀌었는지 적어 주는 공고는 거의 없다</h2>
+</div>
+<div style="display:flex;gap:28px">
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#ffffff;padding:40px;border:1px solid #e2e0d8;border-radius:16px"><p style="font-size:64px;font-weight:800;color:#2f6fde">43%</p><p style="font-size:27px;line-height:1.5">마감 연장 (12건)<br>원래 마감일을 적은 곳은 0건</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#ffffff;padding:40px;border:1px solid #e2e0d8;border-radius:16px"><p style="font-size:64px;font-weight:800;color:#2f6fde">21%</p><p style="font-size:27px;line-height:1.5">자격요건·지원대상 변경 (6건)</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#ffffff;padding:40px;border:1px solid #e2e0d8;border-radius:16px"><p style="font-size:64px;font-weight:800;color:#d9782d">68%</p><p style="font-size:27px;line-height:1.5">제목·첨부 파일명에만 "수정" 표시<br>본문 전/후 대비는 1건</p></div>
+</div>
+<div style="display:flex;gap:28px">
+<div style="flex:1;font-size:27px;line-height:1.6"><p style="font-weight:700;margin-bottom:8px">포털마다 수정 방식이 다르다</p><p>K-Startup은 같은 공고 번호를 덮어쓰고, 기업마당은 새 번호로 다시 올린 뒤 원공고를 닫는다. "[정정]" 같은 통일된 표기도 없다.</p></div>
+<div style="flex:1;font-size:27px;line-height:1.6"><p style="font-weight:700;margin-bottom:8px">설계에 주는 의미</p><p>직접 스냅샷을 쌓아 비교해야 한다. 제목 키워드는 "바뀌었을 수 있다"는 신호로만 쓰고, 기업마당은 새 글을 원공고와 짝짓는 단계가 필요하다.</p></div>
+</div>
+<p style="font-size:22px;color:#6b7280">첨부 파일 안의 대비표 여부는 아직 확인 전 (10월 파서 비교 때 확인)</p>
+</section>
+
+<section id="octplan" data-transition="fade" style="background:#f6f5f1;color:#1c2330;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<p style="font-size:26px;font-weight:700;color:#d9782d">10월 계획</p>
+<h2 style="font-size:60px;font-weight:700">조사 결과를 설계에 반영하고 구현을 시작한다</h2>
+</div>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#ffffff;padding:40px;border:2px solid #d9782d;border-radius:16px">
+<p style="font-size:28px;font-weight:700;color:#d9782d">10/6 ~ 10/12 · 준비 (1주)</p>
+<ul style="font-size:28px;line-height:1.55">
+<li>설계 문서 v0.2: 수집원 분리, 기업마당 공고 짝짓기, 출처 표기 규칙</li>
+<li>첨부 HWP·HWPX·PDF 파서 비교 (표 보존 여부)</li>
+<li>첨부 속 정정 대비표 비율 확인, 클라우드 무료 구간 확인</li>
+
+</ul>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#ffffff;padding:40px;border:1px solid #e2e0d8;border-radius:16px">
+<p style="font-size:28px;font-weight:700;color:#2f6fde">10/13 ~ 10/31 · 구현</p>
+<ul style="font-size:28px;line-height:1.55">
+<li>docker compose 기본 인프라</li>
+<li>API 수집기와 스냅샷 저장</li>
+<li>LLM 게이트웨이 (녹화·재생)</li>
+<li>공고 필드 추출과 인용 검증</li>
+<li>자격 규칙 형식과 판정기</li>
+<li>문단 단위 변경 감지 (첫 버전)</li>
+</ul>
+</div>
+</div>
+</section>
+
+<section id="gate" data-transition="fade" style="background:#f6f5f1;color:#1c2330;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;gap:56px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<p style="font-size:26px;font-weight:700;color:#d9782d">10월 12일 진행 여부 판단</p>
+<h2 style="font-size:60px;font-weight:700">세 조건 중 둘은 이미 넘었다</h2>
+</div>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#ffffff;padding:40px;border:1px solid #e2e0d8;border-radius:16px"><p style="font-size:26px;font-weight:700;color:#2f8f5b">충족</p><p style="font-size:64px;font-weight:800;color:#2f6fde">28건</p><p style="font-size:28px;line-height:1.5">정정공고 사례 (기준 10건)</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#ffffff;padding:40px;border:1px solid #e2e0d8;border-radius:16px"><p style="font-size:26px;font-weight:700;color:#2f8f5b">조건부 충족</p><p style="font-size:64px;font-weight:800;color:#2f6fde">API</p><p style="font-size:28px;line-height:1.5">공식 API로 수집 가능, 출처표시·변경금지 준수</p></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#ffffff;padding:40px;border:2px solid #d9782d;border-radius:16px"><p style="font-size:26px;font-weight:700;color:#d9782d">남음</p><p style="font-size:64px;font-weight:800;color:#2f6fde">80%+</p><p style="font-size:28px;line-height:1.5">첨부 파일 파싱 성공률</p></div>
+</div>
+<p style="font-size:30px;line-height:1.6">파싱이 80%에 못 미치면 PDF판이 있는 공고만 쓰거나 API 본문 기준으로 범위를 줄인다.</p>
+</section>
+
+<section id="risk" data-transition="fade" style="background:#f6f5f1;color:#1c2330;font-family:'Noto Sans KR', sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<h2 style="font-size:60px;font-weight:700">위험과 성공 지표</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:20px">
+<h3 style="font-size:32px;font-weight:700;color:#d9782d">위험 → 대응</h3>
+<ul style="font-size:27px;line-height:1.6">
+<li>K-Startup은 첨부 수집 불가 → 기업마당 API 첨부로 보완, 없으면 본문만</li>
+<li>공고에 변경 내용이 거의 안 적힘 → 직접 스냅샷 비교, 직접 라벨링한 정답셋</li>
+<li>HWP 표 파싱 품질 → 파서 비교, PDF판 대체</li>
+<li>자격 판정 오류 → "확인 필요" 우선, 근거 조항 표시</li>
+<li>상용화 시 이용 조건 → 기관에 서면 확인</li>
+</ul>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px">
+<h3 style="font-size:32px;font-weight:700;color:#2f6fde">성공 지표</h3>
+<ul style="font-size:27px;line-height:1.6">
+<li>정답셋 대비 변경 탐지 재현율·정밀도</li>
+<li>질문별 재실행 대비 LLM 호출 절감률</li>
+<li>가짜 알림률, 놓친 변경률</li>
+<li>정정 반영→알림 지연 p99, 알림 1건당 비용</li>
+</ul>
+</div>
+</div>
+</section>
+
+</div>
+<div id="bar"><button id="prev" aria-label="이전">‹</button><span id="num"></span><button id="next" aria-label="다음">›</button><button id="fs" aria-label="전체 화면">⛶</button></div>
+<script>
+(function(){
+  var stage=document.getElementById('stage');
+  var slides=[].slice.call(stage.children);
+  var i=0;
+  function fit(){
+    var s=Math.min(innerWidth/1920,innerHeight/1080);
+    stage.style.transform='translate(-50%,-50%) scale('+s+')';
+  }
+  function go(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach(function(el,k){el.classList.toggle('on',k===i)});
+    document.getElementById('num').textContent=(i+1)+' / '+slides.length;
+    if(location.hash!=='#'+(i+1)) history.replaceState(null,'','#'+(i+1));
+  }
+  addEventListener('resize',fit);
+  addEventListener('keydown',function(e){
+    if(['ArrowRight','PageDown',' ','Enter'].indexOf(e.key)>=0){e.preventDefault();go(i+1)}
+    else if(['ArrowLeft','PageUp','Backspace'].indexOf(e.key)>=0){e.preventDefault();go(i-1)}
+    else if(e.key==='Home')go(0);
+    else if(e.key==='End')go(slides.length-1);
+    else if(e.key==='f')toggleFs();
+  });
+  var x0=null;
+  addEventListener('touchstart',function(e){x0=e.touches[0].clientX},{passive:true});
+  addEventListener('touchend',function(e){if(x0===null)return;var d=e.changedTouches[0].clientX-x0;if(Math.abs(d)>40)go(i+(d<0?1:-1));x0=null});
+  function toggleFs(){if(!document.fullscreenElement)document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();else document.exitFullscreen()}
+  document.getElementById('prev').onclick=function(){go(i-1)};
+  document.getElementById('next').onclick=function(){go(i+1)};
+  document.getElementById('fs').onclick=toggleFs;
+  stage.addEventListener('click',function(e){go(i+(e.clientX<innerWidth/3?-1:1))});
+  fit();
+  go((parseInt(location.hash.slice(1),10)||1)-1);
+})();
+</script>
+</body>
+</html>
