@@ -23,7 +23,9 @@ def test_short_marker_line_is_heading():
 
 
 def test_list_items_become_separate_segments():
-    segs = segment_document(["○ 업력 7년 이내\n○ 대표자 만 39세 이하\n  (공고일 기준)"], source="body")
+    segs = segment_document(
+        ["○ 업력 7년 이내\n○ 대표자 만 39세 이하\n  (공고일 기준)"], source="body"
+    )
     assert [s.text for s in segs] == ["○ 업력 7년 이내", "○ 대표자 만 39세 이하 (공고일 기준)"]
 
 
@@ -34,8 +36,13 @@ def test_table_cells_with_locator():
     assert len(cells) == 4
     assert cells[1].text == "7년 이내"
     assert cells[1].locator == {
-        "source": "att:1", "table": 0, "row": 1, "col": 1,
-        "row_key": "업력", "header": "내용", "table_sig": "구분|내용",
+        "source": "att:1",
+        "table": 0,
+        "row": 1,
+        "col": 1,
+        "row_key": "업력",
+        "header": "내용",
+        "table_sig": "구분|내용",
     }
 
 

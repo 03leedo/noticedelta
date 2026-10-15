@@ -56,8 +56,12 @@ def test_parse_kst_datetime(text, expected):
 
 def test_month_day_needs_default_year():
     assert parse_kst_datetime("10월 31일") is None
-    assert parse_kst_datetime("10월 31일", default_year=2026) == datetime(2026, 10, 31, 23, 59, tzinfo=KST)
-    assert parse_kst_datetime("10. 31.(금)", default_year=2026) == datetime(2026, 10, 31, 23, 59, tzinfo=KST)
+    assert parse_kst_datetime("10월 31일", default_year=2026) == datetime(
+        2026, 10, 31, 23, 59, tzinfo=KST
+    )
+    assert parse_kst_datetime("10. 31.(금)", default_year=2026) == datetime(
+        2026, 10, 31, 23, 59, tzinfo=KST
+    )
 
 
 def test_find_datetimes_in_sentence():
@@ -79,22 +83,33 @@ def test_values_equal_amount_across_formats():
 
 
 def test_values_equal_rules_ignores_order_and_source():
-    a = {"group": "all_of", "rules": [
-        {"attribute": "ceo_age", "op": "<=", "value": 39, "source": "L1"},
-        {"attribute": "business_age_months", "op": "<=", "value": 84, "source": "L2"},
-    ]}
-    b = {"group": "all_of", "rules": [
-        {"attribute": "business_age_months", "op": "<=", "value": 84, "source": "L9"},
-        {"attribute": "ceo_age", "op": "<=", "value": 39, "source": "L8"},
-    ]}
-    c = {"group": "all_of", "rules": [
-        {"attribute": "business_age_months", "op": "<=", "value": 60, "source": "L9"},
-        {"attribute": "ceo_age", "op": "<=", "value": 39, "source": "L8"},
-    ]}
+    a = {
+        "group": "all_of",
+        "rules": [
+            {"attribute": "ceo_age", "op": "<=", "value": 39, "source": "L1"},
+            {"attribute": "business_age_months", "op": "<=", "value": 84, "source": "L2"},
+        ],
+    }
+    b = {
+        "group": "all_of",
+        "rules": [
+            {"attribute": "business_age_months", "op": "<=", "value": 84, "source": "L9"},
+            {"attribute": "ceo_age", "op": "<=", "value": 39, "source": "L8"},
+        ],
+    }
+    c = {
+        "group": "all_of",
+        "rules": [
+            {"attribute": "business_age_months", "op": "<=", "value": 60, "source": "L9"},
+            {"attribute": "ceo_age", "op": "<=", "value": 39, "source": "L8"},
+        ],
+    }
     assert values_equal("rules", a, b)
     assert not values_equal("rules", a, c)
 
 
 def test_values_equal_list_ignores_order_and_spacing():
-    assert values_equal("list", ["사업계획서", "사업자등록증  사본"], ["사업자등록증 사본", "사업계획서"])
+    assert values_equal(
+        "list", ["사업계획서", "사업자등록증  사본"], ["사업자등록증 사본", "사업계획서"]
+    )
     assert not values_equal("list", ["사업계획서"], ["사업계획서", "재무제표"])

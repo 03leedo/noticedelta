@@ -27,7 +27,15 @@ _DATE = re.compile(
     re.VERBOSE,
 )
 
-_UNITS = {"조": 10**12, "억": 10**8, "천만": 10**7, "백만": 10**6, "십만": 10**5, "만": 10**4, "천": 10**3}
+_UNITS = {
+    "조": 10**12,
+    "억": 10**8,
+    "천만": 10**7,
+    "백만": 10**6,
+    "십만": 10**5,
+    "만": 10**4,
+    "천": 10**3,
+}
 _UNIT_RE = "|".join(_UNITS)  # 긴 단위가 먼저 오도록 dict 순서 유지
 _AMOUNT = re.compile(
     rf"(?:\d[\d,]*(?:\.\d+)?\s*(?:{_UNIT_RE})\s*)+(?:\d[\d,]*\s*)?원?|\d[\d,]*(?:\.\d+)?\s*원"
@@ -127,9 +135,7 @@ def _norm_list(v: Iterable[Any]) -> set[str]:
     return {normalize_text(str(x)) for x in v}
 
 
-def values_equal(
-    value_type: ValueType, a: Any, b: Any, *, default_year: int | None = None
-) -> bool:
+def values_equal(value_type: ValueType, a: Any, b: Any, *, default_year: int | None = None) -> bool:
     """두 값이 '진짜로' 같은지. 문구만 다르고 값이 같으면 True."""
     if value_type == "datetime":
         da, db = _as_datetime(a, default_year), _as_datetime(b, default_year)

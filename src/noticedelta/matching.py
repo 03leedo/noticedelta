@@ -158,7 +158,5 @@ def match_segments(
             result.added.append(lid)
         result.segments.append(replace(s, lineage_id=lid))
     paired_old = set(pair.values())
-    result.removed = [
-        old[i].lineage_id or new_id() for i in range(len(old)) if i not in paired_old
-    ]
+    result.removed = [old[i].lineage_id or new_id() for i in range(len(old)) if i not in paired_old]
     return result
