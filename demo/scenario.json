@@ -1,0 +1,55 @@
+{
+  "_comment": "가상 시나리오. 실제 기관·공고가 아니다. 설계 문서 4.2 시나리오를 재현한다.",
+  "notice_id": "DEMO-1",
+  "title": "(가상) 2026년 OO시 창업기업 사업화 지원 모집 공고",
+  "versions": [
+    {
+      "version_id": "V1",
+      "blocks": [
+        "□ (가상) 2026년 OO시 창업기업 사업화 지원 모집 공고\n\n○ 지원규모: 기업당 최대 5천만원\n\n○ 접수 마감: 2026년 10월 31일(금) 18:00\n\n○ 제출서류: 사업계획서 1부\n\n※ 문의: 창업지원팀 (가상) 000-0000-0000",
+        {"table": [["구분", "내용"], ["업력", "공고일 기준 창업 7년 이내"], ["소재지", "부산 소재 기업"]]}
+      ]
+    },
+    {
+      "version_id": "V2",
+      "blocks": [
+        "□ (가상) 2026년 OO시 창업기업 사업화 지원 모집 수정 공고\n\n○ 지원규모: 기업당 최대 5천만원\n\n○ 접수 마감: 2026. 11. 7.(금) 18:00\n\n○ 제출서류: 사업계획서 1부\n\n※ 문의: 창업지원팀(가상) 000-0000-0000",
+        {"table": [["구분", "내용"], ["업력", "공고일 기준 창업 5년 이내"], ["소재지", "부산 소재 기업"]]}
+      ]
+    }
+  ],
+  "fake_llm_answers": {
+    "_comment": "녹화본을 만들 때 쓰는 손으로 쓴 가상 응답. source_contains 문구가 들어 있는 조각을 근거로 단다.",
+    "V1": {
+      "deadline": {"value": "2026-10-31 18:00", "source_contains": ["접수 마감"]},
+      "amount": {"value": 50000000, "source_contains": ["지원규모"]},
+      "eligibility_rules": {
+        "value": {"group": "all_of", "manual": [], "rules": [
+          {"id": "r1", "attribute": "business_age_months", "op": "<=", "value": 84},
+          {"id": "r2", "attribute": "region_sido", "op": "in", "value": ["부산"]}
+        ]},
+        "source_contains": ["창업 7년 이내", "부산 소재"]
+      },
+      "required_documents": {"value": ["사업계획서 1부"], "source_contains": ["제출서류"]},
+      "contact": {"value": "창업지원팀 000-0000-0000", "source_contains": ["문의"]}
+    },
+    "V2": {
+      "deadline": {"value": "2026-11-07 18:00", "source_contains": ["접수 마감"]},
+      "amount": {"value": 50000000, "source_contains": ["지원규모"]},
+      "eligibility_rules": {
+        "value": {"group": "all_of", "manual": [], "rules": [
+          {"id": "r1", "attribute": "business_age_months", "op": "<=", "value": 60},
+          {"id": "r2", "attribute": "region_sido", "op": "in", "value": ["부산"]}
+        ]},
+        "source_contains": ["창업 5년 이내", "부산 소재"]
+      },
+      "required_documents": {"value": ["사업계획서 1부"], "source_contains": ["제출서류"]},
+      "contact": {"value": "창업지원팀 000-0000-0000", "source_contains": ["문의"]}
+    }
+  },
+  "users": {
+    "A": {"profile": {"business_age_months": 72, "region_sido": "부산"}, "fields": ["eligibility_rules"]},
+    "B": {"profile": {"business_age_months": 36, "region_sido": "부산"}, "fields": ["deadline", "amount"]},
+    "C": {"profile": {"region_sido": "부산"}, "fields": []}
+  }
+}
