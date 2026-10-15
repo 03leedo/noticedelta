@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol
 
 from noticedelta.eligibility import Judgment, RuleGroup, judge
@@ -18,6 +18,7 @@ from noticedelta.segments import Segment
 from noticedelta.values import find_amounts, find_datetimes, values_equal
 
 RULES_FIELD = "eligibility_rules"
+REVIEW_THRESHOLD = 0.7
 
 
 @dataclass
@@ -46,6 +47,12 @@ class Alert:
     after: Any
     sources: list[str]
     idempotency_key: str
+    confidence: float = 1.0
+
+    @property
+    def needs_review(self) -> bool:
+        """인용 검증을 통과하지 못한 값이면 "확인 필요"로 보여 준다 (설계 7.5)."""
+        return self.confidence < REVIEW_THRESHOLD
 
 
 class Extractor(Protocol):
@@ -144,7 +151,12 @@ def run_impact(
             real.add(name)
 
     fields = dict(old_fields)
-    fields.update({n: reextracted[n] for n in real})
+    for name, new in reextracted.items():
+        if name in real:
+            fields[name] = new
+        elif name in fields:
+            # 값은 같아도 근거 조각은 새 버전 기준으로 바꾼다. 지워진 조각 ID가 남으면 다음 정정을 놓친다.
+            fields[name] = replace(fields[name], sources=new.sources, confidence=new.confidence)
 
     # ④⑤⑥ 영향 사용자 재판정과 알림
     alerts: dict[str, Alert] = {}
@@ -164,6 +176,7 @@ def run_impact(
                     after.result,
                     fields[RULES_FIELD].sources,
                     k,
+                    fields[RULES_FIELD].confidence,
                 )
     for name in sorted(real - {RULES_FIELD}):
         for sub in subscriptions:
@@ -180,6 +193,7 @@ def run_impact(
                     fields[name].value,
                     fields[name].sources,
                     k,
+                    fields[name].confidence,
                 )
 
     return ImpactResult(affected, reextracted, real, list(alerts.values()), len(affected), fields)

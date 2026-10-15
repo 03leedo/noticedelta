@@ -58,6 +58,8 @@ def _number_cited(n: int, attribute: str, joined: str) -> bool:
 
 
 def verify_rule(rule: Rule, cited_texts: Sequence[str]) -> bool:
+    if not cited_texts:
+        return False  # 근거 조각이 없는 규칙은 검증되지 않은 것으로 본다.
     joined = normalize_text(" ".join(cited_texts))
     values = rule.value if isinstance(rule.value, list) else [rule.value]
     for v in values:

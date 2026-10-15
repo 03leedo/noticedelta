@@ -168,3 +168,42 @@ def test_field_source_index_and_keyword_candidates():
         0
     ]
     assert {"deadline", "amount"} <= keyword_candidates(seg)
+
+
+def test_equal_value_reextraction_updates_sources():
+    # 접수 마감 문단이 지워지고 같은 날짜가 새 문단에 다시 나온다.
+    new_doc = [
+        OLD_DOC[0].replace("○ 접수 마감: 2026년 10월 31일 18:00\n\n", "")
+        + "\n\n※ 2026년 10월 31일 18:00 이후 도착분은 받지 않습니다"
+    ]
+    old_fields, change = setup_versions(new_doc)
+    new_lid = next(s.lineage_id for s in change.segments if "도착분" in s.text)
+    ex = FakeExtractor(
+        {"deadline": FieldValue("deadline", "datetime", "2026-10-31 18:00", [new_lid])}
+    )
+    res = run_impact(
+        notice_id="N1",
+        to_version_id="V2",
+        change=change,
+        old_fields=old_fields,
+        extractor=ex,
+        subscriptions=SUBS,
+        profiles=PROFILES,
+        old_judgments=OLD_JUDGMENTS,
+    )
+    assert res.real_changes == set()
+    assert res.fields["deadline"].sources == [new_lid]
+
+
+def test_low_confidence_value_is_flagged_on_alert():
+    new_doc = [OLD_DOC[0].replace("2026년 10월 31일 18:00", "2026년 11월 7일 18:00")]
+    res, _ = run(
+        new_doc,
+        {
+            "deadline": FieldValue(
+                "deadline", "datetime", "2026-11-07 18:00", ["L5"], confidence=0.3
+            )
+        },
+    )
+    assert {a.confidence for a in res.alerts} == {0.3}
+    assert all(a.needs_review for a in res.alerts)

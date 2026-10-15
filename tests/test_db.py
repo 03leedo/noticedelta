@@ -89,3 +89,12 @@ def test_claim_job_once(session):
     assert repo.claim_job(session, "parse", "N1:abc") is True
     assert repo.claim_job(session, "parse", "N1:abc") is False
     assert repo.claim_job(session, "extract", "N1:abc") is True
+
+
+def test_redelivered_old_snapshot_does_not_roll_back(session):
+    repo.upsert_notice_version(session, record())
+    notice, v2 = repo.upsert_notice_version(session, record(deadline="2026-11-07"))
+    _, again = repo.upsert_notice_version(session, record())  # 늦게 도착한 옛 스냅샷
+    assert again is None
+    session.refresh(notice)
+    assert notice.current_version_id == v2.id

@@ -113,3 +113,35 @@ def test_values_equal_list_ignores_order_and_spacing():
         "list", ["사업계획서", "사업자등록증  사본"], ["사업자등록증 사본", "사업계획서"]
     )
     assert not values_equal("list", ["사업계획서"], ["사업계획서", "재무제표"])
+
+
+def test_unparseable_values_fall_back_to_text_comparison():
+    assert values_equal("datetime", "예산 소진 시까지", "예산  소진 시까지")
+    assert not values_equal("datetime", "예산 소진 시까지", "상시 모집")
+    assert values_equal("amount", "추후 공지", "추후  공지")
+
+
+def test_hour_24_means_end_of_day():
+    assert parse_kst_datetime("2026. 10. 31.(금) 24:00까지") == datetime(
+        2026, 10, 31, 23, 59, tzinfo=KST
+    )
+
+
+def test_am_12_is_midnight():
+    assert parse_kst_datetime("2026년 10월 31일 오전 12시") == datetime(
+        2026, 10, 31, 0, 0, tzinfo=KST
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("최대 1억 2026년 하반기", [100_000_000]),
+        ("5억 100개사", [500_000_000]),
+        ("2천억원", [200_000_000_000]),
+        ("1조 2천억원", [1_200_000_000_000]),
+        ("1억 2,000원", [100_002_000]),
+    ],
+)
+def test_amount_boundaries_and_compound_units(text, expected):
+    assert find_amounts(text) == expected

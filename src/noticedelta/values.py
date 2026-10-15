@@ -28,6 +28,9 @@ _DATE = re.compile(
 )
 
 _UNITS = {
+    "천억": 10**11,
+    "백억": 10**10,
+    "십억": 10**9,
     "조": 10**12,
     "억": 10**8,
     "천만": 10**7,
@@ -38,7 +41,7 @@ _UNITS = {
 }
 _UNIT_RE = "|".join(_UNITS)  # 긴 단위가 먼저 오도록 dict 순서 유지
 _AMOUNT = re.compile(
-    rf"(?:\d[\d,]*(?:\.\d+)?\s*(?:{_UNIT_RE})\s*)+(?:\d[\d,]*\s*)?원?|\d[\d,]*(?:\.\d+)?\s*원"
+    rf"(?:\d[\d,]*(?:\.\d+)?\s*(?:{_UNIT_RE})\s*)+(?:\d[\d,]*\s*원|원)?|\d[\d,]*(?:\.\d+)?\s*원"
 )
 _AMOUNT_TOKEN = re.compile(rf"(\d[\d,]*(?:\.\d+)?)\s*({_UNIT_RE})?")
 _IGNORED_RULE_KEYS = {"id", "source", "confidence"}
@@ -64,6 +67,10 @@ def _to_datetime(m: re.Match, default_year: int | None) -> datetime | None:
         minute = int(g["Mi"] or g["Ms"] or 0)
         if g["ap"] == "오후" and hour < 12:
             hour += 12
+        elif g["ap"] == "오전" and hour == 12:
+            hour = 0
+        if hour == 24 and minute == 0:  # "24:00까지"는 그날 마감
+            hour, minute = 23, 59
     try:
         return datetime(year, month, day, hour, minute, tzinfo=KST)
     except ValueError:
@@ -139,10 +146,14 @@ def values_equal(value_type: ValueType, a: Any, b: Any, *, default_year: int | N
     """두 값이 '진짜로' 같은지. 문구만 다르고 값이 같으면 True."""
     if value_type == "datetime":
         da, db = _as_datetime(a, default_year), _as_datetime(b, default_year)
-        return da is not None and da == db
+        if da is None and db is None:  # "예산 소진 시까지" 같은 값은 문구로 비교
+            return normalize_text(str(a)) == normalize_text(str(b))
+        return da == db
     if value_type == "amount":
         aa, ab = _as_amount(a), _as_amount(b)
-        return aa is not None and aa == ab
+        if aa is None and ab is None:
+            return normalize_text(str(a)) == normalize_text(str(b))
+        return aa == ab
     if value_type == "rules":
         if hasattr(a, "model_dump"):
             a = a.model_dump()

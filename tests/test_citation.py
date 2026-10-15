@@ -58,3 +58,7 @@ def test_text_is_normalized_substring():
         "list", ["사업계획서 1부", "사업자등록증"], ["제출서류: 사업계획서 1부, 사업자등록증"]
     )
     assert not verify_citation("list", ["재무제표"], ["제출서류: 사업계획서 1부"])
+
+
+def test_rule_without_cited_text_is_not_verified():
+    assert not verify_rule(Rule(id="p", attribute="is_pre_founder", op="==", value=True), [])

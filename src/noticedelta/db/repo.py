@@ -62,6 +62,13 @@ def upsert_notice_version(
     )
     if latest is not None and latest.content_hash == rec.content_hash:
         return notice, None
+    seen_before = session.scalar(
+        sa.select(NoticeVersion.id)
+        .where(NoticeVersion.notice_id == notice.id, NoticeVersion.content_hash == rec.content_hash)
+        .limit(1)
+    )
+    if seen_before is not None:
+        return notice, None  # 늦게 도착한 옛 스냅샷. 새 버전으로 올리지 않는다.
 
     version = NoticeVersion(
         notice_id=notice.id,
