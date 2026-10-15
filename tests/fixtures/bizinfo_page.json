@@ -1,0 +1,21 @@
+{
+  "_comment": "테스트용 가상 응답. 필드 이름과 형태만 기업마당 지원사업정보 API 명세와 공개된 실제 응답 형태를 따른다.",
+  "jsonArray": [
+    {
+      "pblancId": "PBLN_000000009000001",
+      "pblancNm": "(가상) 2026년 지역 창업기업 사업화 지원 모집 수정 공고",
+      "pblancUrl": "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000009000001",
+      "jrsdInsttNm": "(가상) 지방자치단체",
+      "excInsttNm": "(가상) 지역창업진흥원",
+      "bsnsSumryCn": "<p>지역 유망 창업기업의&nbsp;사업화를 지원합니다.</p><p>창업 5년 이내 기업</p>",
+      "trgetNm": "중소기업",
+      "reqstBeginEndDe": "2026-10-13 ~ 2026-11-07",
+      "reqstMthPapersCn": "사업계획서 1부",
+      "fileNm": "공고문(수정).hwp@붙임1. 신청서.hwpx",
+      "flpthNm": "https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_X&fileSn=0@https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_X&fileSn=1",
+      "hashtags": "창업,부산",
+      "creatPnttm": "2026-10-20 10:00:00",
+      "totCnt": 1
+    }
+  ]
+}

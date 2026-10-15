@@ -1,0 +1,40 @@
+{
+  "_comment": "테스트용 가상 응답. 필드 이름과 형태만 data.go.kr 15125364 명세를 따른다.",
+  "currentCount": 2,
+  "matchCount": 2,
+  "page": 1,
+  "perPage": 10,
+  "totalCount": 2,
+  "data": [
+    {
+      "id": 1,
+      "pbanc_sn": 900001,
+      "biz_pbanc_nm": "(가상) 2026년 지역 창업기업 사업화 지원 모집 공고",
+      "pbanc_ctnt": "지역 유망 창업기업의 사업화를 지원합니다.",
+      "aply_trgt_ctnt": "공고일 기준 창업 7년 이내 기업",
+      "aply_excl_trgt_ctnt": "☞ 휴·폐업 중인 기업\r\n☞ 국세·지방세 체납 기업",
+      "biz_enyy": "7년미만",
+      "biz_trgt_age": "만 20세 이상 ~ 만 39세 이하",
+      "supt_regin": "부산",
+      "pbanc_rcpt_bgng_dt": "20261013",
+      "pbanc_rcpt_end_dt": "20261031",
+      "rcrt_prgs_yn": "Y",
+      "pbanc_ntrp_nm": "(가상) 지역창업진흥원",
+      "biz_prch_dprt_nm": "창업지원팀",
+      "detl_pg_url": "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn=900001",
+      "biz_aply_url": ""
+    },
+    {
+      "id": 2,
+      "pbanc_sn": 900002,
+      "biz_pbanc_nm": "(가상) 예비창업자 교육 프로그램",
+      "pbanc_ctnt": "예비창업자 대상 교육",
+      "aply_trgt_ctnt": "",
+      "aply_excl_trgt_ctnt": "",
+      "pbanc_rcpt_bgng_dt": "",
+      "pbanc_rcpt_end_dt": "",
+      "pbanc_ntrp_nm": "(가상) 창업센터",
+      "detl_pg_url": ""
+    }
+  ]
+}
