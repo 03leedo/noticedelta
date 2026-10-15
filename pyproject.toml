@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "정정공고가 나오면 내 자격·마감·금액 변화만 알려 주는 지원사업 비서와 변경 영향 엔진"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "tzdata>=2026.5",
+]
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
