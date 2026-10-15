@@ -23,9 +23,7 @@ def _same_deadline(a: datetime, b: datetime) -> bool:
     if a == b:
         return True
     # 한쪽에만 시각이 있으면(다른 쪽은 그날 마감 23:59) 날짜만 비교한다.
-    if a.date() == b.date() and _END_OF_DAY in ((a.hour, a.minute), (b.hour, b.minute)):
-        return True
-    return False
+    return a.date() == b.date() and _END_OF_DAY in ((a.hour, a.minute), (b.hour, b.minute))
 
 
 def _verify_datetime(value: Any, texts: Sequence[str], default_year: int | None) -> bool:
