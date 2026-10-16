@@ -120,25 +120,32 @@ DESIGN.md 9장을 그대로 쓴다. k3s 상시 노드 1대 + 필요할 때만 �
 ```python
 class SourceAdapter(Protocol):
     """출처 하나. 수집 스케줄러가 부른다."""
+
     name: str
+
     def list_items(self, cursor: str | None) -> Page[ItemRef]: ...
     def fetch(self, ref: ItemRef) -> Document: ...  # 본문 + 첨부 blob 키 + 외부 ID
     def link(self, doc: Document, known: Lookup) -> str | None:
         """다른 외부 ID로 다시 올라온 같은 항목 찾기 (기업마당 재게시 등). 없으면 None."""
 
+
 class FieldSpec:
-    name: str                   # "deadline", "eligibility_rules" ...
-    type: str                   # "date" | "money" | "ruleset" | "list" | 팩이 등록한 타입
-    extractor: Extractor        # LLM 추출(프롬프트 + 스키마) 또는 코드 추출
-    impact: Impact              # 이 필드가 바뀌면 영향받는 구독자 범위
+    name: str  # "deadline", "eligibility_rules" ...
+    type: str  # "date" | "money" | "ruleset" | "list" | 팩이 등록한 타입
+    extractor: Extractor  # LLM 추출(프롬프트 + 스키마) 또는 코드 추출
+    impact: Impact  # 이 필드가 바뀌면 영향받는 구독자 범위
+
 
 class SubscriberModel(Protocol):
     """누가 영향을 받는가. 기본 구현은 '조건식 → SQL'."""
+
     def affected(self, item_id: str, changed: list[FieldChange]) -> Iterable[SubjectId]: ...
     def evaluate(self, subject: SubjectId, item_id: str) -> Verdict: ...  # 결과 + 근거
 
+
 class Sink(Protocol):
     """판정 변화를 이벤트로 낸다. 기본 구현은 알림 발송 서비스로 보낸다."""
+
     def emit(self, event: Event) -> None: ...
 ```
 
