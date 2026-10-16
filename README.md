@@ -49,6 +49,7 @@ make demo      # 또는 uv run python -m noticedelta.demo
 ## 문서
 
 - [설계 문서](docs/DESIGN.md): 목표, 연구 질문, 시스템 구조, 데이터 모델, 평가 계획, 일정. 이 저장소의 기준 문서다.
+- [플랫폼 구조](docs/ARCHITECTURE.md): 변경 영향 엔진을 공용 플랫폼으로 넓히고 그 위에 서비스 여러 개를 올리는 큰 틀, 도메인 팩 규약, 이벤트·MCP 계약, 위협 모델, 단계.
 - [수집원 약관·robots 확인](docs/research/terms.md), [정정공고 표본 28건](docs/research/corrections.md)
 - [구현 계획 (1~4주차)](docs/superpowers/plans/2026-10-16-foundation.md)
 - [진행 발표 슬라이드](https://03leedo.github.io/noticedelta/slides/): 9월 진행상황 및 10월 계획 ([원본](docs/slides/index.html))
