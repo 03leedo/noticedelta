@@ -1,0 +1,80 @@
+{
+  "key": "064ccf99ecc4ea52c899d4f13feaca4e29d33328e7f3032b7066f99ac87115dc",
+  "request": {
+    "model": "claude-haiku-5-5",
+    "template_version": "extract-v1",
+    "system": "너는 한국 정부 지원사업 공고에서 정해진 필드만 뽑는 추출기다.\n입력의 각 줄은 `[조각ID] 원문`이다. 요청된 필드만 뽑고, 값마다 근거가 된 조각ID를 sources에 적는다.\n원문에 근거가 없는 필드는 출력하지 않는다. 추측하지 않는다.\nvalue_json에는 값을 JSON으로 직렬화한 문자열을 넣는다.\n\n자격 규칙 형식:\n{\"group\": \"all_of\" | \"any_of\", \"rules\": [{\"id\": \"r1\", \"attribute\": 속성, \"op\": 연산자, \"value\": 값} 또는 하위 그룹],\n  \"manual\": [{\"text\": \"속성 사전으로 표현할 수 없는 조건 원문\"}]}\n속성 사전: is_pre_founder, business_age_months, ceo_age, region_sido, industry_ksic, business_type, revenue_krw, employees, is_women_owned, is_restart\n- business_age_months는 개월 수(7년 이내 → <= 84), ceo_age는 만 나이, revenue_krw는 원 단위.\n연산자: == != < <= > >= in not_in between\n사전에 없는 조건은 억지로 바꾸지 말고 manual에 원문 그대로 둔다.",
+    "input": "추출할 필드:\n- contact: 문의처. 문자열\n- deadline: 신청 마감 일시. \"YYYY-MM-DD HH:MM\" 문자열 (시각이 없으면 \"YYYY-MM-DD\")\n- eligibility_rules: 신청 자격 규칙. 아래 규칙 형식의 JSON 객체\n\n공고 조각:\n[L1] □ (가상) 2026년 OO시 창업기업 사업화 지원 모집 수정 공고\n[L3] ○ 접수 마감: 2026. 11. 7.(금) 18:00\n[L5] ※ 문의: 창업지원팀(가상) 000-0000-0000\n[L7] 공고일 기준 창업 5년 이내\n[L9] 부산 소재 기업",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "contact",
+                  "deadline",
+                  "eligibility_rules"
+                ]
+              },
+              "value_json": {
+                "type": "string"
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "value_json",
+              "sources"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "response": {
+    "output": {
+      "fields": [
+        {
+          "name": "contact",
+          "value_json": "\"창업지원팀 000-0000-0000\"",
+          "sources": [
+            "L5"
+          ]
+        },
+        {
+          "name": "deadline",
+          "value_json": "\"2026-11-07 18:00\"",
+          "sources": [
+            "L3"
+          ]
+        },
+        {
+          "name": "eligibility_rules",
+          "value_json": "{\"group\": \"all_of\", \"manual\": [], \"rules\": [{\"id\": \"r1\", \"attribute\": \"business_age_months\", \"op\": \"<=\", \"value\": 60}, {\"id\": \"r2\", \"attribute\": \"region_sido\", \"op\": \"in\", \"value\": [\"부산\"]}]}",
+          "sources": [
+            "L7",
+            "L9"
+          ]
+        }
+      ]
+    },
+    "input_tokens": 301,
+    "output_tokens": 50,
+    "cost_usd": 0.0
+  }
+}
