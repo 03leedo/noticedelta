@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 import httpx
@@ -102,6 +103,23 @@ def test_http_error_does_not_leak_key():
         KStartupClient(KEY, mock_http(status=500)).list_notices()
     assert KEY not in str(e.value)
     assert "500" in str(e.value)
+
+
+@pytest.mark.parametrize(
+    ("make", "payload"),
+    [
+        (lambda h: KStartupClient(KEY, h), {"data": []}),
+        (lambda h: BizinfoClient(KEY, h), {"jsonArray": []}),
+        (lambda h: BizinfoClient(KEY, h, api="bizinfo"), {"jsonArray": []}),
+    ],
+)
+def test_httpx_request_log_does_not_leak_key(caplog, make, payload):
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        make(mock_http(payload)).list_notices()
+    logged = "\n".join(r.getMessage() for r in caplog.records if r.name == "httpx")
+    assert "HTTP Request" in logged
+    assert KEY not in logged
+    assert "Key=***" in logged
 
 
 class FakeClock:
