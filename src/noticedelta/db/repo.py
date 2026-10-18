@@ -8,7 +8,14 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from noticedelta.db.models import JobLedger, Notice, NoticeVersion, OutboxAlert, Source
+from noticedelta.db.models import (
+    Attachment,
+    JobLedger,
+    Notice,
+    NoticeVersion,
+    OutboxAlert,
+    Source,
+)
 from noticedelta.impact import Alert
 from noticedelta.sources import NoticeRecord
 
@@ -81,9 +88,23 @@ def upsert_notice_version(
     session.add(version)
     notice.title, notice.org, notice.url = rec.title, rec.org, rec.url
     session.flush()
+    for ref in rec.attachments:
+        session.add(Attachment(notice_version_id=version.id, filename=ref.filename, url=ref.url))
+    session.flush()
     advance_current_version(session, notice.id, version.id, version.version_no)
     session.refresh(notice)
     return notice, version
+
+
+def attachments_to_fetch(session: Session, version_id: str) -> list[Attachment]:
+    """이 버전의 첨부 중 아직 원문 저장소에 없는 것."""
+    return list(
+        session.scalars(
+            sa.select(Attachment)
+            .where(Attachment.notice_version_id == version_id, Attachment.blob_key.is_(None))
+            .order_by(Attachment.filename)
+        )
+    )
 
 
 def enqueue_alert(session: Session, alert: Alert) -> bool:
