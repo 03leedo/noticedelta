@@ -41,7 +41,7 @@ make demo      # 또는 uv run python -m noticedelta.demo
 | 7.3 조각화 | `segments.py` 문단·표 칸 조각, 위치 정보 | 완료. HWP/PDF 파서 연결은 4주차 |
 | 7.4 조각 맞추기 | `matching.py` 해시·순서 정렬·유사도·표 키, `hash` / `hash_sim` 모드 | 완료 (LLM 보조 변형은 RQ2 실험 때) |
 | 7.5 추출 | `llm/extract.py` 구조화 출력 추출, `citation.py` 인용 검증 | 완료 |
-| 7.6 판정 | `eligibility/` 규칙 형식, 3단계 판정기, 대량 판정용 SQL 조건 | 완료 |
+| 7.6 판정 | `eligibility/` 규칙 형식, 3단계 판정기, 대량 판정용 SQL 조건, 시간에 따라 바뀌는 자격(자격 상실·획득 예정일)과 거의 해당 | 완료. 화면 표시는 5주차 |
 | 7.7 변경 영향 엔진 | `impact.py` 영향 필드 → 부분 재추출 → 진짜 변경 → 재판정 → 알림 | 메모리 버전 완료. 큐·워커 연결은 5~6주차 |
 | 8 신뢰성 | `db/repo.py` 버전 순서 보장, 아웃박스 멱등, 작업 원장 | 완료 (SQLite 테스트) |
 | 10 녹화·재생 | `llm/gateway.py` live / record / replay / replay_or_live, 비용 집계 | 완료 |

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -74,9 +74,11 @@ def _coerce(actual: Any, expected: Any) -> Any:
 
 
 def _eval_rule(
-    rule: Rule, profile: Mapping[str, Any], min_confidence: float
+    rule: Rule, profile: Mapping[str, Any], min_confidence: float, assumed: frozenset[int]
 ) -> tuple[_Tri, Reason]:
     desc = f"{rule.attribute} {rule.op} {rule.value!r}"
+    if id(rule) in assumed:
+        return "pass", Reason(rule.id, "pass", f"{desc} (충족한다고 가정)", rule.source)
     if rule.confidence < min_confidence:
         return "unknown", Reason(
             rule.id, "low_confidence", f"{desc} (규칙 신뢰도 {rule.confidence})", rule.source
@@ -99,15 +101,15 @@ def _eval_rule(
 
 
 def _eval_group(
-    group: RuleGroup, profile: Mapping[str, Any], min_confidence: float
+    group: RuleGroup, profile: Mapping[str, Any], min_confidence: float, assumed: frozenset[int]
 ) -> tuple[_Tri, list[Reason]]:
     outcomes: list[_Tri] = []
     reasons: list[Reason] = []
     for node in group.rules:
         if isinstance(node, RuleGroup):
-            o, rs = _eval_group(node, profile, min_confidence)
+            o, rs = _eval_group(node, profile, min_confidence, assumed)
         else:
-            o, r = _eval_rule(node, profile, min_confidence)
+            o, r = _eval_rule(node, profile, min_confidence, assumed)
             rs = [r]
         outcomes.append(o)
         reasons.extend(rs)
@@ -128,7 +130,15 @@ def _eval_group(
     return result, reasons
 
 
-def judge(group: RuleGroup, profile: Mapping[str, Any], *, min_confidence: float = 0.7) -> Judgment:
-    tri, reasons = _eval_group(group, profile, min_confidence)
+def judge(
+    group: RuleGroup,
+    profile: Mapping[str, Any],
+    *,
+    min_confidence: float = 0.7,
+    assume_pass: Iterable[Rule] = (),
+) -> Judgment:
+    """assume_pass의 규칙은 충족한다고 보고 판정한다("이 조건만 맞으면?" 계산용)."""
+    assumed = frozenset(id(r) for r in assume_pass)
+    tri, reasons = _eval_group(group, profile, min_confidence, assumed)
     result: Result = {"pass": "eligible", "fail": "ineligible", "unknown": "unknown"}[tri]
     return Judgment(result, reasons)
