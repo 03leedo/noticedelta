@@ -15,6 +15,7 @@ from noticedelta.db.models import (
     NoticeVersion,
     OutboxAlert,
     Source,
+    new_id,
 )
 from noticedelta.impact import Alert
 from noticedelta.sources import NoticeRecord
@@ -40,56 +41,92 @@ def advance_current_version(
     return session.execute(stmt).rowcount == 1
 
 
-def upsert_notice_version(
-    session: Session, rec: NoticeRecord
-) -> tuple[Notice, NoticeVersion | None]:
-    """수집 결과를 기록한다. 내용 해시가 직전 버전과 같으면 새 버전을 만들지 않는다."""
-    _ensure_source(session, rec.source)
-    notice = session.scalar(
-        sa.select(Notice).where(
-            Notice.source_id == rec.source, Notice.external_id == rec.external_id
-        )
+def _find_notice(session: Session, source_id: str, external_id: str) -> Notice | None:
+    return session.scalar(
+        sa.select(Notice).where(Notice.source_id == source_id, Notice.external_id == external_id)
     )
-    if notice is None:
-        notice = Notice(
-            source_id=rec.source,
-            external_id=rec.external_id,
-            title=rec.title,
-            org=rec.org,
-            url=rec.url,
-        )
-        session.add(notice)
-        session.flush()
 
-    latest = session.scalar(
+
+def _latest_version(session: Session, notice_id: str) -> NoticeVersion | None:
+    return session.scalar(
         sa.select(NoticeVersion)
-        .where(NoticeVersion.notice_id == notice.id)
+        .where(NoticeVersion.notice_id == notice_id)
         .order_by(NoticeVersion.version_no.desc())
         .limit(1)
     )
-    if latest is not None and latest.content_hash == rec.content_hash:
-        return notice, None
-    seen_before = session.scalar(
-        sa.select(NoticeVersion.id)
-        .where(NoticeVersion.notice_id == notice.id, NoticeVersion.content_hash == rec.content_hash)
-        .limit(1)
-    )
-    if seen_before is not None:
-        return notice, None  # 늦게 도착한 옛 스냅샷. 새 버전으로 올리지 않는다.
 
-    version = NoticeVersion(
-        notice_id=notice.id,
-        version_no=(latest.version_no + 1) if latest else 1,
-        kind="correction" if latest else "original",
-        content_hash=rec.content_hash,
-        body=rec.body,
-        raw=rec.raw,
-    )
-    session.add(version)
+
+def _get_or_create_notice(session: Session, rec: NoticeRecord) -> Notice:
+    notice = _find_notice(session, rec.source, rec.external_id)
+    if notice is not None:
+        return notice
+    try:
+        with session.begin_nested():
+            notice = Notice(
+                source_id=rec.source,
+                external_id=rec.external_id,
+                title=rec.title,
+                org=rec.org,
+                url=rec.url,
+            )
+            session.add(notice)
+    except IntegrityError:
+        # 다른 워커가 같은 공고를 먼저 만들었다. 그쪽 행을 쓴다.
+        notice = _find_notice(session, rec.source, rec.external_id)
+        if notice is None:
+            raise
+    return notice
+
+
+def upsert_notice_version(
+    session: Session, rec: NoticeRecord, *, max_attempts: int = 3
+) -> tuple[Notice, NoticeVersion | None]:
+    """수집 결과를 기록한다. 내용 해시가 직전 버전과 같으면 새 버전을 만들지 않는다.
+
+    두 워커가 같은 공고를 동시에 기록해 버전 번호가 부딪히면, 최신 버전을 다시 읽고 다시 판단한다.
+    """
+    _ensure_source(session, rec.source)
+    notice = _get_or_create_notice(session, rec)
+
+    for attempt in range(max_attempts):
+        latest = _latest_version(session, notice.id)
+        if latest is not None and latest.content_hash == rec.content_hash:
+            return notice, None
+        seen_before = session.scalar(
+            sa.select(NoticeVersion.id)
+            .where(
+                NoticeVersion.notice_id == notice.id,
+                NoticeVersion.content_hash == rec.content_hash,
+            )
+            .limit(1)
+        )
+        if seen_before is not None:
+            return notice, None  # 늦게 도착한 옛 스냅샷. 새 버전으로 올리지 않는다.
+
+        version = NoticeVersion(
+            id=new_id(),
+            notice_id=notice.id,
+            version_no=(latest.version_no + 1) if latest else 1,
+            kind="correction" if latest else "original",
+            content_hash=rec.content_hash,
+            body=rec.body,
+            raw=rec.raw,
+        )
+        try:
+            with session.begin_nested():
+                session.add(version)
+                for ref in rec.attachments:
+                    session.add(
+                        Attachment(notice_version_id=version.id, filename=ref.filename, url=ref.url)
+                    )
+                session.flush()
+        except IntegrityError:
+            if attempt == max_attempts - 1:
+                raise
+            continue
+        break
+
     notice.title, notice.org, notice.url = rec.title, rec.org, rec.url
-    session.flush()
-    for ref in rec.attachments:
-        session.add(Attachment(notice_version_id=version.id, filename=ref.filename, url=ref.url))
     session.flush()
     advance_current_version(session, notice.id, version.id, version.version_no)
     session.refresh(notice)

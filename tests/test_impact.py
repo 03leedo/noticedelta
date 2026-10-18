@@ -207,3 +207,14 @@ def test_low_confidence_value_is_flagged_on_alert():
     )
     assert {a.confidence for a in res.alerts} == {0.3}
     assert all(a.needs_review for a in res.alerts)
+
+
+def test_keyword_candidates_ignore_bare_kkaji_and_seoryu():
+    def cands(text):
+        return keyword_candidates(segment_document([text], source="b")[0])
+
+    assert "deadline" not in cands("선정 기업은 협약일부터 사업 종료일까지 지원을 받는다")
+    assert "required_documents" not in cands("서류 평가와 발표 평가로 선정한다")
+    assert "deadline" in cands("예산 소진 시까지 상시 접수")
+    assert "required_documents" in cands("첨부서류: 사업자등록증 사본")
+    assert "required_documents" in cands("신청 시 증빙자료를 함께 낸다")

@@ -177,3 +177,34 @@ def test_wrong_profile_type_is_unknown_not_crash():
     j = judge(rules(), {"business_age_months": "72개월", "region_sido": "부산"})
     assert j.result == "unknown"
     assert j.reasons[0].outcome == "missing"
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected"),
+    [
+        ({"business_age_months": "72", "region_sido": "부산"}, "eligible"),
+        ({"business_age_months": "96", "region_sido": "부산"}, "ineligible"),
+        ({"business_age_months": " 72 ", "region_sido": "부산"}, "eligible"),
+        ({"business_age_months": 72.0, "region_sido": "부산"}, "eligible"),
+    ],
+)
+def test_numeric_strings_from_forms_are_coerced(profile, expected):
+    assert judge(rules(), profile).result == expected
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [("true", "eligible"), ("예", "eligible"), ("N", "ineligible"), (True, "eligible")],
+)
+def test_bool_strings_are_coerced(actual, expected):
+    g = RuleGroup.model_validate(
+        {"group": "all_of", "rules": [{"attribute": "is_pre_founder", "op": "==", "value": True}]}
+    )
+    assert judge(g, {"is_pre_founder": actual}).result == expected
+
+
+def test_uncoercible_value_stays_unknown():
+    g = RuleGroup.model_validate(
+        {"group": "all_of", "rules": [{"attribute": "is_pre_founder", "op": "==", "value": True}]}
+    )
+    assert judge(g, {"is_pre_founder": "모름"}).result == "unknown"

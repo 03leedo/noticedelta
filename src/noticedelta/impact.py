@@ -70,13 +70,17 @@ class ImpactResult:
 
 
 _KEYWORDS: dict[str, re.Pattern] = {
-    "deadline": re.compile(r"마감|접수\s*기간|신청\s*기간|모집\s*기간|까지"),
+    # 날짜가 있는 조각은 find_datetimes가 따로 잡는다. "까지"만으로는 고르지 않는다.
+    "deadline": re.compile(r"마감|접수\s*기간|신청\s*기간|모집\s*기간|소진\s*시\s*까지"),
     "amount": re.compile(r"지원\s*금|지원\s*규모|지원\s*한도|사업비|최대\s*\d"),
     RULES_FIELD: re.compile(
         r"신청\s*자격|지원\s*대상|자격\s*요건|제외\s*대상|업력|창업\s*\d+\s*년|만\s*\d+\s*세|"
         r"연령|나이|소재|예비\s*창업|재창업|여성|매출|상시\s*근로자|중복\s*수혜"
     ),
-    "required_documents": re.compile(r"제출\s*서류|구비\s*서류|증빙|사본|서류"),
+    # "서류 평가"처럼 서류만 들어간 문장은 고르지 않는다.
+    "required_documents": re.compile(
+        r"(?:제출|구비|증빙|첨부|신청)\s*서류|서류\s*(?:제출|목록)|증빙\s*자료|사본"
+    ),
     "contact": re.compile(r"문의|연락처|담당자|☎|\d{2,3}-\d{3,4}-\d{4}"),
 }
 

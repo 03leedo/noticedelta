@@ -44,6 +44,7 @@ class CircuitBreaker:
         self.clock = clock
         self.failures = 0
         self.opened_at: float | None = None
+        self._trial_in_flight = False  # half-open에서는 시험 호출을 하나만 보낸다
 
     @property
     def state(self) -> str:
@@ -54,13 +55,21 @@ class CircuitBreaker:
         return "open"
 
     def allow(self) -> bool:
-        return self.state != "open"
+        state = self.state
+        if state == "closed":
+            return True
+        if state == "half_open" and not self._trial_in_flight:
+            self._trial_in_flight = True
+            return True
+        return False
 
     def record_success(self) -> None:
         self.failures = 0
         self.opened_at = None
+        self._trial_in_flight = False
 
     def record_failure(self) -> None:
+        self._trial_in_flight = False
         self.failures += 1
         if self.state == "half_open" or self.failures >= self.failure_threshold:
             self.opened_at = self.clock()

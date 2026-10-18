@@ -147,3 +147,18 @@ def test_rate_limiter_spaces_calls():
     rl.acquire()
     rl.acquire()
     assert slept == [0.5, 0.5]
+
+
+def test_half_open_allows_a_single_trial():
+    clock = FakeClock()
+    cb = CircuitBreaker(failure_threshold=1, reset_after_s=60, clock=clock)
+    cb.record_failure()
+    clock.t = 61
+    assert cb.allow()
+    assert not cb.allow()  # 시험 호출 결과가 나오기 전에는 하나만
+    cb.record_failure()
+    assert not cb.allow()  # 다시 열림
+    clock.t = 122
+    assert cb.allow()
+    cb.record_success()
+    assert cb.allow() and cb.allow()
