@@ -51,6 +51,28 @@ def _compare(op: str, actual: Any, expected: Any) -> bool:
     raise ValueError(op)
 
 
+_TRUE = {"true", "t", "y", "yes", "예", "네", "1"}
+_FALSE = {"false", "f", "n", "no", "아니오", "아니요", "0"}
+_UNCOERCIBLE = object()
+
+
+def _coerce(actual: Any, expected: Any) -> Any:
+    """폼에서 온 문자열을 규칙 값의 타입에 맞춘다. 맞출 수 없으면 _UNCOERCIBLE."""
+    sample = expected[0] if isinstance(expected, list | tuple) and expected else expected
+    if isinstance(sample, bool):
+        if isinstance(actual, bool):
+            return actual
+        s = str(actual).strip().lower()
+        return True if s in _TRUE else False if s in _FALSE else _UNCOERCIBLE
+    if isinstance(sample, int | float) and isinstance(actual, str):
+        s = actual.strip().replace(",", "")
+        try:
+            return int(s) if s.lstrip("-").isdigit() else float(s)
+        except ValueError:
+            return actual  # 비교에서 TypeError가 나 확인 필요로 간다
+    return actual
+
+
 def _eval_rule(
     rule: Rule, profile: Mapping[str, Any], min_confidence: float
 ) -> tuple[_Tri, Reason]:
@@ -62,7 +84,10 @@ def _eval_rule(
     actual = profile.get(rule.attribute)
     if actual is None:
         return "unknown", Reason(rule.id, "missing", f"{desc} (프로필 값 없음)", rule.source)
+    actual = _coerce(actual, rule.value)
     try:
+        if actual is _UNCOERCIBLE:
+            raise TypeError
         ok = _compare(rule.op, actual, rule.value)
     except TypeError:
         return "unknown", Reason(

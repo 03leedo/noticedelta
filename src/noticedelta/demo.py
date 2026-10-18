@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,7 +24,23 @@ from noticedelta.llm.extract import FIELD_TYPES, LLMExtractor
 from noticedelta.matching import match_segments
 from noticedelta.segments import Segment, Table, segment_document
 
-DEMO_DIR = Path(__file__).resolve().parents[2] / "demo"
+
+def find_demo_dir() -> Path:
+    """NOTICEDELTA_DEMO_DIR → 저장소의 demo/ → 현재 폴더의 demo/ 순으로 찾는다.
+
+    패키지를 설치해 쓰면 소스 기준 상대 경로(저장소 루트)가 없으므로 앞의 두 방법을 쓴다.
+    """
+    candidates = []
+    if env := os.environ.get("NOTICEDELTA_DEMO_DIR"):
+        candidates.append(Path(env))
+    candidates += [Path(__file__).resolve().parents[2] / "demo", Path.cwd() / "demo"]
+    for c in candidates:
+        if (c / "scenario.json").is_file():
+            return c
+    tried = ", ".join(str(c) for c in candidates)
+    raise FileNotFoundError(f"데모 시나리오(scenario.json)를 찾지 못했습니다. 찾아본 곳: {tried}")
+
+
 LABEL = {"eligible": "해당", "ineligible": "비해당", "unknown": "확인 필요"}
 
 
@@ -77,8 +94,9 @@ def _show(seg: Segment) -> str:
 
 
 def run_demo(
-    *, mode: Mode = Mode.REPLAY, demo_dir: Path = DEMO_DIR, out: Callable[[str], None] = print
+    *, mode: Mode = Mode.REPLAY, demo_dir: Path | None = None, out: Callable[[str], None] = print
 ) -> DemoResult:
+    demo_dir = demo_dir or find_demo_dir()
     sc = json.loads((demo_dir / "scenario.json").read_text(encoding="utf-8"))
     provider = FakeAnswerProvider(sc["fake_llm_answers"]) if mode is Mode.RECORD else None
     gateway = Gateway(provider, FileCassetteStore(demo_dir / "cassettes"), mode)

@@ -98,3 +98,44 @@ def test_redelivered_old_snapshot_does_not_roll_back(session):
     assert again is None
     session.refresh(notice)
     assert notice.current_version_id == v2.id
+
+
+def test_upsert_survives_concurrent_notice_insert(session, monkeypatch):
+    """다른 워커가 같은 공고를 먼저 넣은 상황: 조회는 비었는데 넣으려니 중복."""
+    repo.upsert_notice_version(session, record())
+    real = repo._find_notice
+    calls = []
+
+    def stale_once(s, source_id, external_id):
+        calls.append(1)
+        return None if len(calls) == 1 else real(s, source_id, external_id)
+
+    monkeypatch.setattr(repo, "_find_notice", stale_once)
+    notice, version = repo.upsert_notice_version(session, record(deadline="2026-11-07"))
+    assert version is not None and version.version_no == 2
+    assert session.scalar(sa.select(sa.func.count()).select_from(models.Notice)) == 1
+
+
+def test_upsert_retries_on_version_number_conflict(session, monkeypatch):
+    """다른 워커가 같은 version_no를 먼저 썼다: 최신 버전을 다시 읽고 다음 번호로 쓴다."""
+    repo.upsert_notice_version(session, record())
+    repo.upsert_notice_version(session, record(deadline="2026-11-07"))
+    real = repo._latest_version
+    calls = []
+
+    def stale_once(s, notice_id):
+        calls.append(1)
+        latest = real(s, notice_id)
+        if len(calls) == 1:  # v2가 이미 있는데 v1을 최신으로 본다
+            return s.scalar(
+                sa.select(models.NoticeVersion).where(
+                    models.NoticeVersion.notice_id == notice_id,
+                    models.NoticeVersion.version_no == 1,
+                )
+            )
+        return latest
+
+    monkeypatch.setattr(repo, "_latest_version", stale_once)
+    notice, version = repo.upsert_notice_version(session, record(deadline="2026-11-14"))
+    assert version.version_no == 3 and notice.current_version_no == 3
+    assert len(calls) == 2

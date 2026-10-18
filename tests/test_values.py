@@ -145,3 +145,48 @@ def test_am_12_is_midnight():
 )
 def test_amount_boundaries_and_compound_units(text, expected):
     assert find_amounts(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1. 2. 신청 자격은 다음과 같다",
+        "3. 1. 지원 내용",
+        "붙임 2. 3. 서식",
+    ],
+)
+def test_list_numbers_are_not_dates(text):
+    assert find_datetimes(text, default_year=2026) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("마감: 10. 31.", datetime(2026, 10, 31, 23, 59, tzinfo=KST)),
+        ("10. 31.(금) 18:00", datetime(2026, 10, 31, 18, 0, tzinfo=KST)),
+        ("~ 11. 7.", datetime(2026, 11, 7, 23, 59, tzinfo=KST)),
+        ("11. 7. 까지", datetime(2026, 11, 7, 23, 59, tzinfo=KST)),
+        ("10. 31. 오후 6시", datetime(2026, 10, 31, 18, 0, tzinfo=KST)),
+    ],
+)
+def test_yearless_dot_dates_in_date_context(text, expected):
+    assert parse_kst_datetime(text, default_year=2026) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2026-10-31T18:00", datetime(2026, 10, 31, 18, 0, tzinfo=KST)),
+        ("2026-10-31T18:00:00", datetime(2026, 10, 31, 18, 0, tzinfo=KST)),
+        ("2026-10-31T18:00:00+09:00", datetime(2026, 10, 31, 18, 0, tzinfo=KST)),
+        ("2026-10-31T09:00:00Z", datetime(2026, 10, 31, 18, 0, tzinfo=KST)),
+    ],
+)
+def test_iso_datetimes(text, expected):
+    assert parse_kst_datetime(text) == expected
+
+
+def test_hyphenated_time_range_is_not_a_timezone():
+    assert parse_kst_datetime("2026. 10. 31. 10:00-12:00") == datetime(
+        2026, 10, 31, 10, 0, tzinfo=KST
+    )

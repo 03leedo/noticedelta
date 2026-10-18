@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -19,10 +19,14 @@ _DATE = re.compile(
         (?P<y>\d{4}|'\d{2})\s*(?:[./-]|년)\s*(?P<m>\d{1,2})\s*(?:[./-]|월)\s*(?P<d>\d{1,2})(?:\s*일|\.)?
       | (?<!\d)(?P<cy>20\d{2})(?P<cm>[01]\d)(?P<cd>[0-3]\d)(?!\d)
       | (?<![\d.])(?P<m2>\d{1,2})\s*월\s*(?P<d2>\d{1,2})\s*일
-      | (?<![\d.])(?P<m3>\d{1,2})\.\s*(?P<d3>\d{1,2})\.(?!\d)
+      | (?:(?<=[~∼:])|(?<=[~∼:]\s)|(?<![\d.\w\s])|^)  # 연도 없는 "M. D."는 날짜 문맥에서만.
+        (?P<m3>\d{1,2})\.\s*(?P<d3>\d{1,2})\.(?!\d)         # "1. 2. 신청 자격" 같은 목록 번호와
+        (?=\s*(?:\(|\d{1,2}\s*[:시]|오전|오후|까지|부터|[~∼]|$))  # 헷갈리지 않게 앞뒤를 본다
     )
     (?:\s*\([^)]{1,3}\))?
-    (?:\s*(?P<ap>오전|오후)?\s*(?P<H>\d{1,2})\s*(?::\s*(?P<Mi>\d{2})|시(?:\s*(?P<Ms>\d{1,2})\s*분)?))?
+    (?:T(?P<iH>\d{2}):(?P<iMi>\d{2})(?::\d{2}(?:\.\d+)?)?(?P<tz>Z|[+-]\d{2}:?\d{2})?  # ISO 8601
+      | \s*(?P<ap>오전|오후)?\s*(?P<H>\d{1,2})\s*(?::\s*(?P<Mi>\d{2})|시(?:\s*(?P<Ms>\d{1,2})\s*분)?)
+    )?
     """,
     re.VERBOSE,
 )
@@ -62,7 +66,11 @@ def _to_datetime(m: re.Match, default_year: int | None) -> datetime | None:
         month = int(g["m2"] or g["m3"])
         day = int(g["d2"] or g["d3"])
     hour, minute = 23, 59
-    if g["H"]:
+    if g["iH"]:
+        hour, minute = int(g["iH"]), int(g["iMi"])
+        if hour == 24 and minute == 0:
+            hour, minute = 23, 59
+    elif g["H"]:
         hour = int(g["H"])
         minute = int(g["Mi"] or g["Ms"] or 0)
         if g["ap"] == "오후" and hour < 12:
@@ -71,8 +79,17 @@ def _to_datetime(m: re.Match, default_year: int | None) -> datetime | None:
             hour = 0
         if hour == 24 and minute == 0:  # "24:00까지"는 그날 마감
             hour, minute = 23, 59
+    tz = KST
+    if g["tz"]:  # ISO 8601 시각대 (예: 2026-10-31T09:00:00Z)
+        off = g["tz"].replace(":", "")
+        sign = -1 if off.startswith("-") else 1
+        tz = (
+            UTC
+            if off == "Z"
+            else timezone(sign * timedelta(hours=int(off[1:3]), minutes=int(off[3:5])))
+        )
     try:
-        return datetime(year, month, day, hour, minute, tzinfo=KST)
+        return datetime(year, month, day, hour, minute, tzinfo=tz).astimezone(KST)
     except ValueError:
         return None
 
