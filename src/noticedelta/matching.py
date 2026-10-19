@@ -61,6 +61,13 @@ def _table_key(seg: Segment) -> tuple | None:
     return (loc.get("table_sig"), loc.get("row_key"), loc.get("header"))
 
 
+def _table_pos(seg: Segment) -> tuple | None:
+    if seg.kind != "table_cell":
+        return None
+    loc = seg.locator
+    return (loc.get("table_sig"), loc.get("row"), loc.get("col"))
+
+
 def match_segments(
     old: Sequence[Segment],
     new: Sequence[Segment],
@@ -112,6 +119,19 @@ def match_segments(
     for j in range(len(new)):
         if j not in pair and left_old.get(new[j].text_hash):
             pair[j] = left_old[new[j].text_hash].popleft()
+
+    # 3.5) 표 칸: 행 키 칸 자체가 바뀌면 1)의 키가 어긋난다. 같은 표(머리글 서명)의 같은 행·열
+    #      자리에 남은 칸끼리는 수정으로 잇는다. "1" → "1 (정정)"처럼 짧은 칸은 유사도로 못 잇는다.
+    used_old = set(pair.values())
+    old_by_pos: dict[tuple, deque[int]] = defaultdict(deque)
+    for i, s in enumerate(old):
+        if i not in used_old and (k := _table_pos(s)) is not None:
+            old_by_pos[k].append(i)
+    for j, s in enumerate(new):
+        k = _table_pos(s)
+        if j not in pair and k is not None and old_by_pos.get(k):
+            pair[j] = old_by_pos[k].popleft()
+            modified_new.add(j)
 
     # 4) 유사도로 "수정된 조각" 짝짓기 (같은 종류끼리, 높은 순 탐욕).
     if mode is MatchMode.HASH_SIM:
