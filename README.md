@@ -38,7 +38,7 @@ make demo      # 또는 uv run python -m noticedelta.demo
 |---|---|---|
 | 7.1 수집 | `sources/` K-Startup·기업마당 클라이언트, 속도 제한, 서킷 브레이커 | 실제 키로 응답 형태 확인 ([기록](docs/research/api-responses.md)). 테스트는 그 형태의 가상 응답 |
 | 7.2 저장 | `blobstore.py` 내용 해시 키 저장소(로컬·S3 호환), `ingest.py` 새 버전의 첨부 내려받기·형식 판별 | 완료. 로컬 PostgreSQL + SeaweedFS에 실제 공고 10건·첨부 9건 기록 확인 |
-| 7.3 조각화 | `segments.py` 문단·표 칸 조각, 위치 정보 | 완료. HWP/PDF 파서 연결은 4주차 |
+| 7.3 격리 파싱·조각화 | `infra/parser` 격리 파서 컨테이너(kordoc, 실패 시 hwp-hwpx-parser), `parsing.py` 파서 출력 계약·검토 기준, `segments.py` 문단·표 칸 조각(쪽·병합 칸·행 키) | 완료. 실제 첨부로 확인 ([파서 비교](docs/research/parsers.md)) |
 | 7.4 조각 맞추기 | `matching.py` 해시·순서 정렬·유사도·표 키, `hash` / `hash_sim` 모드 | 완료 (LLM 보조 변형은 RQ2 실험 때) |
 | 7.5 추출 | `llm/extract.py` 구조화 출력 추출, `citation.py` 인용 검증 | 완료 |
 | 7.6 판정 | `eligibility/` 규칙 형식, 3단계 판정기, 대량 판정용 SQL 조건, 시간에 따라 바뀌는 자격(자격 상실·획득 예정일)과 거의 해당 | 완료. 화면 표시는 5주차 |
