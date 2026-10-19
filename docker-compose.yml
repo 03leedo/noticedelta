@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: noticedelta
       POSTGRES_PASSWORD: noticedelta
       POSTGRES_DB: noticedelta
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]  # 5432는 PC에 설치된 PostgreSQL과 겹치기 쉬워 5433으로 연다
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U noticedelta"]
@@ -21,19 +21,18 @@ services:
       interval: 5s
       retries: 10
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: noticedelta
-      MINIO_ROOT_PASSWORD: noticedelta-dev
-    ports: ["9000:9000", "9001:9001"]
-    volumes: [miniodata:/data]
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      retries: 10
+  # 로컬 S3 호환 저장소. MinIO는 2025년 말 커뮤니티 이미지 배포를 멈춰 받을 수 없어
+  # SeaweedFS(Apache-2.0)로 대신한다. 코드는 S3 API만 쓰므로 클라우드에서는 R2로 바꾼다.
+  s3:
+    image: chrislusf/seaweedfs:4.48
+    command: >
+      server -dir=/data -ip.bind=0.0.0.0
+      -s3 -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json
+    ports: ["9000:9000"]
+    volumes:
+      - s3data:/data
+      - ./infra/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
 
 volumes:
   pgdata:
-  miniodata:
+  s3data:

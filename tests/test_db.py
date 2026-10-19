@@ -1,5 +1,6 @@
 import pytest
 import sqlalchemy as sa
+from conftest import sqlite_engine
 from sqlalchemy.orm import Session
 
 from noticedelta.db import models, repo
@@ -9,7 +10,7 @@ from noticedelta.sources import NoticeRecord
 
 @pytest.fixture
 def session():
-    engine = sa.create_engine("sqlite://")
+    engine = sqlite_engine()
     models.Base.metadata.create_all(engine)
     with Session(engine) as s:
         yield s
