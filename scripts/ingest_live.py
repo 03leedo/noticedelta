@@ -41,7 +41,9 @@ def ensure_bucket(store) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--per-source", type=int, default=5)
+    ap.add_argument("--per-source", type=int, default=5, help="페이지당 건수")
+    ap.add_argument("--pages", type=int, default=1)
+    ap.add_argument("--sources", default="kstartup,bizinfo")
     args = ap.parse_args()
     load_env(ROOT / ".env")
     url = os.environ.get("DATABASE_URL", "sqlite:///data/dev.db")
@@ -54,12 +56,22 @@ def main() -> None:
     print(f"DB: {engine.url.render_as_string(hide_password=True)}  저장소: {type(store).__name__}")
 
     with httpx.Client(timeout=30) as http, Session(engine) as session:
-        sources = [
-            KStartupClient(os.environ["KSTARTUP_SERVICE_KEY"], http, limiter=RateLimiter(1)),
-            BizinfoClient(os.environ["BIZINFO_SERVICE_KEY"], http, limiter=RateLimiter(1)),
-        ]
+        wanted = set(args.sources.split(","))
+        sources = []
+        if "kstartup" in wanted:
+            sources.append(
+                KStartupClient(os.environ["KSTARTUP_SERVICE_KEY"], http, limiter=RateLimiter(1))
+            )
+        if "bizinfo" in wanted:
+            sources.append(
+                BizinfoClient(os.environ["BIZINFO_SERVICE_KEY"], http, limiter=RateLimiter(1))
+            )
         for client in sources:
-            recs = client.list_notices(page=1, per_page=args.per_source)
+            recs = [
+                r
+                for page in range(1, args.pages + 1)
+                for r in client.list_notices(page=page, per_page=args.per_source)
+            ]
             att_limiter, breaker = RateLimiter(1), CircuitBreaker(failure_threshold=3)
             versions = stored = 0
             mimes, fails = Counter(), Counter()
