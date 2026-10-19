@@ -115,9 +115,15 @@ def upsert_notice_version(
         try:
             with session.begin_nested():
                 session.add(version)
+                session.flush()  # 관계가 선언돼 있지 않아 버전을 먼저 넣어야 첨부의 외래 키가 맞는다
                 for ref in rec.attachments:
                     session.add(
-                        Attachment(notice_version_id=version.id, filename=ref.filename, url=ref.url)
+                        Attachment(
+                            notice_version_id=version.id,
+                            filename=ref.filename,
+                            url=ref.url,
+                            role=ref.role,
+                        )
                     )
                 session.flush()
         except IntegrityError:

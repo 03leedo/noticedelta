@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "noticedelta-dev",
+      "credentials": [{ "accessKey": "noticedelta", "secretKey": "noticedelta-dev" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 """원문 저장소 (설계 7.2). 내용의 sha256을 키로 쓰므로 같은 파일은 한 번만 저장된다.
 
 - LocalBlobStore: 개발·테스트용 파일시스템 저장소.
-- S3BlobStore: S3 호환 저장소(로컬 MinIO, 클라우드 Cloudflare R2). boto3 클라이언트를 주입받는다.
+- S3BlobStore: S3 호환 저장소(로컬 SeaweedFS, 클라우드 Cloudflare R2). boto3 클라이언트를 주입받는다.
 
 읽을 때 해시를 다시 계산해 저장소가 내용을 바꿔 돌려주면 BlobCorrupted를 낸다.
 """

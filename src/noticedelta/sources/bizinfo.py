@@ -2,11 +2,14 @@
 
 - data.go.kr 판(15157820, 중소벤처기업부): https://www.data.go.kr/data/15157820/openapi.do
   공공누리 제3유형(출처표시+변경금지). 이 프로젝트의 기본 수집원이다 (docs/research/terms.md).
+  응답 형태는 2026-10-19 실제 호출로 확인했다 (docs/research/api-responses.md):
+  response.header.resultCode == "00", 항목은 response.body.items.item 배열(한 건이어도 배열),
+  빈 페이지는 items가 {}.
 - 기업마당 자체 API: https://www.bizinfo.go.kr/apiDetail.do?id=bizinfoApi (crtfcKey)
+  응답(jsonArray)은 아직 실제로 확인하지 못했다.
 
-두 API의 item 필드는 거의 같고 응답 껍데기만 다르다. 실제 응답이 명세와 다른 경우가 있어
-jsonArray[], jsonArray.item(배열·객체·null), response.body.items.item을 모두 받는다.
-첨부는 fileNm / flpthNm에 @로 이어 붙어 오고 같은 순서끼리 짝이다.
+첨부는 두 갈래로 온다. printFileNm/printFlpthNm은 공고문 본 파일 하나, fileNm/flpthNm은
+붙임 서식들이 @로 이어 붙어 오고 같은 순서끼리 짝이다.
 """
 
 from __future__ import annotations
@@ -16,7 +19,12 @@ import re
 
 import httpx
 
-from noticedelta.sources.base import AttachmentRef, NoticeRecord
+from noticedelta.sources.base import (
+    AttachmentRef,
+    NoticeRecord,
+    SourceError,
+    normalize_service_key,
+)
 from noticedelta.sources.http import get_json
 from noticedelta.sources.resilience import CircuitBreaker, RateLimiter
 
@@ -46,22 +54,38 @@ def _period(v: str | None) -> tuple[str | None, str | None]:
 
 
 def _attachments(item: dict) -> list[AttachmentRef]:
+    out = []
+    name, url = (item.get("printFileNm") or "").strip(), (item.get("printFlpthNm") or "").strip()
+    if name and url:
+        out.append(AttachmentRef(name, url, role="notice"))
     names = (item.get("fileNm") or "").split("@")
     urls = (item.get("flpthNm") or "").split("@")
-    return [
+    out += [
         AttachmentRef(n.strip(), u.strip())
         for n, u in zip(names, urls, strict=False)
         if n.strip() and u.strip()
     ]
+    return out
 
 
-def _items(payload: dict) -> list[dict]:
-    if "response" in payload:
-        body = (payload.get("response") or {}).get("body") or {}
-        items = (body.get("items") or {}).get("item")
-    else:
-        arr = payload.get("jsonArray")
-        items = arr.get("item") if isinstance(arr, dict) else arr
+def _items_data_go_kr(payload: dict) -> list[dict]:
+    resp = payload.get("response")
+    if not isinstance(resp, dict):
+        # 형태가 바뀌었는데 빈 목록으로 넘기면 수집이 조용히 멈춘다. 오류로 드러낸다.
+        raise SourceError("bizinfo API 응답 형태가 예상과 다름: response 없음")
+    header = resp.get("header") or {}
+    if header.get("resultCode", "00") != "00":
+        raise SourceError(
+            f"bizinfo API 오류: {header.get('resultCode')} {header.get('resultMsg', '')}".strip()
+        )
+    items = ((resp.get("body") or {}).get("items") or {}).get("item") or []
+    return list(items)
+
+
+def _items_bizinfo(payload: dict) -> list[dict]:
+    """기업마당 자체 API (미확인). 명세의 jsonArray[]와 jsonArray.item 둘 다 받는다."""
+    arr = payload.get("jsonArray")
+    items = arr.get("item") if isinstance(arr, dict) else arr
     if items is None:
         return []
     return [items] if isinstance(items, dict) else list(items)
@@ -74,6 +98,7 @@ def to_record(item: dict) -> NoticeRecord:
         ("지원 대상", "trgetNm"),
         ("신청 기간", "reqstBeginEndDe"),
         ("제출 서류", "reqstMthPapersCn"),
+        ("문의처", "refrncNm"),
     ]:
         if str(item.get(k) or "").strip():
             blocks.append(f"{label}: {html_to_text(str(item[k]))}")
@@ -103,7 +128,7 @@ class BizinfoClient:
         breaker: CircuitBreaker | None = None,
         limiter: RateLimiter | None = None,
     ):
-        self._key = key
+        self._key = normalize_service_key(key)
         self.http = http
         self.api = api
         self.breaker = breaker
@@ -129,4 +154,5 @@ class BizinfoClient:
         payload = get_json(
             self.http, url, params, source="bizinfo", breaker=self.breaker, limiter=self.limiter
         )
-        return [to_record(it) for it in _items(payload) if it.get("pblancId")]
+        items = _items_bizinfo(payload) if self.api == "bizinfo" else _items_data_go_kr(payload)
+        return [to_record(it) for it in items if it.get("pblancId")]

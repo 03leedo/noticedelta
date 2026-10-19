@@ -1,6 +1,7 @@
 import httpx
 import pytest
 import sqlalchemy as sa
+from conftest import sqlite_engine
 from sqlalchemy.orm import Session
 
 from noticedelta.blobstore import LocalBlobStore, blob_key
@@ -17,7 +18,7 @@ BASE = "https://example.test/files/"
 
 @pytest.fixture
 def session():
-    engine = sa.create_engine("sqlite://")
+    engine = sqlite_engine()
     models.Base.metadata.create_all(engine)
     with Session(engine) as s:
         yield s

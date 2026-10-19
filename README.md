@@ -29,15 +29,15 @@ make demo      # 또는 uv run python -m noticedelta.demo
   사용자 B: deadline 2026-10-31 18:00 → 2026-11-07 18:00
 ```
 
-로컬 인프라(PostgreSQL + pgvector, Redis, MinIO)는 `make up`(`docker compose up -d`)으로 띄운다.
+로컬 인프라(PostgreSQL + pgvector, Redis, S3 호환 저장소 SeaweedFS)는 `make up`(`docker compose up -d`)으로 띄운다.
 실제 API를 쓰려면 `.env.example`을 `.env`로 복사해 키를 넣는다. `.env`는 저장소에 올리지 않는다.
 
 ## 구현 현황 (2026-10-16)
 
 | 설계 | 모듈 | 상태 |
 |---|---|---|
-| 7.1 수집 | `sources/` K-Startup·기업마당 클라이언트, 속도 제한, 서킷 브레이커 | 가짜 응답으로 테스트. 실제 키 연동은 4주차 |
-| 7.2 저장 | `blobstore.py` 내용 해시 키 저장소(로컬·S3 호환), `ingest.py` 새 버전의 첨부 내려받기·형식 판별 | 완료 (가짜 응답·가짜 S3 클라이언트로 테스트). 실제 MinIO 연동 확인은 아직 |
+| 7.1 수집 | `sources/` K-Startup·기업마당 클라이언트, 속도 제한, 서킷 브레이커 | 실제 키로 응답 형태 확인 ([기록](docs/research/api-responses.md)). 테스트는 그 형태의 가상 응답 |
+| 7.2 저장 | `blobstore.py` 내용 해시 키 저장소(로컬·S3 호환), `ingest.py` 새 버전의 첨부 내려받기·형식 판별 | 완료. 로컬 PostgreSQL + SeaweedFS에 실제 공고 10건·첨부 9건 기록 확인 |
 | 7.3 조각화 | `segments.py` 문단·표 칸 조각, 위치 정보 | 완료. HWP/PDF 파서 연결은 4주차 |
 | 7.4 조각 맞추기 | `matching.py` 해시·순서 정렬·유사도·표 키, `hash` / `hash_sim` 모드 | 완료 (LLM 보조 변형은 RQ2 실험 때) |
 | 7.5 추출 | `llm/extract.py` 구조화 출력 추출, `citation.py` 인용 검증 | 완료 |
@@ -51,7 +51,7 @@ make demo      # 또는 uv run python -m noticedelta.demo
 
 - [설계 문서](docs/DESIGN.md): 목표, 연구 질문, 시스템 구조, 데이터 모델, 평가 계획, 일정. 이 저장소의 기준 문서다.
 - [플랫폼 구조](docs/ARCHITECTURE.md): 변경 영향 엔진을 공용 플랫폼으로 넓히고 그 위에 서비스 여러 개를 올리는 큰 틀, 도메인 팩 규약, 이벤트·MCP 계약, 위협 모델, 단계.
-- [수집원 약관·robots 확인](docs/research/terms.md), [정정공고 표본 28건](docs/research/corrections.md)
+- [수집원 약관·robots 확인](docs/research/terms.md), [정정공고 표본 28건](docs/research/corrections.md), [실제 API 응답 확인](docs/research/api-responses.md)
 - [구현 계획 (1~4주차)](docs/superpowers/plans/2026-10-16-foundation.md)
 - [진행 발표 슬라이드](https://03leedo.github.io/noticedelta/slides/): 9월 진행상황 및 10월 계획 ([원본](docs/slides/index.html))
 

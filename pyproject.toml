@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 s3 = ["boto3>=1.35"]
+postgres = ["psycopg[binary]>=3.2"]
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
