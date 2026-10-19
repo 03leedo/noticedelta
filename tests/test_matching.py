@@ -108,3 +108,25 @@ def test_table_row_reorder_is_unchanged():
 def test_similarity_bounds():
     assert similarity("업력 7년 이내", "업력 7년 이내") == 1.0
     assert similarity("업력 7년 이내", "전혀 다른 문장입니다") < 0.2
+
+
+def test_short_row_key_cell_edit_is_modified():
+    """행 키 칸("1")을 고치면 키가 어긋나고 유사도도 낮다. 같은 자리라 수정으로 본다."""
+    new_id = ids()
+    rows = [["연번", "단계", "기간"], ["1", "접수", "10월"], ["2", "평가", "11월"]]
+    old = first_version([Table(rows)], new_id)
+    edited = [r[:] for r in rows]
+    edited[1][0] = "1 (정정)"
+    cs = match_segments(old, segment_document([Table(edited)], source="body"), new_id=new_id)
+    assert (len(cs.modified), cs.added, cs.removed) == (1, [], [])
+    assert {s.text: s.lineage_id for s in cs.segments}["1 (정정)"] == "L1"
+
+
+def test_inserted_row_is_added_not_positional_modified():
+    """행을 끼워 넣으면 아래 행 자리가 밀린다. 키로 먼저 잇기 때문에 자리 규칙이 끼어들지 않는다."""
+    new_id = ids()
+    rows = [["구분", "내용"], ["업력", "7년 이내"], ["지원금", "최대 1억원"]]
+    old = first_version([Table(rows)], new_id)
+    new_rows = [rows[0], rows[1], ["지역", "부산"], rows[2]]
+    cs = match_segments(old, segment_document([Table(new_rows)], source="body"), new_id=new_id)
+    assert cs.modified == [] and len(cs.added) == 2 and cs.removed == []

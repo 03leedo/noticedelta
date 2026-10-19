@@ -73,7 +73,10 @@ class Attachment(Base):
     blob_key: Mapped[str | None] = mapped_column(sa.String(64))  # sha256
     parse_status: Mapped[str] = mapped_column(
         sa.String(16), default="pending"
-    )  # pending/ok/needs_review
+    )  # pending / ok / needs_review / unsupported
+    parser: Mapped[str | None] = mapped_column(sa.String(64))  # 예: kordoc 4.18.13
+    parsed_key: Mapped[str | None] = mapped_column(sa.String(64))  # 파서 출력 JSON의 원문 저장소 키
+    review_reason: Mapped[str | None] = mapped_column(sa.Text)
 
 
 class SegmentRow(Base):
