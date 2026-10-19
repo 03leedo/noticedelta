@@ -18,6 +18,7 @@ from noticedelta.sources.resilience import CircuitBreaker, CircuitOpen, RateLimi
 MAX_BYTES = 50 * 1024 * 1024
 
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # HWP 5.x, 옛 MS Office
+_HWP5_SIGNATURE = b"HWP Document File"
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,11 @@ def sniff_mime(data: bytes, filename: str = "") -> str:
     if data.startswith(b"%PDF-"):
         return "application/pdf"
     if data.startswith(_OLE):
-        return "application/x-hwp" if name.endswith(".hwp") else "application/x-ole-storage"
+        # HWP5는 FileHeader 스트림이 "HWP Document File"로 시작한다. 스트림 위치는 파일마다
+        # 달라(실제 첨부에서 6KB~30MB 지점) 전체에서 찾는다. 확장자가 .hwpx인 HWP5도 있었다.
+        if _HWP5_SIGNATURE in data or name.endswith(".hwp"):
+            return "application/x-hwp"
+        return "application/x-ole-storage"
     if data.startswith(b"PK\x03\x04"):
         # HWPX는 zip 안의 첫 항목이 mimetype이고 내용이 application/hwp+zip이다.
         if b"application/hwp+zip" in data[:200] or name.endswith(".hwpx"):

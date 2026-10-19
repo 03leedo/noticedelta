@@ -56,6 +56,8 @@ def record(attachments, deadline="2026-11-07"):
     [
         (PDF, "a.pdf", "application/pdf"),
         (HWP, "a.hwp", "application/x-hwp"),
+        (HWP + b"\x00" * 5000 + b"HWP Document File", "a.hwpx", "application/x-hwp"),
+        (HWP, "a.doc", "application/x-ole-storage"),
         (HWPX, "a.hwpx", "application/hwp+zip"),
         (HWPX, "a.bin", "application/hwp+zip"),
         (b"PK\x03\x04rest", "a.zip", "application/zip"),
