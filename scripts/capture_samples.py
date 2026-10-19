@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 
 from noticedelta.sources import bizinfo, kstartup
+from noticedelta.sources.base import normalize_service_key
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "samples"
@@ -115,7 +116,7 @@ def main() -> None:
                 print(f"[{name}] {env} 없음, 건너뜀")
                 continue
             params = dict(params)
-            params[params.pop("keyName")] = key
+            params[params.pop("keyName")] = normalize_service_key(key)
             try:
                 resp = http.get(url, params=params)
             except httpx.HTTPError as e:

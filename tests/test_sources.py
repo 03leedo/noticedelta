@@ -59,32 +59,58 @@ def test_kstartup_accepts_nested_data_envelope():
 def test_bizinfo_maps_attachments_and_strips_html():
     r = BizinfoClient(KEY, mock_http(load("bizinfo_page.json"))).list_notices()[0]
     assert (r.source, r.external_id) == ("bizinfo", "PBLN_000000009000001")
-    assert [a.filename for a in r.attachments] == ["공고문(수정).hwp", "붙임1. 신청서.hwpx"]
-    assert r.attachments[1].url.endswith("fileSn=1")
+    assert [(a.filename, a.role) for a in r.attachments] == [
+        ("공고문(수정).pdf", "notice"),
+        ("붙임1. 신청서.hwpx", "attachment"),
+        ("붙임2. 개인정보 동의서.hwp", "attachment"),
+    ]
+    assert r.attachments[2].url.endswith("fileSn=1")
     assert "<p>" not in r.body and "사업화를 지원합니다." in r.body
+    assert "문의처: (가상) 창업지원팀" in r.body
     assert (r.apply_start, r.apply_end) == ("2026-10-13", "2026-11-07")
+
+
+def page(*items, code="00"):
+    return {
+        "response": {
+            "header": {
+                "resultCode": code,
+                "resultMsg": "NORMAL_SERVICE" if code == "00" else "ERR",
+            },
+            "body": {"items": {"item": list(items)} if items else {}, "totalCount": len(items)},
+        }
+    }
+
+
+def test_bizinfo_empty_page():
+    assert BizinfoClient(KEY, mock_http(page())).list_notices() == []
+
+
+def test_bizinfo_result_code_error():
+    with pytest.raises(SourceError, match="99"):
+        BizinfoClient(KEY, mock_http(page(code="99"))).list_notices()
+
+
+def test_bizinfo_unexpected_shape_is_an_error_not_empty():
+    with pytest.raises(SourceError, match="형태"):
+        BizinfoClient(KEY, mock_http({"jsonArray": [{"pblancId": "A"}]})).list_notices()
 
 
 @pytest.mark.parametrize(
     "payload",
     [
+        {"jsonArray": [{"pblancId": "A", "pblancNm": "t"}]},
         {"jsonArray": {"item": [{"pblancId": "A", "pblancNm": "t"}]}},
         {"jsonArray": {"item": {"pblancId": "A", "pblancNm": "t"}}},
-        {"response": {"body": {"items": {"item": [{"pblancId": "A", "pblancNm": "t"}]}}}},
     ],
 )
-def test_bizinfo_envelopes(payload):
-    assert [r.external_id for r in BizinfoClient(KEY, mock_http(payload)).list_notices()] == ["A"]
-
-
-def test_bizinfo_empty_envelope():
-    assert BizinfoClient(KEY, mock_http({"jsonArray": {"item": None}})).list_notices() == []
+def test_bizinfo_own_api_envelopes(payload):
+    recs = BizinfoClient(KEY, mock_http(payload), api="bizinfo").list_notices()
+    assert [r.external_id for r in recs] == ["A"]
 
 
 def test_free_text_period_is_kept_in_body_not_dates():
-    payload = {
-        "jsonArray": [{"pblancId": "A", "pblancNm": "t", "reqstBeginEndDe": "예산 소진시까지"}]
-    }
+    payload = page({"pblancId": "A", "pblancNm": "t", "reqstBeginEndDe": "예산 소진시까지"})
     r = BizinfoClient(KEY, mock_http(payload)).list_notices()[0]
     assert r.apply_end is None
     assert "예산 소진시까지" in r.body
@@ -93,7 +119,11 @@ def test_free_text_period_is_kept_in_body_not_dates():
 def test_content_hash_changes_with_content():
     p1 = load("bizinfo_page.json")
     a = BizinfoClient(KEY, mock_http(p1)).list_notices()[0]
-    p1["jsonArray"][0]["reqstBeginEndDe"] = "2026-10-13 ~ 2026-11-14"
+    item = p1["response"]["body"]["items"]["item"][0]
+    item["updtPnttm"], item["inqireCo"] = "2026-10-21 09:00:00", 99
+    same = BizinfoClient(KEY, mock_http(p1)).list_notices()[0]
+    assert same.content_hash == a.content_hash  # 일괄 수정 시각·조회수만 바뀜
+    item["reqstBeginEndDe"] = "2026-10-13 ~ 2026-11-14"
     b = BizinfoClient(KEY, mock_http(p1)).list_notices()[0]
     assert a.content_hash != b.content_hash
 
@@ -109,7 +139,7 @@ def test_http_error_does_not_leak_key():
     ("make", "payload"),
     [
         (lambda h: KStartupClient(KEY, h), {"data": []}),
-        (lambda h: BizinfoClient(KEY, h), {"jsonArray": []}),
+        (lambda h: BizinfoClient(KEY, h), {"response": {"header": {"resultCode": "00"}}}),
         (lambda h: BizinfoClient(KEY, h, api="bizinfo"), {"jsonArray": []}),
     ],
 )
@@ -180,3 +210,42 @@ def test_half_open_allows_a_single_trial():
     assert cb.allow()
     cb.record_success()
     assert cb.allow() and cb.allow()
+
+
+def test_encoded_service_key_is_decoded_once():
+    seen = []
+    KStartupClient("abc%2Bdef%3D%3D", mock_http({"data": []}, seen=seen)).list_notices()
+    assert seen[0].url.params["serviceKey"] == "abc+def=="
+    seen.clear()
+    BizinfoClient("abc+def==", mock_http(page(), seen=seen)).list_notices()
+    assert seen[0].url.params["serviceKey"] == "abc+def=="
+
+
+def test_openapi_error_code_is_reported_without_key():
+    body = {
+        "OpenAPI_ServiceResponse": {
+            "cmmMsgHeader": {
+                "errMsg": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR",
+                "returnReasonCode": "30",
+            }
+        }
+    }
+
+    def handler(request):
+        return httpx.Response(403, json=body)
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(SourceError) as e:
+        KStartupClient(KEY, http).list_notices()
+    assert "SERVICE_KEY_IS_NOT_REGISTERED_ERROR" in str(e.value) and "403" in str(e.value)
+    assert KEY not in str(e.value)
+
+    ok200 = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
+    with pytest.raises(SourceError, match="SERVICE_KEY_IS_NOT_REGISTERED_ERROR"):
+        BizinfoClient(KEY, ok200).list_notices()
+
+
+def test_kstartup_body_includes_contact_and_target_categories():
+    r = KStartupClient(KEY, mock_http(load("kstartup_page.json"))).list_notices()[0]
+    assert "신청 대상 구분: 일반기업,1인 창조기업" in r.body
+    assert "문의처: 000-0000-0000" in r.body

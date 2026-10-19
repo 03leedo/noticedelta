@@ -44,7 +44,7 @@ def ingest_record(
         try:
             stored = download_attachment(
                 http,
-                AttachmentRef(att.filename, att.url),
+                AttachmentRef(att.filename, att.url, att.role),
                 store,
                 source=rec.source,
                 breaker=breaker,

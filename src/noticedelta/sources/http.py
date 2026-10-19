@@ -28,6 +28,18 @@ if not any(isinstance(f, _RedactKeys) for f in _httpx_logger.filters):
     _httpx_logger.addFilter(_RedactKeys())
 
 
+def _openapi_error(resp: httpx.Response) -> str | None:
+    """data.go.kr 공통 오류 응답의 오류 코드 (예: SERVICE_KEY_IS_NOT_REGISTERED_ERROR)."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    header = (body.get("OpenAPI_ServiceResponse") or {}).get("cmmMsgHeader") or {}
+    return header.get("errMsg") or None
+
+
 def get_json(
     http: httpx.Client,
     url: str,
@@ -48,11 +60,17 @@ def get_json(
     except httpx.HTTPStatusError as e:
         if breaker is not None:
             breaker.record_failure()
-        raise SourceError(f"{source} API 오류: HTTP {e.response.status_code}") from None
+        err = _openapi_error(e.response)
+        detail = f" ({err})" if err else ""
+        raise SourceError(f"{source} API 오류: HTTP {e.response.status_code}{detail}") from None
     except (httpx.HTTPError, ValueError) as e:
         if breaker is not None:
             breaker.record_failure()
         raise SourceError(f"{source} API 호출 실패: {type(e).__name__}") from None
+    if isinstance(data, dict) and "OpenAPI_ServiceResponse" in data:
+        if breaker is not None:
+            breaker.record_failure()
+        raise SourceError(f"{source} API 오류: {_openapi_error(resp) or '알 수 없는 오류'}")
     if breaker is not None:
         breaker.record_success()
     return data

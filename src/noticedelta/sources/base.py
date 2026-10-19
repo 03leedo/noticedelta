@@ -5,6 +5,19 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
+from urllib.parse import unquote
+
+_VOLATILE = {"id", "totCnt", "inqireCo", "updtPnttm"}
+
+
+def normalize_service_key(key: str) -> str:
+    """data.go.kr는 같은 키를 Encoding판(%2B 등)과 Decoding판으로 준다.
+
+    httpx가 쿼리를 다시 인코딩하므로 Encoding판을 그대로 쓰면 두 번 인코딩돼 인증에 실패한다.
+    퍼센트 인코딩이 보이면 풀어서 Decoding판으로 쓴다.
+    """
+    key = key.strip()
+    return unquote(key) if "%" in key else key
 
 
 class SourceError(Exception):
@@ -15,6 +28,7 @@ class SourceError(Exception):
 class AttachmentRef:
     filename: str
     url: str
+    role: str = "attachment"  # notice(공고문 본 파일) / attachment(붙임 서식 등)
 
 
 @dataclass
@@ -32,7 +46,12 @@ class NoticeRecord:
 
     @property
     def content_hash(self) -> str:
-        """원본 응답 항목의 해시. 행 번호·조회수처럼 내용과 무관한 값은 빼고 계산한다."""
-        raw = {k: v for k, v in self.raw.items() if k not in {"id", "totCnt", "inqireCo"}}
+        """원본 응답 항목의 해시. 내용과 무관한 값은 빼고 계산한다.
+
+        - id(K-Startup 행 번호), totCnt, inqireCo(조회수)
+        - updtPnttm(기업마당 수정 시각): 여러 공고가 같은 초에 함께 바뀌는 일괄 갱신이 있어
+          내용이 그대로여도 값이 바뀐다 (docs/research/api-responses.md).
+        """
+        raw = {k: v for k, v in self.raw.items() if k not in _VOLATILE}
         canonical = json.dumps(raw, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

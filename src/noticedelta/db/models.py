@@ -68,6 +68,7 @@ class Attachment(Base):
     notice_version_id: Mapped[str] = mapped_column(sa.ForeignKey("notice_version.id"), index=True)
     filename: Mapped[str] = mapped_column(sa.Text)
     url: Mapped[str] = mapped_column(sa.Text)
+    role: Mapped[str] = mapped_column(sa.String(16), default="attachment")  # notice / attachment
     mime: Mapped[str | None] = mapped_column(sa.String(100))
     blob_key: Mapped[str | None] = mapped_column(sa.String(64))  # sha256
     parse_status: Mapped[str] = mapped_column(

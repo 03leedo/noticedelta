@@ -1,5 +1,5 @@
 {
-  "_comment": "테스트용 가상 응답. 필드 이름과 형태만 data.go.kr 15125364 명세를 따른다.",
+  "_comment": "테스트용 가상 응답. 필드 이름과 응답 형태는 2026-10-19 data.go.kr 15125364 실제 호출에서 확인한 것을 따르고, 값은 모두 가상이다.",
   "currentCount": 2,
   "matchCount": 2,
   "page": 1,
@@ -13,7 +13,7 @@
       "pbanc_ctnt": "지역 유망 창업기업의 사업화를 지원합니다.",
       "aply_trgt_ctnt": "공고일 기준 창업 7년 이내 기업",
       "aply_excl_trgt_ctnt": "☞ 휴·폐업 중인 기업\r\n☞ 국세·지방세 체납 기업",
-      "biz_enyy": "7년미만",
+      "biz_enyy": "1년미만,2년미만,3년미만,5년미만,7년미만",
       "biz_trgt_age": "만 20세 이상 ~ 만 39세 이하",
       "supt_regin": "부산",
       "pbanc_rcpt_bgng_dt": "20261013",
@@ -22,7 +22,14 @@
       "pbanc_ntrp_nm": "(가상) 지역창업진흥원",
       "biz_prch_dprt_nm": "창업지원팀",
       "detl_pg_url": "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn=900001",
-      "biz_aply_url": ""
+      "biz_aply_url": null,
+      "aply_trgt": "일반기업,1인 창조기업",
+      "supt_biz_clsfc": "사업화",
+      "prch_cnpl_no": "000-0000-0000",
+      "intg_pbanc_yn": "N",
+      "sprv_inst": "(가상) 지방자치단체",
+      "aply_mthd_onli_rcpt_istc": "https://www.k-startup.go.kr",
+      "prfn_matr": null
     },
     {
       "id": 2,

@@ -1,7 +1,8 @@
 """K-Startup 사업공고 API (data.go.kr 15125364, 창업진흥원).
 
 명세: https://www.data.go.kr/data/15125364/openapi.do (Swagger, 2026-10-16 확인)
-- 응답 data는 명세상 data.data[]지만 실제로는 data[]로 오는 사례가 많아 둘 다 받는다.
+- 응답 data는 명세상 data.data[]지만 2026-10-19 실제 호출에서는 data[]로 왔다. 둘 다 받는다.
+- pbanc_sn은 정수, 업력(biz_enyy)·연령(biz_trgt_age)·신청 대상(aply_trgt)은 쉼표로 이은 분류 목록이다.
 - 날짜는 yyyyMMdd 문자열, 빈 값은 "".
 - 첨부파일 URL 필드는 없다. 첨부는 기업마당 API에서 받는다 (docs/research/terms.md).
 """
@@ -10,7 +11,7 @@ from __future__ import annotations
 
 import httpx
 
-from noticedelta.sources.base import NoticeRecord
+from noticedelta.sources.base import NoticeRecord, normalize_service_key
 from noticedelta.sources.http import get_json
 from noticedelta.sources.resilience import CircuitBreaker, RateLimiter
 
@@ -24,6 +25,10 @@ _BODY_FIELDS = [
     ("대상 연령", "biz_trgt_age"),
     ("지역", "supt_regin"),
     ("우대 사항", "prfn_matr"),
+    ("신청 대상 구분", "aply_trgt"),
+    ("지원 분야", "supt_biz_clsfc"),
+    ("담당 부서", "biz_prch_dprt_nm"),
+    ("문의처", "prch_cnpl_no"),
 ]
 
 
@@ -74,7 +79,7 @@ class KStartupClient:
         limiter: RateLimiter | None = None,
         endpoint: str = ENDPOINT,
     ):
-        self._key = service_key
+        self._key = normalize_service_key(service_key)
         self.http = http
         self.breaker = breaker
         self.limiter = limiter
