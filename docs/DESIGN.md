@@ -408,7 +408,7 @@ change_event(바뀐 lineage 목록)
 | 1. 약관·robots | 공식 API로만 수집. K-Startup은 robots가 첨부 경로 차단, 약관상 무단 복제 금지 → 스크래핑 안 함 | `docs/research/terms.md` |
 | 2. 공공누리 | K-Startup 공고 1유형, 기업마당 API 3유형(변경금지). 첨부는 미확인 | 같음 |
 | 3. 정정공고 | 표본 28건. 마감 연장 43%, 자격·대상 변경 21%. 본문 전/후 대비 1건 | `docs/research/corrections.md` |
-| 4. 파서 | 미완료 (4주차) | |
+| 4. 파서 | **충족**. kordoc으로 실제 첨부 119개 중 94% 성공(HWP·HWPX 100%, 실패는 텍스트 층 없는 PDF뿐) | `docs/research/parsers.md` |
 | 5. 유사 서비스 | 2026-10-04 조사 이후 변화 미확인 | |
 | 6. 클라우드 | 미완료 (9주차 전까지) | |
 
