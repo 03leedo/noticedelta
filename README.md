@@ -29,7 +29,7 @@ make demo      # 또는 uv run python -m noticedelta.demo
   사용자 B: deadline 2026-10-31 18:00 → 2026-11-07 18:00
 ```
 
-로컬 인프라(PostgreSQL + pgvector, Redis, S3 호환 저장소 SeaweedFS)는 `make up`(`docker compose up -d`)으로 띄운다.
+로컬 인프라(PostgreSQL + pgvector, S3 호환 저장소 SeaweedFS, Docker 필요)는 `make up`(`docker compose up -d`)으로 띄운다.
 실제 API를 쓰려면 `.env.example`을 `.env`로 복사해 키를 넣는다. `.env`는 저장소에 올리지 않는다.
 
 ## 구현 현황 (2026-10-16)

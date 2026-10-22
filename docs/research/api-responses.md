@@ -63,3 +63,9 @@ uv run --extra s3 --extra postgres python scripts/ingest_live.py --per-source 5
 ```
 
 (`.env`에 `DATABASE_URL=postgresql+psycopg://noticedelta:noticedelta@localhost:5433/noticedelta`, `NOTICEDELTA_BLOB_BACKEND=s3`, `S3_ENDPOINT_URL=http://localhost:9000`, `S3_ACCESS_KEY_ID=noticedelta`, `S3_SECRET_ACCESS_KEY=noticedelta-dev`, `S3_REGION=us-east-1`)
+
+## 추가 확인 (2026-10-23, 상시 수집 첫 실행)
+
+- 기업마당 API가 돌려준 1,460건은 진행 중 503건과 신청 기간 없음(상시·예산 소진 시까지 등) 957건이었고, **마감이 지난 항목은 0건**이었다. 닫힌 원공고를 API로 받아 과거 정정 쌍을 백필할 수는 없다. 정정 쌍은 상시 수집으로만 얻는다.
+- 열린 공고 중 제목에 수정·정정·연장·변경이 들어간 것은 기업마당 135건(9%), K-Startup 5건(231건 중)이었다. 이 공고들의 변경 전 상태는 남아 있지 않다.
+- 가장 오래된 기업마당 열린 공고의 등록일은 2023-11-03이었다(상시 모집 공고).
