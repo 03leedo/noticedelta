@@ -1,4 +1,4 @@
-# 상시 수집을 Windows 작업 스케줄러에 등록한다 (집 PC용, 관리자 권한 불필요).
+﻿# 상시 수집을 Windows 작업 스케줄러에 등록한다 (집 PC용, 관리자 권한 불필요).
 #   powershell -ExecutionPolicy Bypass -File scripts\install_snapshot_task.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\install_snapshot_task.ps1 -Remove
 # 6시간마다 실행하고, PC가 꺼져 있어 놓친 실행은 켜진 뒤 바로 한다. 로그인한 동안에만 돈다.
@@ -27,4 +27,4 @@ $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnB
 
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings `
     -Description "NoticeDelta: K-Startup·기업마당 열린 공고 스냅샷 (data/snapshots)" -Force | Out-Null
-Write-Output "등록함: $TaskName ($EveryHours시간마다, 로그 $Log)"
+Write-Output "등록함: $TaskName (${EveryHours}시간마다, 로그 ${Log})"
