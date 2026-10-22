@@ -56,6 +56,10 @@ def _latest_version(session: Session, notice_id: str) -> NoticeVersion | None:
     )
 
 
+def latest_version(session: Session, notice_id: str) -> NoticeVersion | None:
+    return _latest_version(session, notice_id)
+
+
 def _get_or_create_notice(session: Session, rec: NoticeRecord) -> Notice:
     notice = _find_notice(session, rec.source, rec.external_id)
     if notice is not None:

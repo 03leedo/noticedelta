@@ -160,9 +160,9 @@ def ingest(session, store):
         apply_start=None,
         apply_end=None,
         attachments=[
-            AttachmentRef("공고문.hwpx", "https://example.test/f/공고문.hwpx", role="notice"),
-            AttachmentRef("스캔.pdf", "https://example.test/f/스캔.pdf"),
-            AttachmentRef("서식묶음.zip", "https://example.test/f/서식묶음.zip"),
+            AttachmentRef("공고문.hwpx", "https://www.bizinfo.go.kr/f/공고문.hwpx", role="notice"),
+            AttachmentRef("스캔.pdf", "https://www.bizinfo.go.kr/f/스캔.pdf"),
+            AttachmentRef("서식묶음.zip", "https://www.bizinfo.go.kr/f/서식묶음.zip"),
         ],
         raw={"pblancId": "PBLN_X"},
     )

@@ -25,7 +25,7 @@ from capture_samples import load_env  # noqa: E402
 from noticedelta import blobstore  # noqa: E402
 from noticedelta.db import models  # noqa: E402
 from noticedelta.ingest import parse_attachments, version_segments  # noqa: E402
-from noticedelta.parsing import DockerParser  # noqa: E402
+from noticedelta.parsing import DockerParser, ParserUnavailable  # noqa: E402
 
 NEW_COLUMNS = {"parser": "VARCHAR(64)", "parsed_key": "VARCHAR(64)", "review_reason": "TEXT"}
 
@@ -44,6 +44,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0, help="처리할 버전 수 (0이면 전부)")
     args = ap.parse_args()
     load_env(ROOT / ".env")
+    (ROOT / "data").mkdir(exist_ok=True)
     engine = sa.create_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
     models.Base.metadata.create_all(engine)
     add_missing_columns(engine)
@@ -57,7 +58,16 @@ def main() -> None:
         if args.limit:
             versions = versions[: args.limit]
         for i, v in enumerate(versions, 1):
-            for o in parse_attachments(session, v.id, parser=parser, store=store):
+            try:
+                outcomes = parse_attachments(session, v.id, parser=parser, store=store)
+            except ParserUnavailable as e:
+                session.commit()
+                print(f"\n파서를 돌릴 수 없어 멈춥니다(남은 첨부는 pending): {e}")
+                print(
+                    "Docker Desktop을 켜고 `docker build -t noticedelta-parser infra/parser` 뒤 다시 돌리세요"
+                )
+                return
+            for o in outcomes:
                 statuses[o.status] += 1
                 if o.parser:
                     parsers[o.parser] += 1
