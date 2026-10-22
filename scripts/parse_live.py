@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from capture_samples import load_env  # noqa: E402
 
 from noticedelta import blobstore  # noqa: E402
-from noticedelta.db import models  # noqa: E402
+from noticedelta.db import make_engine, models  # noqa: E402
 from noticedelta.ingest import parse_attachments, version_segments  # noqa: E402
 from noticedelta.parsing import DockerParser, ParserUnavailable  # noqa: E402
 
@@ -45,7 +45,7 @@ def main() -> None:
     args = ap.parse_args()
     load_env(ROOT / ".env")
     (ROOT / "data").mkdir(exist_ok=True)
-    engine = sa.create_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
+    engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
     models.Base.metadata.create_all(engine)
     add_missing_columns(engine)
     store = blobstore.from_env()
