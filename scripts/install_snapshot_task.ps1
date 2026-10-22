@@ -17,7 +17,8 @@ $Log = Join-Path $Repo "data\snapshots\task.log"
 New-Item -ItemType Directory -Force (Split-Path $Log) | Out-Null
 
 # 출력은 로그 파일에 덧붙인다. 창이 뜨지 않게 숨긴다.
-$Cmd = "Set-Location '$Repo'; & '$Uv' run python scripts/snapshot.py *>> '$Log'"
+# PowerShell 5.1의 *>>는 UTF-16으로 쓰므로 Out-File로 UTF-8 로그를 남긴다.
+$Cmd = "Set-Location '$Repo'; & '$Uv' run python scripts/snapshot.py *>&1 | Out-File -FilePath '$Log' -Append -Encoding utf8"
 $Action = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -WindowStyle Hidden -Command `"$Cmd`""
 $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) `
