@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from capture_samples import load_env  # noqa: E402
 
 from noticedelta import blobstore  # noqa: E402
-from noticedelta.db import models  # noqa: E402
+from noticedelta.db import make_engine, models  # noqa: E402
 from noticedelta.ingest import ingest_record  # noqa: E402
 from noticedelta.sources import BizinfoClient, CircuitBreaker, KStartupClient, RateLimiter  # noqa: E402
 
@@ -49,7 +49,7 @@ def main() -> None:
     url = os.environ.get("DATABASE_URL", "sqlite:///data/dev.db")
     if url.startswith("sqlite:///data/"):
         (ROOT / "data").mkdir(exist_ok=True)
-    engine = sa.create_engine(url)
+    engine = make_engine(url)
     models.Base.metadata.create_all(engine)
     store = blobstore.from_env()
     ensure_bucket(store)

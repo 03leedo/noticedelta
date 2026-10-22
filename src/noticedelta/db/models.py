@@ -164,6 +164,35 @@ class OutboxAlert(Base):
     sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
+class Job(Base):
+    """PostgreSQL 작업 큐 (설계 8장). 단계 결과 기록과 다음 작업 등록을 한 트랜잭션으로 묶는다."""
+
+    __tablename__ = "job"
+    __table_args__ = (
+        sa.Index("ix_job_ready", "status", "run_after", "priority"),
+        sa.Index("ix_job_concurrency", "concurrency_key", "status"),
+    )
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(sa.String(32))
+    dedupe_key: Mapped[str] = mapped_column(sa.String(300), unique=True)
+    concurrency_key: Mapped[str | None] = mapped_column(sa.String(100))  # 같은 키는 하나씩만
+    payload: Mapped[dict] = mapped_column(JSONType, default=dict)
+    priority: Mapped[int] = mapped_column(sa.Integer, default=100)  # 작을수록 먼저
+    # queued / running / retry / done / dead
+    status: Mapped[str] = mapped_column(sa.String(16), default="queued")
+    attempts: Mapped[int] = mapped_column(sa.Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(sa.Integer, default=3)
+    run_after: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    lease_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    locked_by: Mapped[str | None] = mapped_column(sa.String(64))
+    error_class: Mapped[str | None] = mapped_column(sa.String(16))  # transient / permanent
+    last_error: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), default=now, onupdate=now
+    )
+
+
 class JobLedger(Base):
     __tablename__ = "job_ledger"
     stage: Mapped[str] = mapped_column(sa.String(32), primary_key=True)

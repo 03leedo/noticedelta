@@ -6,12 +6,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      # PostgreSQL 통합 테스트(작업 큐의 SKIP LOCKED·advisory lock 등)용
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: noticedelta
+          POSTGRES_PASSWORD: noticedelta
+          POSTGRES_DB: noticedelta
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U noticedelta" --health-interval 5s --health-retries 10
+    env:
+      NOTICEDELTA_PG_URL: postgresql+psycopg://noticedelta:noticedelta@localhost:5432/noticedelta
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-      - run: uv sync
+      - run: uv sync --locked --extra postgres
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest
