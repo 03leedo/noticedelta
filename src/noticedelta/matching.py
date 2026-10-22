@@ -63,7 +63,7 @@ def _table_home(loc: dict) -> tuple:
     """
     if loc.get("source") == "body":
         return ("body", loc.get("table"))
-    return (loc.get("role") or "att", _stable_name(loc.get("filename", "")), loc.get("table"))
+    return (loc.get("role") or "att", stable_filename(loc.get("filename", "")), loc.get("table"))
 
 
 _REVISION_MARK = re.compile(
@@ -71,7 +71,7 @@ _REVISION_MARK = re.compile(
 )
 
 
-def _stable_name(filename: str) -> str:
+def stable_filename(filename: str) -> str:
     """정정본에서 붙는 표시("공고문(수정).hwp", "2차 정정")와 확장자를 지운 파일 이름."""
     stem = filename.rsplit(".", 1)[0] if "." in filename else filename
     return re.sub(r"[\s_\-\[\]()]+", "", _REVISION_MARK.sub("", stem))
