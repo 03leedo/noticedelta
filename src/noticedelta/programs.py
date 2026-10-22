@@ -37,7 +37,6 @@ from noticedelta.db.models import (
     ProgramVersion,
     SnapshotRecord,
 )
-from noticedelta.matching import stable_filename
 from noticedelta.sources import NoticeRecord, bizinfo, kstartup
 
 TO_RECORD = {"kstartup": kstartup.to_record, "bizinfo": bizinfo.to_record}
@@ -163,20 +162,16 @@ def _link_program(
 
 
 def _attach_blobs(session: Session, version: NoticeVersion, item: dict) -> list[str | None]:
-    """수집기가 받은 첨부 원본 키를 첨부 행에 옮기고 lineage 키를 붙인다."""
+    """수집기가 받은 첨부 원본 키를 첨부 행에 옮긴다 (lineage 키는 repo가 버전을 만들 때 붙인다)."""
     by_url = {a["url"]: a for a in item.get("attachments", [])}
     rows = session.scalars(
         sa.select(Attachment).where(Attachment.notice_version_id == version.id)
     ).all()
-    seen: Counter = Counter()
     keys = []
     for att in rows:
         snap = by_url.get(att.url, {})
         if snap.get("blob_key") and att.blob_key is None:
             att.blob_key, att.mime = snap["blob_key"], snap.get("mime")
-        base = f"{att.role}:{stable_filename(att.filename)}"
-        att.lineage_key = f"{base}:{seen[base]}"
-        seen[base] += 1
         keys.append(att.blob_key)
     return keys
 
@@ -288,3 +283,46 @@ def load_snapshots(session: Session, root: Path, store: BlobStore) -> LoadSummar
         session.commit()
         summary.runs += 1
     return summary
+
+
+# --- 버전 완전성 (DESIGN 7.3) ---
+
+SETTLED = {"ok", "needs_review", "unsupported"}
+
+
+def attachments_settled(session: Session, notice_version_id: str) -> tuple[bool, list[str]]:
+    """새 버전의 첨부가 모두 끝 상태인지. 아직 받지 못했거나 파싱 전인 첨부 이름을 함께 준다.
+
+    끝나지 않은 첨부가 있는 버전은 조각 비교를 하지 않는다. 일시 장애로 빠진 첨부의 조각이
+    "삭제"로 잡혀 자격 조건이 사라진 것처럼 보이는 가짜 알림을 막는다.
+    """
+    rows = session.scalars(
+        sa.select(Attachment).where(Attachment.notice_version_id == notice_version_id)
+    ).all()
+    waiting = [a.filename for a in rows if a.blob_key is None or a.parse_status not in SETTLED]
+    return not waiting, waiting
+
+
+def unreadable_attachments(session: Session, notice_version_id: str) -> set[str]:
+    """파싱해 조각을 만들지 못한 첨부의 lineage 키 (needs_review, unsupported)."""
+    rows = session.scalars(
+        sa.select(Attachment).where(
+            Attachment.notice_version_id == notice_version_id, Attachment.parse_status != "ok"
+        )
+    ).all()
+    return {a.lineage_key for a in rows if a.lineage_key}
+
+
+def comparable_old_segments(old_segments, unreadable: set[str]):
+    """새 버전에서 읽지 못한 첨부의 옛 조각은 비교에서 빼고 "알 수 없음" lineage로 돌려준다.
+
+    그 첨부가 정말 바뀌었는지 모르므로 삭제로 보지 않는다. 엔진은 이 lineage에 걸린 필드를
+    stale로 낮추고 알리지 않는다(impact.run_impact의 unknown_lineages).
+    """
+    kept, unknown = [], set()
+    for seg in old_segments:
+        if seg.locator.get("attachment") in unreadable:
+            unknown.add(seg.lineage_id)
+        else:
+            kept.append(seg)
+    return kept, unknown

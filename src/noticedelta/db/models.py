@@ -166,24 +166,33 @@ class SegmentRow(Base):
     locator: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
+# 아래 테이블은 모두 사업(program)과 사업 버전에 건다 (DESIGN 6.1). 기업마당이 정정 때 새 번호로
+# 다시 올려도 구독·판정·알림이 끊기지 않게 하기 위해서다.
+
+
 class FieldValueRow(Base):
     __tablename__ = "field_value"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    notice_id: Mapped[str] = mapped_column(sa.ForeignKey("notice.id"), index=True)
-    version_id: Mapped[str] = mapped_column(sa.ForeignKey("notice_version.id"))
+    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
     name: Mapped[str] = mapped_column(sa.String(64))
     value: Mapped[object] = mapped_column(JSONType)
     value_type: Mapped[str] = mapped_column(sa.String(16))
     source_lineage_ids: Mapped[list] = mapped_column(JSONType, default=list)
     confidence: Mapped[float] = mapped_column(sa.Float, default=1.0)
+    status: Mapped[str] = mapped_column(
+        sa.String(16), default="verified"
+    )  # verified/needs_review/stale
     extractor: Mapped[str] = mapped_column(sa.String(64), default="")
+    template_version: Mapped[str | None] = mapped_column(sa.String(32))  # 추출 프롬프트 버전
+    llm_call_key: Mapped[str | None] = mapped_column(sa.String(64))  # 녹화본 키
 
 
 class EligibilityRuleRow(Base):
     __tablename__ = "eligibility_rule"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    notice_id: Mapped[str] = mapped_column(sa.ForeignKey("notice.id"), index=True)
-    version_id: Mapped[str] = mapped_column(sa.ForeignKey("notice_version.id"))
+    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
     group_id: Mapped[str] = mapped_column(sa.String(32))
     attribute: Mapped[str] = mapped_column(sa.String(64))
     op: Mapped[str] = mapped_column(sa.String(8))
@@ -200,30 +209,39 @@ class Profile(Base):
 
 class SubscriptionRow(Base):
     __tablename__ = "subscription"
-    __table_args__ = (sa.UniqueConstraint("user_id", "notice_id"),)
+    __table_args__ = (sa.UniqueConstraint("user_id", "program_id"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.user_id"), index=True)
-    notice_id: Mapped[str] = mapped_column(sa.ForeignKey("notice.id"), index=True)
+    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
     fields: Mapped[list] = mapped_column(JSONType, default=list)
 
 
 class JudgmentRow(Base):
+    """판정 이력. 덮어쓰지 않고 쌓는다(사용자·사업·사업 버전·규칙 해시마다 하나)."""
+
     __tablename__ = "judgment"
+    __table_args__ = (
+        sa.UniqueConstraint("user_id", "program_id", "program_version_id", "ruleset_hash"),
+    )
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.user_id"), index=True)
-    notice_id: Mapped[str] = mapped_column(sa.ForeignKey("notice.id"), index=True)
-    version_id: Mapped[str] = mapped_column(sa.ForeignKey("notice_version.id"))
+    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
+    ruleset_hash: Mapped[str] = mapped_column(sa.String(64))
     result: Mapped[str] = mapped_column(sa.String(16))  # eligible / ineligible / unknown
     reasons: Mapped[list] = mapped_column(JSONType, default=list)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
 
 
 class ChangeEvent(Base):
     __tablename__ = "change_event"
+    __table_args__ = (sa.UniqueConstraint("program_id", "to_version_id"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    notice_id: Mapped[str] = mapped_column(sa.ForeignKey("notice.id"), index=True)
+    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
     from_version_id: Mapped[str | None] = mapped_column(sa.String(32))
     to_version_id: Mapped[str] = mapped_column(sa.String(32))
     changed_lineages: Mapped[dict] = mapped_column(JSONType, default=dict)
+    matcher_version: Mapped[str] = mapped_column(sa.String(32), default="")
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
 
 
@@ -232,9 +250,11 @@ class OutboxAlert(Base):
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     idempotency_key: Mapped[str] = mapped_column(sa.String(200), unique=True)
     user_id: Mapped[str] = mapped_column(sa.String(32), index=True)
-    notice_id: Mapped[str] = mapped_column(sa.String(32))
+    program_id: Mapped[str] = mapped_column(sa.String(32), index=True)
     payload: Mapped[dict] = mapped_column(JSONType, default=dict)
-    status: Mapped[str] = mapped_column(sa.String(16), default="pending")  # pending / sent / failed
+    # pending → held | ready → sending → sent, 그리고 superseded / discarded / corrected (DESIGN 7.8)
+    status: Mapped[str] = mapped_column(sa.String(16), default="pending")
+    held_reason: Mapped[str | None] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
     sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 

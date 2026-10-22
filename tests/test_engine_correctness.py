@@ -171,7 +171,7 @@ def test_deleted_uncited_clause_is_detected():
     }
     ex = Extractor({})
     run_impact(
-        notice_id="N",
+        program_id="N",
         to_version_id="v2",
         change=change,
         old_fields=fields,
@@ -195,7 +195,7 @@ def test_field_not_found_again_becomes_stale():
         "deadline": FieldValue("deadline", "datetime", "2026-10-31 18:00", [old[0].lineage_id])
     }
     res = run_impact(
-        notice_id="N",
+        program_id="N",
         to_version_id="v2",
         change=change,
         old_fields=fields,
@@ -225,7 +225,7 @@ def test_newly_eligible_user_without_prior_judgment_is_alerted():
         }
     )
     res = run_impact(
-        notice_id="N",
+        program_id="N",
         to_version_id="v2",
         change=change,
         old_fields=fields,

@@ -133,7 +133,7 @@ def run_demo(
         out(f"  수정 {lid}: {_show(by_id[lid])}")
 
     res = run_impact(
-        notice_id=sc["notice_id"],
+        program_id=sc["notice_id"],
         to_version_id=v2["version_id"],
         change=change,
         old_fields=fields,
