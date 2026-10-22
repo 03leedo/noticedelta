@@ -141,7 +141,8 @@ class LLMExtractor:
                 rule: Rule
                 if not verify_rule(rule, cited):
                     rule.confidence = min(rule.confidence, LOW_CONFIDENCE)
-            confs = [r.confidence for r in _iter_rules(group)] or [1.0]
+            # 규칙이 하나도 없으면 믿지 않는다. 판정기도 빈 그룹을 확인 필요로 본다.
+            confs = [r.confidence for r in _iter_rules(group)] or [LOW_CONFIDENCE]
             return FieldValue(name, vtype, group.model_dump(), sources, min(confs))
         ok = bool(cited) and verify_citation(vtype, value, cited, default_year=self.default_year)
         return FieldValue(name, vtype, value, sources, 1.0 if ok else LOW_CONFIDENCE)

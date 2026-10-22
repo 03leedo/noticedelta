@@ -120,8 +120,11 @@ def _eval_group(
         )
     else:
         result = "pass" if "pass" in outcomes else "unknown" if "unknown" in outcomes else "fail"
-        if not outcomes:
-            result = "pass"
+    if not outcomes and not group.manual:
+        # 규칙이 하나도 없는 그룹을 "누구나 해당"으로 보지 않는다. 추출이 실패했거나(자격 조건이
+        # 이미지·깨진 표에 있음) 숨은 글로 조작됐을 수 있다 (평가 문서 I3).
+        result = "unknown"
+        reasons.append(Reason(None, "missing", "자격 규칙이 하나도 없음 (공고 원문 확인 필요)"))
 
     for m in group.manual:
         reasons.append(Reason(None, "manual", f"직접 확인 필요: {m.text}", m.source))

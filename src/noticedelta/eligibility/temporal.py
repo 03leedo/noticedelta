@@ -11,9 +11,10 @@
 from __future__ import annotations
 
 import calendar
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from noticedelta.eligibility.judge import Judgment, Reason, Result, _coerce, _eval_rule, judge
@@ -26,9 +27,14 @@ CEO_BIRTH_DATE = "ceo_birth_date"
 def _as_date(v: Any) -> date | None:
     if v is None or v == "":
         return None
+    if isinstance(v, datetime):
+        return v.date()
     if isinstance(v, date):
         return v
-    return date.fromisoformat(str(v).strip()[:10])
+    digits = re.sub(r"\D", "", str(v))  # 2019-11-01, 2019.11.01, 2019/11/01, 20191101
+    if len(digits) < 8:
+        raise ValueError(f"날짜를 읽을 수 없음: {v!r}")
+    return date(int(digits[:4]), int(digits[4:6]), int(digits[6:8]))
 
 
 def _is_month_end(d: date) -> bool:
@@ -178,9 +184,19 @@ def _gap(rule: Rule, actual: Any) -> float | None:
 
 
 def near_misses(
-    group: RuleGroup, profile: Mapping[str, Any], *, min_confidence: float = 0.7
+    group: RuleGroup,
+    profile: Mapping[str, Any],
+    *,
+    on: date | None = None,
+    min_confidence: float = 0.7,
 ) -> list[NearMiss]:
-    """비해당인 공고에서, 조건 하나만 맞으면 비해당을 벗어나는 규칙들."""
+    """비해당인 공고에서, 조건 하나만 맞으면 비해당을 벗어나는 규칙들.
+
+    on을 주면 그날 기준 업력·나이를 채운 프로필로 본다. 개업일만 있는 프로필에서 업력 조건이
+    "값 없음"으로 빠져 다른 조건 하나만 다른 것처럼 보이지 않게 한다.
+    """
+    if on is not None:
+        profile = derive_profile(profile, on)
     base = judge(group, profile, min_confidence=min_confidence)
     if base.result != "ineligible":
         return []
