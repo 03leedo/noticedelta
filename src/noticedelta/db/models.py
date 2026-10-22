@@ -35,7 +35,25 @@ class Source(Base):
     rate_limit_per_sec: Mapped[float | None] = mapped_column(sa.Float)
 
 
+class Program(Base):
+    """사업. 포털 게시물(notice) 여럿이 하나의 사업이 된다 (설계 6.1).
+
+    기업마당은 정정할 때마다 새 번호로 다시 올리고 원공고를 닫는다. 구독·판정·알림은 게시물이 아니라
+    사업에 걸어야 정정이 나와도 이어진다.
+    """
+
+    __tablename__ = "program"
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
+    title: Mapped[str] = mapped_column(sa.Text)
+    title_key: Mapped[str] = mapped_column(sa.String(300), index=True)  # 정정 표시를 뺀 정규화 제목
+    org: Mapped[str | None] = mapped_column(sa.String(200))
+    current_version_no: Mapped[int | None] = mapped_column(sa.Integer)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+
+
 class Notice(Base):
+    """포털 게시물(posting). 출처와 외부 ID 하나."""
+
     __tablename__ = "notice"
     __table_args__ = (sa.UniqueConstraint("source_id", "external_id"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
@@ -47,6 +65,61 @@ class Notice(Base):
     status: Mapped[str] = mapped_column(sa.String(16), default="open")  # open / closed
     current_version_id: Mapped[str | None] = mapped_column(sa.String(32))
     current_version_no: Mapped[int | None] = mapped_column(sa.Integer)  # 순서 보장용 (설계 8장)
+    program_id: Mapped[str | None] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    first_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class ProgramLink(Base):
+    """게시물 → 사업 연결의 근거. 점수가 낮으면 합치지 않고 운영자 확인으로 남긴다."""
+
+    __tablename__ = "program_link"
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
+    notice_id: Mapped[str] = mapped_column(sa.ForeignKey("notice.id"), index=True)
+    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    method: Mapped[str] = mapped_column(sa.String(32))  # new / repost_title
+    score: Mapped[float] = mapped_column(sa.Float, default=1.0)
+    decision: Mapped[str] = mapped_column(sa.String(16))  # linked / needs_review
+    candidate_notice_id: Mapped[str | None] = mapped_column(sa.String(32))
+    decided_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+
+
+class ProgramVersion(Base):
+    """엔진의 입력이 되는 사업 내용 버전. 게시물 버전의 본문 해시 + 첨부 내용 해시로 정한다."""
+
+    __tablename__ = "program_version"
+    __table_args__ = (
+        sa.UniqueConstraint("program_id", "version_no"),
+        sa.UniqueConstraint("program_id", "content_hash"),
+    )
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
+    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    version_no: Mapped[int] = mapped_column(sa.Integer)
+    notice_version_id: Mapped[str] = mapped_column(sa.ForeignKey("notice_version.id"))
+    content_hash: Mapped[str] = mapped_column(sa.String(64))
+    source_time: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+
+
+class SnapshotRecord(Base):
+    """상시 수집이 본 (출처, 외부 ID, 내용 해시) 하나. 같은 내용은 처음·마지막으로 본 시각만 고친다."""
+
+    __tablename__ = "snapshot"
+    __table_args__ = (sa.UniqueConstraint("source", "external_id", "content_hash"),)
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
+    source: Mapped[str] = mapped_column(sa.String(32))
+    external_id: Mapped[str] = mapped_column(sa.String(100))
+    content_hash: Mapped[str] = mapped_column(sa.String(64))
+    item_key: Mapped[str] = mapped_column(sa.String(64))  # 원문 저장소의 정규 JSON
+    first_seen_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+
+
+class LoadedRun(Base):
+    __tablename__ = "snapshot_run"
+    name: Mapped[str] = mapped_column(sa.String(64), primary_key=True)  # runs/<이름>.json
+    loaded_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
 
 
 class NoticeVersion(Base):
@@ -69,6 +142,8 @@ class Attachment(Base):
     filename: Mapped[str] = mapped_column(sa.Text)
     url: Mapped[str] = mapped_column(sa.Text)
     role: Mapped[str] = mapped_column(sa.String(16), default="attachment")  # notice / attachment
+    # 버전 사이의 같은 첨부: 역할 + 정정 표시를 뺀 파일 이름 + 같은 이름 안의 순번
+    lineage_key: Mapped[str | None] = mapped_column(sa.String(300))
     mime: Mapped[str | None] = mapped_column(sa.String(100))
     blob_key: Mapped[str | None] = mapped_column(sa.String(64))  # sha256
     parse_status: Mapped[str] = mapped_column(
