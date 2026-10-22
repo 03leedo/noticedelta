@@ -13,7 +13,7 @@ from noticedelta.sources.attachments import download_attachment, sniff_mime
 HWP = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 100
 HWPX = b"PK\x03\x04" + b"\x00" * 26 + b"mimetypeapplication/hwp+zip" + b"\x00" * 50
 PDF = b"%PDF-1.7\n..."
-BASE = "https://example.test/files/"
+BASE = "https://www.bizinfo.go.kr/files/"
 
 
 @pytest.fixture

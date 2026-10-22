@@ -48,9 +48,11 @@ def ingest_record(
 ) -> IngestResult:
     notice, version = repo.upsert_notice_version(session, rec)
     result = IngestResult(notice, version)
-    if version is None:
+    # 내용이 같아도 지난번에 받지 못한 첨부(일시 장애, 서킷 열림)는 현재 버전 기준으로 다시 받는다.
+    target = version or repo.latest_version(session, notice.id)
+    if target is None:
         return result
-    for att in repo.attachments_to_fetch(session, version.id):
+    for att in repo.attachments_to_fetch(session, target.id):
         try:
             stored = download_attachment(
                 http,
@@ -90,6 +92,7 @@ def parse_attachments(
     같은 출력은 한 번만 저장되고, 조각은 언제든 이 JSON에서 다시 만들 수 있다.
     """
     outcomes = []
+    session.flush()
     rows = session.scalars(
         sa.select(Attachment).where(
             Attachment.notice_version_id == version_id,
@@ -103,8 +106,10 @@ def parse_attachments(
             att.review_reason = f"파싱하지 않는 형식: {att.mime}"
             outcomes.append(ParseOutcome(att.filename, att.parse_status, reason=att.review_reason))
             continue
+        # ParserUnavailable(Docker 꺼짐 등)은 그대로 올려 보낸다. 남은 첨부는 pending으로 남는다.
         doc = parser.parse(store.get(att.blob_key), att.mime)
-        payload = json.dumps(doc.to_json(), ensure_ascii=False, sort_keys=True).encode("utf-8")
+        # ensure_ascii: 깨진 HWP에서 나온 짝 없는 서로게이트도 인코딩 오류 없이 저장한다.
+        payload = json.dumps(doc.to_json(), ensure_ascii=True, sort_keys=True).encode("ascii")
         att.parsed_key = store.put(payload, content_type="application/json").key
         att.parser = f"{doc.parser} {doc.parser_version}".strip()
         reason = review_reason(doc)
