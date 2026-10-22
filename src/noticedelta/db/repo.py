@@ -18,6 +18,7 @@ from noticedelta.db.models import (
     new_id,
 )
 from noticedelta.impact import Alert
+from noticedelta.matching import stable_filename
 from noticedelta.sources import NoticeRecord
 
 
@@ -120,13 +121,17 @@ def upsert_notice_version(
             with session.begin_nested():
                 session.add(version)
                 session.flush()  # 관계가 선언돼 있지 않아 버전을 먼저 넣어야 첨부의 외래 키가 맞는다
+                seen: dict[str, int] = {}
                 for ref in rec.attachments:
+                    base = f"{ref.role}:{stable_filename(ref.filename)}"
+                    seen[base] = seen.get(base, -1) + 1
                     session.add(
                         Attachment(
                             notice_version_id=version.id,
                             filename=ref.filename,
                             url=ref.url,
                             role=ref.role,
+                            lineage_key=f"{base}:{seen[base]}",
                         )
                     )
                 session.flush()
@@ -162,7 +167,7 @@ def enqueue_alert(session: Session, alert: Alert) -> bool:
                 OutboxAlert(
                     idempotency_key=alert.idempotency_key,
                     user_id=alert.user_id,
-                    notice_id=alert.notice_id,
+                    program_id=alert.program_id,
                     payload=asdict(alert),
                 )
             )

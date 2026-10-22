@@ -75,7 +75,7 @@ def run(new_doc, results, **kw):
     old_fields, change = setup_versions(new_doc)
     ex = FakeExtractor(results)
     res = run_impact(
-        notice_id="N1",
+        program_id="N1",
         to_version_id="V2",
         change=change,
         old_fields=old_fields,
@@ -182,7 +182,7 @@ def test_equal_value_reextraction_updates_sources():
         {"deadline": FieldValue("deadline", "datetime", "2026-10-31 18:00", [new_lid])}
     )
     res = run_impact(
-        notice_id="N1",
+        program_id="N1",
         to_version_id="V2",
         change=change,
         old_fields=old_fields,

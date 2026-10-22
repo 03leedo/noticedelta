@@ -39,7 +39,7 @@ class Subscription:
 @dataclass
 class Alert:
     user_id: str
-    notice_id: str
+    program_id: str
     field: str
     to_version_id: str
     kind: Literal["judgment_changed", "field_changed"]
@@ -116,13 +116,13 @@ def build_field_source_index(fields: Mapping[str, FieldValue]) -> dict[str, set[
     return dict(index)
 
 
-def _key(user_id: str, notice_id: str, field_name: str, to_version_id: str) -> str:
-    return f"{user_id}:{notice_id}:{field_name}:{to_version_id}"
+def _key(user_id: str, program_id: str, field_name: str, to_version_id: str) -> str:
+    return f"{user_id}:{program_id}:{field_name}:{to_version_id}"
 
 
 def run_impact(
     *,
-    notice_id: str,
+    program_id: str,
     to_version_id: str,
     change: ChangeSet,
     old_fields: Mapping[str, FieldValue],
@@ -133,7 +133,13 @@ def run_impact(
     candidate_detector: Callable[[Segment], set[str]] = keyword_candidates,
     default_year: int | None = None,
     old_segments: Sequence[Segment] = (),
+    unknown_lineages: frozenset[str] | set[str] = frozenset(),
 ) -> ImpactResult:
+    # ⓪ 새 버전에서 읽지 못한 첨부에 걸린 필드: 바뀌었는지 모른다. 재추출하지 않고 stale로 둔다.
+    unknown_fields = {
+        name for name, fv in old_fields.items() if set(fv.sources) & set(unknown_lineages)
+    }
+
     # ① 영향 필드
     index = build_field_source_index(old_fields)
     affected: set[str] = set()
@@ -149,7 +155,8 @@ def run_impact(
         if seg.lineage_id in removed:
             affected |= candidate_detector(seg)
 
-    if not affected:
+    affected -= unknown_fields
+    if not affected and not unknown_fields:
         return ImpactResult(set(), {}, set(), [], 0, dict(old_fields))
 
     # ② 부분 재추출: 영향 필드만, 바뀐 조각 + 그 필드의 기존 근거 조각만 넘긴다.
@@ -158,11 +165,11 @@ def run_impact(
         if name in old_fields:
             context_ids |= set(old_fields[name].sources)
     context = [s for s in change.segments if s.lineage_id in context_ids]
-    reextracted = extractor(affected, context)
+    reextracted = extractor(affected, context) if affected else {}
 
     # ③ 진짜 변경 판정 (타입별 비교)
     real: set[str] = set()
-    stale: set[str] = set()
+    stale: set[str] = set(unknown_fields)
     changed_ids = set(change.changed)
     for name in affected:
         new = reextracted.get(name)
@@ -199,10 +206,10 @@ def run_impact(
             before = old_judgments.get(user_id, _NOT_ELIGIBLE)
             after = judge(new_rules, profiles.get(user_id, {}))
             if after.result != before.result:
-                k = _key(user_id, notice_id, RULES_FIELD, to_version_id)
+                k = _key(user_id, program_id, RULES_FIELD, to_version_id)
                 alerts[k] = Alert(
                     user_id,
-                    notice_id,
+                    program_id,
                     RULES_FIELD,
                     to_version_id,
                     "judgment_changed",
@@ -215,11 +222,11 @@ def run_impact(
     for name in sorted(real - {RULES_FIELD}):
         for sub in subscriptions:
             if name in sub.fields:
-                k = _key(sub.user_id, notice_id, name, to_version_id)
+                k = _key(sub.user_id, program_id, name, to_version_id)
                 old = old_fields.get(name)
                 alerts[k] = Alert(
                     sub.user_id,
-                    notice_id,
+                    program_id,
                     name,
                     to_version_id,
                     "field_changed",

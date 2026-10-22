@@ -145,7 +145,15 @@ def version_segments(session: Session, version: NoticeVersion, store: BlobStore)
         doc = ParsedDocument.from_json(json.loads(store.get(att.parsed_key)))
         segs = segment_document(to_blocks(doc), source=_source_id(att), start_order=len(segments))
         segments += [
-            replace(s, locator={**s.locator, "filename": att.filename, "role": att.role})
+            replace(
+                s,
+                locator={
+                    **s.locator,
+                    "filename": att.filename,
+                    "role": att.role,
+                    "attachment": att.lineage_key,
+                },
+            )
             for s in segs
         ]
     return segments
