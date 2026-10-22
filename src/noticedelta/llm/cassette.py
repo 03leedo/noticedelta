@@ -23,7 +23,11 @@ class FileCassetteStore:
         p = self._path(key)
         if not p.exists():
             return None
-        return json.loads(p.read_text(encoding="utf-8"))
+        record = json.loads(p.read_text(encoding="utf-8"))
+        if record.get("key") != key:
+            # 파일 이름과 안의 키가 다르면 바뀐 녹화본이다. 응답을 믿지 않고 없는 것으로 본다.
+            return None
+        return record
 
     def save(self, key: str, record: dict) -> None:
         p = self._path(key)

@@ -67,6 +67,11 @@ class ImpactResult:
     alerts: list[Alert]
     llm_fields_requested: int
     fields: dict[str, FieldValue] = field(default_factory=dict)  # 새 버전 기준 전체 필드
+    stale: set[str] = field(default_factory=set)  # 근거가 바뀌었는데 다시 찾지 못한 필드
+
+
+STALE_CONFIDENCE = 0.3  # 판정기의 기본 신뢰도 하한(0.7)보다 낮아 확인 필요로 간다
+_NOT_ELIGIBLE = Judgment("ineligible")  # 판정 기록이 없는 사용자의 이전 상태
 
 
 _KEYWORDS: dict[str, re.Pattern] = {
@@ -79,18 +84,25 @@ _KEYWORDS: dict[str, re.Pattern] = {
     ),
     # "서류 평가"처럼 서류만 들어간 문장은 고르지 않는다.
     "required_documents": re.compile(
-        r"(?:제출|구비|증빙|첨부|신청)\s*서류|서류\s*(?:제출|목록)|증빙\s*자료|사본"
+        r"(?:제출|구비|증빙|첨부|신청|필요|준비)\s*서류|서류\s*(?:제출|목록)|증빙\s*자료|사본"
     ),
     "contact": re.compile(r"문의|연락처|담당자|☎|\d{2,3}-\d{3,4}-\d{4}"),
 }
 
 
 def keyword_candidates(seg: Segment) -> set[str]:
-    """새로 추가·수정된 조각이 어느 필드와 관련 있을지 가볍게 고른다 (LLM 없이)."""
-    out = {name for name, pat in _KEYWORDS.items() if pat.search(seg.text)}
-    if find_datetimes(seg.text, default_year=2000):
+    """새로 추가·수정·삭제된 조각이 어느 필드와 관련 있을지 가볍게 고른다 (LLM 없이).
+
+    표 칸은 칸 글만으로는 모른다("5년"). 열 머리글과 행 키("업력")까지 함께 본다.
+    """
+    text = seg.text
+    if seg.kind == "table_cell":
+        loc = seg.locator
+        text = f"{loc.get('header', '')} {loc.get('row_key', '')} {seg.text}"
+    out = {name for name, pat in _KEYWORDS.items() if pat.search(text)}
+    if find_datetimes(text, default_year=2000):
         out.add("deadline")
-    if find_amounts(seg.text):
+    if find_amounts(text):
         out.add("amount")
     return out
 
@@ -120,6 +132,7 @@ def run_impact(
     old_judgments: Mapping[str, Judgment],
     candidate_detector: Callable[[Segment], set[str]] = keyword_candidates,
     default_year: int | None = None,
+    old_segments: Sequence[Segment] = (),
 ) -> ImpactResult:
     # ① 영향 필드
     index = build_field_source_index(old_fields)
@@ -129,6 +142,11 @@ def run_impact(
     touched = set(change.added) | set(change.modified)
     for seg in change.segments:
         if seg.lineage_id in touched:
+            affected |= candidate_detector(seg)
+    # 인용되지 않은 조항이 지워진 경우("단, 재창업자는 제외")도 옛 글로 검사해 잡는다.
+    removed = set(change.removed)
+    for seg in old_segments:
+        if seg.lineage_id in removed:
             affected |= candidate_detector(seg)
 
     if not affected:
@@ -144,10 +162,16 @@ def run_impact(
 
     # ③ 진짜 변경 판정 (타입별 비교)
     real: set[str] = set()
+    stale: set[str] = set()
+    changed_ids = set(change.changed)
     for name in affected:
         new = reextracted.get(name)
         if new is None:
-            continue  # 다시 찾지 못한 필드는 기존 값을 유지한다.
+            # 근거 조각이 바뀌거나 지워졌는데 다시 찾지 못했다. 옛 값을 조용히 믿지 않고 낮춘다.
+            old = old_fields.get(name)
+            if old is not None and set(old.sources) & changed_ids:
+                stale.add(name)
+            continue
         old = old_fields.get(name)
         if old is None or not values_equal(
             new.value_type, old.value, new.value, default_year=default_year
@@ -155,6 +179,10 @@ def run_impact(
             real.add(name)
 
     fields = dict(old_fields)
+    for name in stale:
+        fields[name] = replace(
+            fields[name], confidence=min(fields[name].confidence, STALE_CONFIDENCE)
+        )
     for name, new in reextracted.items():
         if name in real:
             fields[name] = new
@@ -166,7 +194,9 @@ def run_impact(
     alerts: dict[str, Alert] = {}
     if RULES_FIELD in real:
         new_rules = RuleGroup.model_validate(fields[RULES_FIELD].value)
-        for user_id, before in old_judgments.items():
+        # 판정 기록이 없는 사용자도 본다. 조건이 완화돼 새로 해당하게 된 사람에게도 알려야 한다.
+        for user_id in sorted(set(old_judgments) | set(profiles)):
+            before = old_judgments.get(user_id, _NOT_ELIGIBLE)
             after = judge(new_rules, profiles.get(user_id, {}))
             if after.result != before.result:
                 k = _key(user_id, notice_id, RULES_FIELD, to_version_id)
@@ -200,4 +230,6 @@ def run_impact(
                     fields[name].confidence,
                 )
 
-    return ImpactResult(affected, reextracted, real, list(alerts.values()), len(affected), fields)
+    return ImpactResult(
+        affected, reextracted, real, list(alerts.values()), len(affected), fields, stale
+    )

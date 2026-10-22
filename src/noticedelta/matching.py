@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 import uuid
 from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
@@ -54,18 +55,40 @@ def _default_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _table_home(loc: dict) -> tuple:
+    """표가 어느 문서의 몇 번째 표인지. 머리글이 같은 다른 표·다른 첨부끼리 짝짓지 않게 한다.
+
+    첨부 조각의 source는 첨부 내용 해시라 버전마다 바뀐다. 그래서 문서는 역할(본문/공고문/붙임)로
+    구분한다. 첨부 lineage가 생기면(program 모델 PR) 그것으로 바꾼다.
+    """
+    if loc.get("source") == "body":
+        return ("body", loc.get("table"))
+    return (loc.get("role") or "att", _stable_name(loc.get("filename", "")), loc.get("table"))
+
+
+_REVISION_MARK = re.compile(
+    r"\((?:수정|정정|변경|최종|재공고|\d+차)\)|수정|정정|변경|최종|재공고|\d+차"
+)
+
+
+def _stable_name(filename: str) -> str:
+    """정정본에서 붙는 표시("공고문(수정).hwp", "2차 정정")와 확장자를 지운 파일 이름."""
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return re.sub(r"[\s_\-\[\]()]+", "", _REVISION_MARK.sub("", stem))
+
+
 def _table_key(seg: Segment) -> tuple | None:
     if seg.kind != "table_cell":
         return None
     loc = seg.locator
-    return (loc.get("table_sig"), loc.get("row_key"), loc.get("header"))
+    return (*_table_home(loc), loc.get("table_sig"), loc.get("row_key"), loc.get("header"))
 
 
 def _table_pos(seg: Segment) -> tuple | None:
     if seg.kind != "table_cell":
         return None
     loc = seg.locator
-    return (loc.get("table_sig"), loc.get("row"), loc.get("col"))
+    return (*_table_home(loc), loc.get("table_sig"), loc.get("row"), loc.get("col"))
 
 
 def match_segments(

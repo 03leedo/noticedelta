@@ -22,6 +22,14 @@ ATTRIBUTES: dict[str, type] = {
 }
 
 
+def _type_ok(v: Any, expected: type) -> bool:
+    if expected is bool:
+        return isinstance(v, bool)
+    if expected is int:
+        return isinstance(v, int | float) and not isinstance(v, bool)
+    return isinstance(v, expected)
+
+
 class Rule(BaseModel):
     id: str = ""
     attribute: str
@@ -43,6 +51,11 @@ class Rule(BaseModel):
             raise ValueError(f"{self.op} 연산자는 목록 값이 필요하다")
         if self.op == "between" and not (isinstance(self.value, list) and len(self.value) == 2):
             raise ValueError("between 연산자는 [하한, 상한] 값이 필요하다")
+        # 값 타입을 속성 사전과 맞춘다. "abc" 같은 값 하나가 대량 판정 SQL 전체를 깨뜨리지 않게.
+        expected = ATTRIBUTES[self.attribute]
+        for v in self.value if isinstance(self.value, list) else [self.value]:
+            if not _type_ok(v, expected):
+                raise ValueError(f"{self.attribute} 값은 {expected.__name__}이어야 한다: {v!r}")
         return self
 
 
