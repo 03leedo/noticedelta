@@ -79,7 +79,8 @@ def _items_data_go_kr(payload: dict) -> list[dict]:
             f"bizinfo API 오류: {header.get('resultCode')} {header.get('resultMsg', '')}".strip()
         )
     items = ((resp.get("body") or {}).get("items") or {}).get("item") or []
-    return list(items)
+    # 실제 응답에서는 한 건이어도 배열이었지만(5건 표본), 객체 하나로 와도 받는다.
+    return [items] if isinstance(items, dict) else list(items)
 
 
 def _items_bizinfo(payload: dict) -> list[dict]:
