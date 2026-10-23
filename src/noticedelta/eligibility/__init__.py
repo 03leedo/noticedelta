@@ -1,6 +1,12 @@
 from noticedelta.eligibility.judge import Judgment, Reason, judge
-from noticedelta.eligibility.rules import ATTRIBUTES, ManualCondition, Rule, RuleGroup
-from noticedelta.eligibility.sql import to_sql_where
+from noticedelta.eligibility.rules import (
+    ATTRIBUTES,
+    ManualCondition,
+    Rule,
+    RuleGroup,
+    ruleset_hash,
+)
+from noticedelta.eligibility.sql import bulk_judge, to_sql_where, tri_state
 from noticedelta.eligibility.temporal import (
     Change,
     NearMiss,
@@ -23,6 +29,9 @@ __all__ = [
     "Reason",
     "Rule",
     "RuleGroup",
+    "bulk_judge",
     "judge",
+    "ruleset_hash",
+    "tri_state",
     "to_sql_where",
 ]
