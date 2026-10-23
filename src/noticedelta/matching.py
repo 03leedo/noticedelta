@@ -71,9 +71,17 @@ _REVISION_MARK = re.compile(
 )
 
 
+_EXTENSIONS = re.compile(r"(?:\.(?:hwpx?|pdf|docx?|xlsx?|pptx?|zip|txt|jpe?g|png))+$", re.I)
+
+
 def stable_filename(filename: str) -> str:
-    """정정본에서 붙는 표시("공고문(수정).hwp", "2차 정정")와 확장자를 지운 파일 이름."""
-    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    """정정본에서 붙는 표시("공고문(수정).hwp", "2차 정정")와 확장자를 지운 파일 이름.
+
+    확장자는 겹쳐도 모두 지운다. 실제 정정에서 "사업.pdf"가 "사업.hwp.pdf"로 다시 올라왔다.
+    """
+    stem = _EXTENSIONS.sub("", filename.strip())
+    if stem == filename.strip() and "." in stem:
+        stem = stem.rsplit(".", 1)[0]
     return re.sub(r"[\s_\-\[\]()]+", "", _REVISION_MARK.sub("", stem))
 
 

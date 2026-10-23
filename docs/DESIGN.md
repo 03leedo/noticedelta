@@ -137,7 +137,7 @@
 | `subscription` | id, user_id, notice_id, fields[] | 추적 구독 |
 | `free_question` | id, user_id, notice_id, text, embedding, last_answer(json), answered_version_id | 자유 질문 (선택 기능) |
 | `judgment` | id, user_id, notice_id, version_id, result(eligible/ineligible/unknown), reasons(json) | 판정 결과와 근거 |
-| `change_event` | id, notice_id, from_version_id, to_version_id, changed_lineages(json), created_at | 변경 이벤트. 재생(10장)의 기준 로그 |
+| `change_event` | id, program_id, from_version_id, to_version_id(사업 버전), changed_lineages(json: added·removed·modified·unknown), matcher_version, created_at | 변경 이벤트. 재생(10장)의 기준 로그. 사업 버전마다 조각(lineage 포함)과 함께 남겨 매칭 없이 같은 변경을 다시 만든다 |
 | `outbox_alert` | id, idempotency_key(unique), user_id, notice_id, payload(json), status, created_at, sent_at | 알림 아웃박스 |
 | `job_ledger` | stage, job_key(unique), status, attempts, updated_at | 단계별 멱등 처리 기록 |
 
