@@ -117,3 +117,21 @@ def test_bizinfo_single_object_item():
     }
     http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload)))
     assert [r.external_id for r in BizinfoClient("k", http).list_notices()] == ["A"]
+
+
+def test_failed_run_is_not_the_baseline_for_the_next(tmp_path):
+    """절전에서 깬 직후 실행이 네트워크 오류로 실패해도, 다음 실행은 그 전 성공 실행과 비교한다."""
+    from datetime import datetime
+
+    def down(page):
+        raise SourceError("bizinfo API 호출 실패: ConnectError")
+
+    def run(source, hour):
+        t = datetime(2026, 10, 23, hour)
+        return run_snapshot(
+            {"bizinfo": source}, http=http_with({}, []), root=tmp_path, now=lambda: t
+        )
+
+    run(pages([rec("A"), rec("B")]), 1)
+    run(down, 7)
+    assert run(pages([rec("A"), rec("B", "2026-11-14")]), 13).new_or_changed == 1
