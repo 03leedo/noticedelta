@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -51,25 +52,32 @@ def _compare(op: str, actual: Any, expected: Any) -> bool:
     raise ValueError(op)
 
 
-_TRUE = {"true", "t", "y", "yes", "예", "네", "1"}
-_FALSE = {"false", "f", "n", "no", "아니오", "아니요", "0"}
+TRUE_WORDS = ("true", "t", "y", "yes", "예", "네", "1")
+FALSE_WORDS = ("false", "f", "n", "no", "아니오", "아니요", "0")
+_TRUE, _FALSE = set(TRUE_WORDS), set(FALSE_WORDS)
+# 폼 문자열을 숫자로 읽는 형식. 대량 판정 SQL(sql.py)도 같은 형식만 숫자로 읽는다.
+NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)")
 _UNCOERCIBLE = object()
 
 
 def _coerce(actual: Any, expected: Any) -> Any:
     """폼에서 온 문자열을 규칙 값의 타입에 맞춘다. 맞출 수 없으면 _UNCOERCIBLE."""
+    if isinstance(actual, list | dict):
+        return _UNCOERCIBLE  # 목록·객체 값은 어떤 속성으로도 읽지 않는다
     sample = expected[0] if isinstance(expected, list | tuple) and expected else expected
     if isinstance(sample, bool):
         if isinstance(actual, bool):
             return actual
         s = str(actual).strip().lower()
         return True if s in _TRUE else False if s in _FALSE else _UNCOERCIBLE
-    if isinstance(sample, int | float) and isinstance(actual, str):
-        s = actual.strip().replace(",", "")
-        try:
-            return int(s) if s.lstrip("-").isdigit() else float(s)
-        except ValueError:
-            return actual  # 비교에서 TypeError가 나 확인 필요로 간다
+    if isinstance(sample, int | float):
+        if isinstance(actual, bool):
+            return _UNCOERCIBLE  # 참/거짓을 1/0 숫자로 보지 않는다
+        if isinstance(actual, str):
+            s = actual.replace(",", "").strip()
+            if not NUMBER.fullmatch(s):
+                return actual  # 비교에서 TypeError가 나 확인 필요로 간다
+            return int(s) if s.lstrip("+-").isdigit() else float(s)
     return actual
 
 

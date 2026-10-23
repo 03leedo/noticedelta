@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -68,3 +69,8 @@ class RuleGroup(BaseModel):
     group: Literal["all_of", "any_of"]
     rules: list[Rule | RuleGroup] = Field(default_factory=list)
     manual: list[ManualCondition] = Field(default_factory=list)
+
+
+def ruleset_hash(group: RuleGroup) -> str:
+    """규칙 묶음의 내용 해시. 같은 규칙으로 같은 사용자를 두 번 판정하지 않게 한다."""
+    return hashlib.sha256(group.model_dump_json().encode()).hexdigest()
