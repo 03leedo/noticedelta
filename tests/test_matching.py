@@ -1,6 +1,6 @@
 import itertools
 
-from noticedelta.matching import MatchMode, match_segments, similarity
+from noticedelta.matching import MatchMode, match_segments, similarity, stable_filename
 from noticedelta.segments import Table, segment_document
 
 
@@ -130,3 +130,9 @@ def test_inserted_row_is_added_not_positional_modified():
     new_rows = [rows[0], rows[1], ["지역", "부산"], rows[2]]
     cs = match_segments(old, segment_document([Table(new_rows)], source="body"), new_id=new_id)
     assert cs.modified == [] and len(cs.added) == 2 and cs.removed == []
+
+
+def test_stable_filename_drops_stacked_extensions():
+    # 실제 정정: "사업.pdf"가 "사업.hwp.pdf"로 다시 올라왔다
+    assert stable_filename("2026년 지원사업.hwp.pdf") == stable_filename("2026년 지원사업.pdf")
+    assert stable_filename("공고문(수정).HWPX") == stable_filename("공고문.hwp")
