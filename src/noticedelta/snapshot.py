@@ -148,15 +148,18 @@ def snapshot_source(
 
 
 def last_hashes(runs_dir: Path) -> dict[str, dict[str, str]]:
-    """가장 최근 실행의 출처별 {외부 ID: 내용 해시}."""
-    runs = sorted(runs_dir.glob("*.json"))
-    if not runs:
-        return {}
-    data = json.loads(runs[-1].read_text(encoding="utf-8"))
-    return {
-        src: {it["external_id"]: it["content_hash"] for it in body.get("items", [])}
-        for src, body in data["sources"].items()
-    }
+    """출처별로 가장 최근에 성공한 실행의 {외부 ID: 내용 해시}.
+
+    마지막 실행에서 그 출처가 실패했으면(절전에서 깬 직후 네트워크 오류 등) 그 전 실행을 본다.
+    실패한 실행을 기준으로 삼으면 다음 실행이 모든 공고를 "새 공고"로 센다.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for path in sorted(runs_dir.glob("*.json"), reverse=True):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for src, body in data["sources"].items():
+            if src not in out and body.get("error") is None:
+                out[src] = {it["external_id"]: it["content_hash"] for it in body.get("items", [])}
+    return out
 
 
 def run_snapshot(
