@@ -101,6 +101,8 @@ class LoadSummary:
     new_program_versions: int = 0
     links: Counter = field(default_factory=Counter)
     closed: int = 0
+    new_version_ids: list[str] = field(default_factory=list)  # 이번에 생긴 사업 버전
+    refilled_version_ids: list[str] = field(default_factory=list)  # 첨부가 늦게 채워진 사업 버전
 
 
 def _link_program(
@@ -161,24 +163,31 @@ def _link_program(
     summary.links[method] += 1
 
 
-def _attach_blobs(session: Session, version: NoticeVersion, item: dict) -> list[str | None]:
-    """수집기가 받은 첨부 원본 키를 첨부 행에 옮긴다 (lineage 키는 repo가 버전을 만들 때 붙인다)."""
+def _attach_blobs(
+    session: Session, version: NoticeVersion, item: dict
+) -> tuple[list[str | None], int]:
+    """수집기가 받은 첨부 원본 키를 첨부 행에 옮긴다 (lineage 키는 repo가 버전을 만들 때 붙인다).
+
+    (첨부 키 목록, 이번에 새로 채운 수). 수집기는 실패한 첨부를 다음 실행에서 다시 받으므로,
+    내용이 그대로인 게시물도 늦게 받은 첨부를 여기서 채운다.
+    """
     by_url = {a["url"]: a for a in item.get("attachments", [])}
     rows = session.scalars(
         sa.select(Attachment).where(Attachment.notice_version_id == version.id)
     ).all()
-    keys = []
+    keys, filled = [], 0
     for att in rows:
         snap = by_url.get(att.url, {})
         if snap.get("blob_key") and att.blob_key is None:
             att.blob_key, att.mime = snap["blob_key"], snap.get("mime")
+            filled += 1
         keys.append(att.blob_key)
-    return keys
+    return keys, filled
 
 
 def _program_version(
     session: Session, notice: Notice, version: NoticeVersion, chash: str, at: datetime
-) -> bool:
+) -> ProgramVersion | None:
     program = session.get(Program, notice.program_id)
     exists = session.scalar(
         sa.select(ProgramVersion.id).where(
@@ -186,19 +195,33 @@ def _program_version(
         )
     )
     if exists:
-        return False  # 늦게 온 옛 내용이거나 같은 내용의 재게시
+        return None  # 늦게 온 옛 내용이거나 같은 내용의 재게시
     no = (program.current_version_no or 0) + 1
-    session.add(
-        ProgramVersion(
-            program_id=program.id,
-            version_no=no,
-            notice_version_id=version.id,
-            content_hash=chash,
-            source_time=at,
-        )
+    pv = ProgramVersion(
+        program_id=program.id,
+        version_no=no,
+        notice_version_id=version.id,
+        content_hash=chash,
+        source_time=at,
     )
+    session.add(pv)
     program.current_version_no = no
-    return True
+    session.flush()
+    return pv
+
+
+def _refill_attachments(session: Session, notice: Notice, item: dict, summary: LoadSummary) -> None:
+    version = repo.latest_version(session, notice.id)
+    if version is None:
+        return
+    _, filled = _attach_blobs(session, version, item)
+    if not filled:
+        return
+    pv_id = session.scalar(
+        sa.select(ProgramVersion.id).where(ProgramVersion.notice_version_id == version.id)
+    )
+    if pv_id and pv_id not in summary.refilled_version_ids:
+        summary.refilled_version_ids.append(pv_id)
 
 
 def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummary) -> None:
@@ -251,11 +274,14 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
                 summary.new_postings += 1
                 _link_program(session, notice, rec, summary)
             if version is None:
+                _refill_attachments(session, notice, item, summary)
                 continue
             summary.new_posting_versions += 1
-            keys = _attach_blobs(session, version, item)
-            if _program_version(session, notice, version, composite_hash(rec, keys), at):
+            keys, _ = _attach_blobs(session, version, item)
+            pv = _program_version(session, notice, version, composite_hash(rec, keys), at)
+            if pv is not None:
                 summary.new_program_versions += 1
+                summary.new_version_ids.append(pv.id)
         if body.get("error") is None:
             # 이번 실행에 없는 게시물은 닫혔다(기업마당은 정정 때 원공고를 닫는다).
             closed = session.scalars(

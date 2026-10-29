@@ -1,0 +1,67 @@
+"""파이프라인 워커: 새 스냅샷 적재 → 첨부 파싱 → 변경 기록을 작업 큐로 돌린다 (작업 목록 13번).
+
+    docker build -t noticedelta-parser infra/parser
+    uv run python scripts/worker.py              # 할 일이 없을 때까지 처리하고 끝난다
+    uv run python scripts/worker.py --status     # 작업 상태별 건수만 본다
+
+DB는 .env의 DATABASE_URL(기본 sqlite:///data/dev.db). 아직 넣지 않은 실행이 있으면 적재 작업을
+먼저 등록한다. 같은 작업은 한 번만 등록되므로 몇 번 돌려도 된다.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import socket
+import sys
+from pathlib import Path
+
+from sqlalchemy.orm import sessionmaker
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from capture_samples import load_env  # noqa: E402
+
+from noticedelta.blobstore import LocalBlobStore  # noqa: E402
+from noticedelta.db import make_engine, models  # noqa: E402
+from noticedelta.jobs import counts, run_worker  # noqa: E402
+from noticedelta.parsing import DockerParser  # noqa: E402
+from noticedelta.pipeline import Context, enqueue_load, handlers  # noqa: E402
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=str(ROOT / "data" / "snapshots"))
+    ap.add_argument("--max-jobs", type=int, default=None)
+    ap.add_argument("--status", action="store_true")
+    args = ap.parse_args()
+    load_env(ROOT / ".env")
+    engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
+    models.Base.metadata.create_all(engine)
+    factory = sessionmaker(engine)
+    root = Path(args.root)
+
+    with factory() as s:
+        if not args.status:
+            enqueue_load(s, root)
+            s.commit()
+        print(f"작업 상태: {counts(s)}")
+    if args.status:
+        return
+
+    ctx = Context(root=root, store=LocalBlobStore(root / "blobs"), parser=DockerParser())
+    stats = run_worker(
+        factory,
+        handlers(ctx),
+        worker_id=f"{socket.gethostname()}:{os.getpid()}",
+        max_jobs=args.max_jobs,
+    )
+    with factory() as s:
+        print(
+            f"완료 {stats.done}, 재시도 예정 {stats.retried}, 실패 {stats.dead} · 작업 상태: {counts(s)}"
+        )
+
+
+if __name__ == "__main__":
+    main()
