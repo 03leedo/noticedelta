@@ -24,6 +24,10 @@ class SourceError(Exception):
     """출처 API 호출 실패. 메시지에 인증키나 요청 URL을 넣지 않는다."""
 
 
+class TransientSourceError(SourceError):
+    """잠시 뒤 다시 하면 될 수 있는 실패: 연결 실패·시간 초과, HTTP 429·5xx."""
+
+
 @dataclass(frozen=True)
 class AttachmentRef:
     filename: str

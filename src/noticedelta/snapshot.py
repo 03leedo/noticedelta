@@ -17,6 +17,7 @@ PostgreSQL 작업 테이블이 붙으면 이 기록을 그대로 다시 넣는�
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,7 +26,7 @@ from pathlib import Path
 import httpx
 
 from noticedelta.blobstore import BlobStore, LocalBlobStore
-from noticedelta.sources import NoticeRecord, SourceError
+from noticedelta.sources import NoticeRecord, SourceError, TransientSourceError
 from noticedelta.sources.attachments import download_attachment
 from noticedelta.sources.base import _VOLATILE
 from noticedelta.sources.resilience import CircuitBreaker, CircuitOpen, RateLimiter
@@ -162,6 +163,29 @@ def last_hashes(runs_dir: Path) -> dict[str, dict[str, str]]:
     return out
 
 
+# 잠깐의 연결 실패(절전에서 깬 직후, 포털 일시 장애)는 몇 분 기다렸다 다시 받는다. 합 7.5분.
+RETRY_DELAYS_S = (30, 60, 120, 240)
+
+
+def fetch_with_retry(
+    list_page: Callable[[int], list[NoticeRecord]],
+    *,
+    delays: Iterable[float] = RETRY_DELAYS_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[list[NoticeRecord], int]:
+    """(공고 목록, 시도 횟수). 일시 오류가 아니거나 재시도가 끝나면 마지막 오류를 올린다."""
+    waits = list(delays)
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return fetch_all(list_page), attempt
+        except TransientSourceError:
+            if attempt > len(waits):
+                raise
+            sleep(waits[attempt - 1])
+
+
 def run_snapshot(
     sources: dict[str, Callable[[int], list[NoticeRecord]]],
     *,
@@ -170,6 +194,8 @@ def run_snapshot(
     store: BlobStore | None = None,
     attachment_limiter: RateLimiter | None = None,
     now: Callable[[], datetime] = datetime.now,
+    retry_delays: Iterable[float] = RETRY_DELAYS_S,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> RunSummary:
     root.mkdir(parents=True, exist_ok=True)
     runs_dir = root / "runs"
@@ -182,7 +208,7 @@ def run_snapshot(
     bodies: dict[str, dict] = {}
     for name, list_page in sources.items():
         try:
-            records = fetch_all(list_page)
+            records, attempts = fetch_with_retry(list_page, delays=retry_delays, sleep=sleep)
         except (SourceError, CircuitOpen) as e:
             # 출처 하나가 실패해도 다른 출처는 계속 받는다. 실패는 실행 기록에 남긴다.
             bodies[name] = {"error": str(e), "items": []}
@@ -200,6 +226,7 @@ def run_snapshot(
         )
         bodies[name] = {
             "error": None,
+            "attempts": attempts,
             "count": len(res.items),
             "changed": sum(it["changed"] for it in res.items),
             "attachments_fetched": res.attachments_fetched,
