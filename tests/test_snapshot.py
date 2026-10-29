@@ -135,3 +135,62 @@ def test_failed_run_is_not_the_baseline_for_the_next(tmp_path):
     run(pages([rec("A"), rec("B")]), 1)
     run(down, 7)
     assert run(pages([rec("A"), rec("B", "2026-11-14")]), 13).new_or_changed == 1
+
+
+def test_transient_failure_is_retried_then_succeeds(tmp_path):
+    """절전에서 깬 직후처럼 처음 몇 번은 연결이 안 되다가 붙는 경우."""
+    from noticedelta.sources import TransientSourceError
+
+    calls = {"n": 0}
+
+    def flaky(page):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise TransientSourceError("bizinfo API 호출 실패: ConnectTimeout")
+        return [rec("A")] if page == 1 else []
+
+    waits = []
+    s = run_snapshot({"bizinfo": flaky}, http=http_with({}, []), root=tmp_path, sleep=waits.append)
+    assert s.ok and waits == [30, 60]
+    run = json.loads(sorted((tmp_path / "runs").glob("*.json"))[-1].read_text(encoding="utf-8"))
+    assert run["sources"]["bizinfo"]["attempts"] == 3
+
+
+def test_gives_up_after_retries_and_permanent_errors_are_not_retried(tmp_path):
+    from noticedelta.sources import TransientSourceError
+
+    def down(page):
+        raise TransientSourceError("bizinfo API 호출 실패: ConnectTimeout")
+
+    def bad_key(page):
+        raise SourceError("kstartup API 오류: HTTP 401")
+
+    waits = []
+    s = run_snapshot(
+        {"bizinfo": down, "kstartup": bad_key},
+        http=http_with({}, []),
+        root=tmp_path,
+        retry_delays=(1, 2),
+        sleep=waits.append,
+    )
+    assert not s.ok and waits == [1, 2]  # 영구 오류(401)는 기다리지 않는다
+    assert s.sources["bizinfo"]["error"].endswith("ConnectTimeout")
+
+
+def test_connect_timeout_and_5xx_are_transient():
+    import pytest
+
+    from noticedelta.sources import TransientSourceError
+    from noticedelta.sources.http import get_json
+
+    def timeout(request):
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    for handler in (timeout, lambda r: httpx.Response(503), lambda r: httpx.Response(429)):
+        http = httpx.Client(transport=httpx.MockTransport(handler))
+        with pytest.raises(TransientSourceError):
+            get_json(http, "https://x.test/a", {}, source="t", breaker=None, limiter=None)
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401)))
+    with pytest.raises(SourceError) as e:
+        get_json(http, "https://x.test/a", {}, source="t", breaker=None, limiter=None)
+    assert not isinstance(e.value, TransientSourceError)

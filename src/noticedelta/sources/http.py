@@ -7,7 +7,7 @@ import re
 
 import httpx
 
-from noticedelta.sources.base import SourceError
+from noticedelta.sources.base import SourceError, TransientSourceError
 from noticedelta.sources.resilience import CircuitBreaker, CircuitOpen, RateLimiter
 
 _KEY_PARAM = re.compile(r"((?:serviceKey|crtfcKey)=)[^&\s\"]+", re.IGNORECASE)
@@ -62,7 +62,13 @@ def get_json(
             breaker.record_failure()
         err = _openapi_error(e.response)
         detail = f" ({err})" if err else ""
-        raise SourceError(f"{source} API 오류: HTTP {e.response.status_code}{detail}") from None
+        code = e.response.status_code
+        cls = TransientSourceError if code == 429 or code >= 500 else SourceError
+        raise cls(f"{source} API 오류: HTTP {code}{detail}") from None
+    except httpx.TransportError as e:
+        if breaker is not None:
+            breaker.record_failure()
+        raise TransientSourceError(f"{source} API 호출 실패: {type(e).__name__}") from None
     except (httpx.HTTPError, ValueError) as e:
         if breaker is not None:
             breaker.record_failure()
