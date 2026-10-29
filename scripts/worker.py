@@ -3,6 +3,9 @@
     docker build -t noticedelta-parser infra/parser
     uv run python scripts/worker.py              # 할 일이 없을 때까지 처리하고 끝난다
     uv run python scripts/worker.py --status     # 작업 상태별 건수만 본다
+    uv run python scripts/worker.py --backfill   # 변경 기록이 없는 사업 버전을 모두 등록
+
+추출기(LLM)는 아직 붙이지 않았다. 그래서 변경 기록(diff)까지 돌고, 영향 계산은 등록하지 않는다.
 
 DB는 .env의 DATABASE_URL(기본 sqlite:///data/dev.db). 아직 넣지 않은 실행이 있으면 적재 작업을
 먼저 등록한다. 같은 작업은 한 번만 등록되므로 몇 번 돌려도 된다.
@@ -27,7 +30,7 @@ from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.db import make_engine, models  # noqa: E402
 from noticedelta.jobs import counts, run_worker  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
-from noticedelta.pipeline import Context, enqueue_load, handlers  # noqa: E402
+from noticedelta.pipeline import Context, enqueue_backfill, enqueue_load, handlers  # noqa: E402
 
 
 def main() -> None:
@@ -35,6 +38,7 @@ def main() -> None:
     ap.add_argument("--root", default=str(ROOT / "data" / "snapshots"))
     ap.add_argument("--max-jobs", type=int, default=None)
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--backfill", action="store_true", help="변경 기록이 없는 버전을 모두 등록")
     args = ap.parse_args()
     load_env(ROOT / ".env")
     engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
@@ -45,6 +49,8 @@ def main() -> None:
     with factory() as s:
         if not args.status:
             enqueue_load(s, root)
+            if args.backfill:
+                print(f"등록한 사업 버전: {enqueue_backfill(s)}")
             s.commit()
         print(f"작업 상태: {counts(s)}")
     if args.status:

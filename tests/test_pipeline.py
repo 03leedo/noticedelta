@@ -52,7 +52,10 @@ class Env:
         self.hours = itertools.count()
         self.clock = Clock()
         self.ctx = Context(
-            root=self.root, store=LocalBlobStore(self.root / "blobs"), parser=ByContent()
+            root=self.root,
+            store=LocalBlobStore(self.root / "blobs"),
+            parser=ByContent(),
+            now=self.clock,
         )
 
     def collect(self, deadline, attachment):
@@ -134,10 +137,124 @@ def test_late_attachment_is_filled_and_compared(env):
     env.collect("2026-11-07", None)  # 503
     env.work()
     assert env.count(models.ChangeEvent) == 0  # 첨부가 없어 비교를 기다린다
-    assert env.jobs().get("retry") == 1
+    assert env.jobs().get("queued") == 1  # 비교는 30분 뒤로 미뤄 둠
 
     env.collect("2026-11-07", pdf(RULES, DOCS))  # 내용은 그대로, 첨부만 이번에 받음
     env.clock.t += timedelta(hours=1)
     env.work()
     assert env.count(models.ChangeEvent) == 1
     assert env.count(models.ProgramVersion) == 1
+
+
+class RulesFromText:
+    """“창업 N년 이내”를 자격 규칙으로 뽑는 가짜 추출기 (LLM 대신)."""
+
+    def __init__(self, confidence=1.0):
+        self.confidence = confidence
+        self.calls = []
+
+    def __call__(self, fields, segments):
+        import re
+
+        from noticedelta.impact import FieldValue
+
+        self.calls.append(sorted(fields))
+        for s in segments:
+            m = re.search(r"창업 (\d+)년", s.text)
+            if m and "eligibility_rules" in fields:
+                rules = {
+                    "group": "all_of",
+                    "rules": [
+                        {
+                            "attribute": "business_age_months",
+                            "op": "<=",
+                            "value": int(m.group(1)) * 12,
+                            "confidence": self.confidence,
+                        }
+                    ],
+                }
+                return {
+                    "eligibility_rules": FieldValue(
+                        "eligibility_rules", "rules", rules, [s.lineage_id], self.confidence
+                    )
+                }
+        return {}
+
+
+def subscribe_eligible_user(env):
+    """v1을 본 사용자: 업력 6년, 자격 규칙을 구독, 판정은 해당."""
+    with env.factory() as s:
+        pv = s.scalars(sa.select(models.ProgramVersion)).one()
+        s.add(models.Profile(user_id="u1", attributes={"business_age_months": 72}))
+        s.flush()
+        s.add(
+            models.SubscriptionRow(
+                user_id="u1", program_id=pv.program_id, fields=["eligibility_rules"]
+            )
+        )
+        s.add(
+            models.JudgmentRow(
+                user_id="u1",
+                program_id=pv.program_id,
+                program_version_id=pv.id,
+                ruleset_hash="v1",
+                result="eligible",
+            )
+        )
+        s.commit()
+
+
+def test_correction_reaches_outbox_with_rejudgment(env):
+    env.ctx.extractor = RulesFromText()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    assert env.count(models.FieldValueRow) == 1  # v1: 자격 규칙(창업 7년)
+    subscribe_eligible_user(env)
+
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    env.work()
+    with env.factory() as s:
+        alert = s.scalars(sa.select(models.OutboxAlert)).one()
+        assert alert.user_id == "u1" and alert.status == "pending"
+        assert (alert.payload["before"], alert.payload["after"]) == ("eligible", "ineligible")
+        latest = s.scalars(
+            sa.select(models.JudgmentRow).order_by(models.JudgmentRow.created_at.desc())
+        ).first()
+        assert latest.result == "ineligible"
+    # 두 번째 추출은 바뀐 조각(본문의 마감일, 첨부의 자격 문단)에 걸린 필드만 물었다
+    first, second = env.ctx.extractor.calls
+    assert second == ["deadline", "eligibility_rules"] and len(second) < len(first)
+
+
+def test_low_confidence_change_is_held(env):
+    env.ctx.extractor = RulesFromText(confidence=0.5)
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    subscribe_eligible_user(env)
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    env.work()
+    with env.factory() as s:
+        alert = s.scalars(sa.select(models.OutboxAlert)).one()
+        assert alert.status == "held" and "근거 확인" in alert.held_reason
+
+
+def test_without_extractor_pipeline_stops_at_change_events(env):
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    with env.factory() as s:
+        kinds = set(s.scalars(sa.select(models.Job.kind)).all())
+    assert kinds == {"load_run", "parse", "diff"}
+
+
+def test_backfill_registers_versions_loaded_before_the_queue(env):
+    from noticedelta.pipeline import enqueue_backfill
+    from noticedelta.programs import load_snapshots
+
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    with env.factory() as s:  # 작업 큐 없이 예전 방식으로 적재
+        load_snapshots(s, env.root, env.ctx.store)
+        s.execute(sa.delete(models.Job))
+        assert enqueue_backfill(s) == 1
+        s.commit()
+    env.work()
+    assert env.count(models.ChangeEvent) == 1
