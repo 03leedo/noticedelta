@@ -1,0 +1,34 @@
+# 서버(VM) 한 대 배포 (설계 9장, 작업 목록 19번). 저장소 폴더에서:
+#   docker compose -f deploy/compose.yml --env-file .env up -d
+# DB와 HTTPS 앞단만 컨테이너로 둔다. 웹·수집·워커는 systemd가 호스트에서 돌린다
+# (워커가 격리 파서 컨테이너를 띄워야 해서. docs/deploy.md 참고).
+name: noticedelta
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: noticedelta
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env에 POSTGRES_PASSWORD를 넣으세요}
+      POSTGRES_DB: noticedelta
+    ports: ["127.0.0.1:5432:5432"]  # 밖으로는 열지 않는다
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noticedelta"]
+      interval: 10s
+      retries: 10
+
+  # SITE_ADDRESS에 도메인을 넣으면 인증서를 자동으로 받아 HTTPS로, 비워 두면 80번 HTTP로 연다.
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    network_mode: host  # 호스트의 127.0.0.1:8000(웹)으로 넘긴다
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+
+volumes:
+  pgdata:
+  caddydata:

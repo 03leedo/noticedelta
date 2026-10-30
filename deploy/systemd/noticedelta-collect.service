@@ -1,0 +1,13 @@
+[Unit]
+Description=NoticeDelta 수집 한 번 + 파이프라인 워커
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=noticedelta
+WorkingDirectory=/opt/noticedelta
+# 수집이 일부 실패해도(-) 이미 받은 것은 워커가 처리한다
+ExecStart=-/opt/noticedelta/.venv/bin/python scripts/snapshot.py
+ExecStart=/opt/noticedelta/.venv/bin/python scripts/worker.py
+TimeoutStartSec=3h
