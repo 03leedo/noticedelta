@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}알림함 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>알림함</h1>
+<p class="muted"><a href="/p/{{ token }}">내 지원사업으로</a></p>
+{% if not alerts %}
+<p class="muted">아직 받은 알림이 없습니다. 공고가 정정되어 내 판정이나 마감일이 바뀌면 여기에 쌓입니다.</p>
+{% endif %}
+{% for a in alerts %}
+<article class="card">
+  <p class="muted">{{ a.sent_at.strftime("%Y-%m-%d %H:%M") if a.sent_at else "" }}{% if a.status == "corrected" %} · 이후 정정됨{% endif %}</p>
+  <p>{{ a.message }}</p>
+</article>
+{% endfor %}
+{% endblock %}

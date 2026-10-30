@@ -216,7 +216,8 @@ def test_correction_reaches_outbox_with_rejudgment(env):
     env.work()
     with env.factory() as s:
         alert = s.scalars(sa.select(models.OutboxAlert)).one()
-        assert alert.user_id == "u1" and alert.status == "pending"
+        assert alert.user_id == "u1" and alert.status == "sent"  # 알림 작업까지 돌았다
+        assert "신청 자격 판정이 해당에서 비해당" in alert.payload["message"]
         assert (alert.payload["before"], alert.payload["after"]) == ("eligible", "ineligible")
         latest = s.scalars(
             sa.select(models.JudgmentRow).order_by(models.JudgmentRow.created_at.desc())

@@ -5,6 +5,7 @@
 /p/<토큰>/list        목록 조각 (HTMX가 탭을 바꿀 때)
 /p/<토큰>/edit        프로필 고치기
 /p/<토큰>/calendar.ics 마감일·자격 변경일 캘린더
+/p/<토큰>/alerts      알림함 (정정으로 바뀐 내 판정·필드)
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.db.models import Profile
 from noticedelta.eligibility.synthetic import SIDO
+from noticedelta.notify import inbox
 from noticedelta.web.ics import calendar
 from noticedelta.web.views import GROUP_NAMES, GROUPS, OUTCOME_NAMES, humanize, my_programs
 
@@ -125,6 +127,17 @@ def create_app(
             profile.attributes = attributes_from_form(form)
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
+
+    @app.get("/p/{token}/alerts", response_class=HTMLResponse)
+    def alerts(request: Request, token: str):
+        with session_factory() as s:
+            load(s, token)
+            rows = [
+                {"message": a.payload.get("message", ""), "sent_at": a.sent_at, "status": a.status}
+                for a in inbox(s, token)
+            ]
+        ctx = {**common, "token": token, "alerts": rows}
+        return templates.TemplateResponse(request, "alerts.html", ctx)
 
     @app.get("/p/{token}/calendar.ics")
     def ics(token: str):
