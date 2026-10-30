@@ -8,6 +8,7 @@
 /p/<토큰>/alerts      알림함 (정정으로 바뀐 내 판정·필드)
 /p/<토큰>/alerts/<id> 알림 근거: 바뀐 원문 조각과 근거 문장
 /programs/<id>        공고 상세와 변경 이력 (누구나)
+/metrics              운영 지표 (Prometheus 형식, metrics_token이 있을 때만, Bearer 토큰)
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.db.models import Profile
 from noticedelta.eligibility.synthetic import SIDO
+from noticedelta.metrics import collect, prometheus_text
 from noticedelta.notify import inbox
 from noticedelta.web.history_views import alert_evidence, program_detail
 from noticedelta.web.ics import calendar
@@ -67,7 +69,10 @@ def attributes_from_form(form: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_app(
-    session_factory: Callable[[], Session], *, today: Callable[[], date] = date.today
+    session_factory: Callable[[], Session],
+    *,
+    today: Callable[[], date] = date.today,
+    metrics_token: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="NoticeDelta", docs_url=None, redoc_url=None, openapi_url=None)
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html"]))
@@ -164,6 +169,15 @@ def create_app(
             if detail is None:
                 raise HTTPException(404, "없는 사업입니다")
             return templates.TemplateResponse(request, "program.html", {**common, "d": detail})
+
+    @app.get("/metrics")
+    def metrics(request: Request):
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not metrics_token or not secrets.compare_digest(given, metrics_token):
+            raise HTTPException(404)  # 있는지도 알리지 않는다
+        with session_factory() as s:
+            text = prometheus_text(collect(s))
+        return Response(text, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     @app.get("/p/{token}/calendar.ics")
     def ics(token: str):

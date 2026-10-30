@@ -306,6 +306,10 @@ class Job(Base):
     locked_by: Mapped[str | None] = mapped_column(sa.String(64))
     error_class: Mapped[str | None] = mapped_column(sa.String(16))  # transient / permanent
     last_error: Mapped[str | None] = mapped_column(sa.Text)
+    started_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True)
+    )  # 마지막 꺼낸 시각
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), default=now, onupdate=now

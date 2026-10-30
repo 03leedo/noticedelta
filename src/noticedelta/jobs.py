@@ -125,13 +125,15 @@ def claim(
         job.attempts += 1
         job.locked_by = worker_id
         job.lease_until = now + lease
+        job.started_at = now
         session.flush()
         return job
     return None
 
 
-def complete(session: Session, job: Job) -> None:
+def complete(session: Session, job: Job, *, now: datetime | None = None) -> None:
     job.status = "done"
+    job.finished_at = now or _now()
     job.lease_until = None
     job.error_class = None
     session.flush()
@@ -189,7 +191,7 @@ def run_worker(
             job = session.get(Job, job_id)
             try:
                 handlers[job.kind](session, job)
-                complete(session, job)
+                complete(session, job, now=now())
                 session.commit()
                 stats.done += 1
             except Exception as e:  # 핸들러의 모든 실패를 작업 상태로 남긴다

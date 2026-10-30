@@ -48,7 +48,8 @@ def main() -> None:
         with factory() as s:
             print(f"가상 사업 {seed_demo(s, date.today())}개를 넣었습니다")
             s.commit()
-    uvicorn.run(create_app(factory), host="127.0.0.1", port=args.port)
+    app = create_app(factory, metrics_token=os.environ.get("NOTICEDELTA_METRICS_TOKEN"))
+    uvicorn.run(app, host="127.0.0.1", port=args.port)
 
 
 if __name__ == "__main__":
