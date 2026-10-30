@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{% block title %}NoticeDelta{% endblock %}</title>
+<script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+<style>
+  :root { --ink:#16202B; --soft:#4A5560; --line:#DDD8CC; --bg:#F6F4EF; --card:#FBFAF7;
+          --ok:#2F6FB0; --near:#B0520F; --unk:#646B72; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:16px/1.6 "Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:26px; margin:8px 0 4px; } h2 { font-size:19px; margin:0 0 6px; }
+  a { color:var(--ok); }
+  .muted { color:var(--soft); font-size:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:12px 0; }
+  .badge { display:inline-block; border-radius:999px; padding:1px 10px; font-size:13px; font-weight:600; color:#fff; }
+  .b-eligible { background:var(--ok); } .b-near { background:var(--near); } .b-unknown { background:var(--unk); }
+  .tabs { display:flex; gap:8px; margin:18px 0 4px; flex-wrap:wrap; }
+  .tabs a { text-decoration:none; padding:6px 14px; border-radius:999px; border:1px solid var(--line); color:var(--ink); }
+  .tabs a.on { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+  ul.reasons { margin:8px 0 0; padding-left:18px; } ul.reasons li { margin:2px 0; }
+  blockquote { margin:4px 0 0; padding:4px 10px; border-left:3px solid var(--line); color:var(--soft); font-size:14px; }
+  .note { background:#FBF1E8; border:1px solid #E8853A; border-radius:10px; padding:8px 12px; font-size:14px; margin-top:10px; }
+  form label { display:block; margin:12px 0 4px; font-weight:600; }
+  form input[type=text], form input[type=date], form input[type=number], form select {
+    width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; background:#fff; }
+  .check { font-weight:400; display:flex; gap:8px; align-items:center; }
+  button { margin-top:18px; padding:10px 18px; border:0; border-radius:10px; background:var(--ink); color:var(--bg); font:inherit; font-weight:600; cursor:pointer; }
+</style>
+</head>
+<body><main>{% block body %}{% endblock %}</main></body>
+</html>

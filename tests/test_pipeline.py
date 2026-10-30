@@ -22,7 +22,8 @@ HOST = "https://www.bizinfo.go.kr"
 
 class Clock:
     def __init__(self):
-        self.t = datetime(2026, 10, 30, tzinfo=UTC)
+        # 작업 등록 시각(실제 시각)보다 늦게 시작한다. 고정 날짜는 그날이 지나면 작업을 못 꺼낸다.
+        self.t = datetime.now(UTC) + timedelta(minutes=1)
 
     def __call__(self):
         return self.t
