@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from capture_samples import load_env  # noqa: E402
 
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
-from noticedelta.db import make_engine, models  # noqa: E402
+from noticedelta.db import make_engine, migrate  # noqa: E402
 from noticedelta.programs import load_snapshots  # noqa: E402
 
 
@@ -31,7 +31,7 @@ def main() -> None:
     load_env(ROOT / ".env")
     (ROOT / "data").mkdir(exist_ok=True)
     engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    models.Base.metadata.create_all(engine)
+    migrate.upgrade(engine)
     root = Path(args.root)
     with Session(engine) as session:
         s = load_snapshots(session, root, LocalBlobStore(root / "blobs"))

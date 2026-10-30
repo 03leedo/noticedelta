@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from capture_samples import load_env  # noqa: E402
 
-from noticedelta.db import make_engine, models  # noqa: E402
+from noticedelta.db import make_engine, migrate, models  # noqa: E402
 from noticedelta.eligibility import bulk_judge, judge, ruleset_hash  # noqa: E402
 from noticedelta.eligibility.synthetic import SAMPLE_RULESETS, virtual_profiles  # noqa: E402
 
@@ -36,7 +36,7 @@ def setup(url: str, n: int) -> sa.Engine:
     with sa.create_engine(url).begin() as conn:
         conn.execute(sa.text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; CREATE SCHEMA {SCHEMA}"))
     engine = make_engine(url, connect_args={"options": f"-csearch_path={SCHEMA}"})
-    models.Base.metadata.create_all(engine)
+    migrate.upgrade(engine)
     with Session(engine) as s:
         s.add(models.Source(id="bizinfo", name="기업마당"))
         s.flush()
