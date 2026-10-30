@@ -10,6 +10,7 @@
 <article class="card">
   <p class="muted">{{ a.sent_at.strftime("%Y-%m-%d %H:%M") if a.sent_at else "" }}{% if a.status == "corrected" %} · 이후 정정됨{% endif %}</p>
   <p>{{ a.message }}</p>
+  <p><a href="/p/{{ token }}/alerts/{{ a.id }}">근거 보기</a></p>
 </article>
 {% endfor %}
 {% endblock %}

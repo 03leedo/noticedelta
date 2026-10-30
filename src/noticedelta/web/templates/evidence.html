@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}알림 근거 · NoticeDelta{% endblock %}
+{% block body %}
+<style>
+  .old { background:#F8E1DE; display:block; padding:2px 6px; border-radius:6px; }
+  .new { background:#E1F0E4; display:block; padding:2px 6px; border-radius:6px; margin-top:4px; }
+</style>
+<p class="muted"><a href="/p/{{ token }}/alerts">알림함</a> · <a href="/programs/{{ ev.alert.program_id }}">공고 변경 이력</a></p>
+<h1>왜 이 알림을 받았나요</h1>
+<article class="card">
+  <p><b>{{ ev.alert.payload.get("message", "") }}</b></p>
+  <p class="muted">{{ ev.title }}</p>
+</article>
+
+<h2>근거가 된 공고 문장 (정정 후)</h2>
+{% for q in ev.quotes %}<blockquote>“{{ q }}”</blockquote>{% else %}<p class="muted">근거 문장을 찾지 못했습니다.</p>{% endfor %}
+
+<h2>이번 정정에서 바뀐 부분</h2>
+{% for p in ev.pairs %}
+<article class="card">
+  {% if p.before %}<span class="old">{{ p.before }}</span>{% endif %}
+  {% if p.after %}<span class="new">{{ p.after }}</span>{% endif %}
+  <p class="muted">{{ p.where }}</p>
+</article>
+{% else %}
+<p class="muted">근거 문장 자체는 그대로이고, 다른 곳의 변경으로 판정이 바뀌었습니다.</p>
+{% endfor %}
+<p class="note">참고용 정보입니다. 신청 전 최종 확인은 반드시 공고 원문에서 하세요.</p>
+{% endblock %}

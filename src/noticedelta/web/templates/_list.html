@@ -5,7 +5,7 @@
 {% for p in rows %}
 <article class="card">
   <span class="badge b-{{ group }}">{{ GROUP_NAMES[group] }}</span>
-  <h2>{{ p.title }}</h2>
+  <h2><a href="/programs/{{ p.program_id }}">{{ p.title }}</a></h2>
   <p class="muted">{% if p.org %}{{ p.org }} · {% endif %}{% if p.deadline %}마감 {{ p.deadline }} (D-{{ (p.deadline - mine.as_of).days }}){% else %}마감일 확인 필요{% endif %}</p>
 
   {% if p.next_change %}

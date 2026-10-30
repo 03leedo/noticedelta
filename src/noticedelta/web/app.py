@@ -6,6 +6,8 @@
 /p/<토큰>/edit        프로필 고치기
 /p/<토큰>/calendar.ics 마감일·자격 변경일 캘린더
 /p/<토큰>/alerts      알림함 (정정으로 바뀐 내 판정·필드)
+/p/<토큰>/alerts/<id> 알림 근거: 바뀐 원문 조각과 근거 문장
+/programs/<id>        공고 상세와 변경 이력 (누구나)
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from sqlalchemy.orm import Session
 from noticedelta.db.models import Profile
 from noticedelta.eligibility.synthetic import SIDO
 from noticedelta.notify import inbox
+from noticedelta.web.history_views import alert_evidence, program_detail
 from noticedelta.web.ics import calendar
 from noticedelta.web.views import GROUP_NAMES, GROUPS, OUTCOME_NAMES, humanize, my_programs
 
@@ -133,11 +136,34 @@ def create_app(
         with session_factory() as s:
             load(s, token)
             rows = [
-                {"message": a.payload.get("message", ""), "sent_at": a.sent_at, "status": a.status}
+                {
+                    "id": a.id,
+                    "message": a.payload.get("message", ""),
+                    "sent_at": a.sent_at,
+                    "status": a.status,
+                }
                 for a in inbox(s, token)
             ]
         ctx = {**common, "token": token, "alerts": rows}
         return templates.TemplateResponse(request, "alerts.html", ctx)
+
+    @app.get("/p/{token}/alerts/{alert_id}", response_class=HTMLResponse)
+    def evidence(request: Request, token: str, alert_id: str):
+        with session_factory() as s:
+            load(s, token)
+            ev = alert_evidence(s, alert_id, token)
+            if ev is None:
+                raise HTTPException(404, "없는 알림입니다")
+            ctx = {**common, "token": token, "ev": ev}
+            return templates.TemplateResponse(request, "evidence.html", ctx)
+
+    @app.get("/programs/{program_id}", response_class=HTMLResponse)
+    def program(request: Request, program_id: str):
+        with session_factory() as s:
+            detail = program_detail(s, program_id)
+            if detail is None:
+                raise HTTPException(404, "없는 사업입니다")
+            return templates.TemplateResponse(request, "program.html", {**common, "d": detail})
 
     @app.get("/p/{token}/calendar.ics")
     def ics(token: str):
