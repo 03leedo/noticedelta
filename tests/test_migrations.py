@@ -53,11 +53,15 @@ def test_postgres_upgrade_matches_models():
     engine.dispose()
 
 
-def test_database_from_before_the_label_table_gets_it(tmp_path):
-    """0001 시절 create_all로 만든 DB(라벨 표 없음)는 0001로 표시한 뒤 0002를 올린다."""
-    engine = make_engine(f"sqlite:///{tmp_path / 'v1.db'}")
-    old = [t for name, t in models.Base.metadata.tables.items() if name != "label"]
-    models.Base.metadata.create_all(engine, tables=old)
+def test_unversioned_database_from_the_first_schema_is_upgraded(tmp_path):
+    """Alembic 이전에 create_all로 만든 DB(0001 스키마, 버전 표시 없음)는 0001로 표시하고 올린다."""
+    from alembic import command
+
+    url = f"sqlite:///{tmp_path / 'v1.db'}"
+    command.upgrade(migrate.config(url), migrate.BASELINE)
+    engine = make_engine(url)
+    with engine.begin() as conn:
+        conn.execute(sa.text("DROP TABLE alembic_version"))
     assert migrate.upgrade(engine) == migrate.head()
     assert "label" in sa.inspect(engine).get_table_names()
     assert diffs(engine) == []

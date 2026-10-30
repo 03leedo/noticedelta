@@ -49,7 +49,12 @@ def upgrade(engine: sa.Engine) -> str:
             # create_all로 만든 DB. 지금 모델의 표가 다 있으면 최신, 아니면 첫 마이그레이션 상태다.
             from noticedelta.db.models import Base
 
-            complete = set(Base.metadata.tables) <= tables
+            insp = sa.inspect(conn)
+            complete = all(
+                t.name in tables
+                and {c.name for c in t.columns} <= {c["name"] for c in insp.get_columns(t.name)}
+                for t in Base.metadata.sorted_tables
+            )
             command.stamp(cfg, "head" if complete else BASELINE)
         command.upgrade(cfg, "head")
     return current(engine)
