@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}일치도 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>1차·2차 일치도</h1>
+<p class="muted"><a href="/">목록</a></p>
+{% if a.pairs %}
+<article class="card">
+  <p>비교한 (정정, 필드) 쌍: <b>{{ a.pairs }}</b></p>
+  <p>상태가 같은 비율: <b>{{ "%.1f" | format(a.agree * 100) }}%</b></p>
+  <p>Cohen's kappa: <b>{{ "%.2f" | format(a.kappa) }}</b> <span class="muted">(0.8 이상이면 매우 좋음, 0.6~0.8 좋음)</span></p>
+</article>
+{% else %}
+<p class="muted">2차 라벨이 아직 없습니다.</p>
+{% endif %}
+{% endblock %}

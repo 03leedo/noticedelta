@@ -245,6 +245,30 @@ class ChangeEvent(Base):
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
 
 
+class LabelRow(Base):
+    """사람이 단 정답 라벨 (DESIGN 12.1). 단위는 (사업 버전 쌍, 필드), 회차마다 따로 쌓는다.
+
+    엔진과 무관하게 to_version(이후 사업 버전)으로 가리킨다. 원문은 넣지 않고 위치만 적는다.
+    """
+
+    __tablename__ = "label"
+    __table_args__ = (sa.UniqueConstraint("to_version_id", "field", "round", "labeler"),)
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
+    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    to_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"), index=True)
+    field: Mapped[str] = mapped_column(sa.String(64))
+    round: Mapped[int] = mapped_column(sa.Integer, default=1)  # 1: 처음, 2: 7일 뒤 다시
+    labeler: Mapped[str] = mapped_column(sa.String(64), default="me")
+    # changed / unchanged / wording_only / absent
+    status: Mapped[str] = mapped_column(sa.String(16))
+    before: Mapped[str | None] = mapped_column(sa.Text)  # 정규화한 값 (지침 문서)
+    after: Mapped[str | None] = mapped_column(sa.Text)
+    visible_in: Mapped[str | None] = mapped_column(sa.String(16))  # api_meta / body / attachment
+    evidence: Mapped[str | None] = mapped_column(sa.Text)  # 위치만: "공고문.hwp 2쪽 표1 신청자격"
+    note: Mapped[str | None] = mapped_column(sa.Text)
+    labeled_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+
+
 class OutboxAlert(Base):
     __tablename__ = "outbox_alert"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}2차 라벨 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>2차 라벨</h1>
+<p class="muted"><a href="/">목록</a> · 1차 라벨을 단 지 7일이 지난 정정 중 30%입니다. 1차 답은 보이지 않습니다.</p>
+{% for e in due %}
+<article class="card"><h2><a href="/e/{{ e.to_version.id }}?round=2">{{ e.title }}</a></h2>
+<p class="muted">v{{ e.from_version.version_no }} → v{{ e.to_version.version_no }}{% if 2 in e.rounds %} · 2차 완료{% endif %}</p></article>
+{% else %}
+<p class="muted">아직 2차 라벨 대상이 없습니다.</p>
+{% endfor %}
+{% endblock %}

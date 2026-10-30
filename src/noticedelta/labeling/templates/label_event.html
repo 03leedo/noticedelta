@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}라벨 · {{ v.ref.title }}{% endblock %}
+{% block body %}
+<style>
+  main { max-width: 1100px; }
+  table.diff { width:100%; border-collapse:collapse; font-size:14px; table-layout:fixed; }
+  table.diff td, table.diff th { border-bottom:1px solid var(--line); padding:4px 6px; vertical-align:top; word-break:break-all; }
+  tr.changed td { background:#FBF1E8; }
+  pre.body { white-space:pre-wrap; font-size:14px; background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .eq { display:block; } .del { background:#F8E1DE; display:block; } .ins { background:#E1F0E4; display:block; } .gap { color:var(--soft); display:block; }
+  table.labels td { padding:4px; vertical-align:top; } table.labels input[type=text] { width:100%; }
+  .radios label { display:inline-flex; gap:4px; margin:0 10px 0 0; font-weight:400; }
+</style>
+<p class="muted"><a href="/">목록</a> · {{ round }}차 라벨{% if round == 2 %} (1차 답은 보이지 않습니다){% endif %}</p>
+<h1>{{ v.ref.title }}</h1>
+<p class="muted">v{{ v.ref.from_version.version_no }} → v{{ v.ref.to_version.version_no }}</p>
+
+<h2>API 응답 값</h2>
+<table class="diff">
+  <tr><th style="width:18%">키</th><th>이전</th><th>이후</th></tr>
+  {% for k, b, a, changed in v.api_rows %}
+  <tr class="{% if changed %}changed{% endif %}"><td>{{ k }}</td><td>{{ b }}</td><td>{{ a }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>본문 비교</h2>
+{% if v.body_rows %}
+<pre class="body">{% for op, line in v.body_rows %}{% if op == "-" %}<span class="del">- {{ line }}</span>{% elif op == "+" %}<span class="ins">+ {{ line }}</span>{% elif op == "…" %}<span class="gap">…</span>{% else %}<span class="eq">  {{ line }}</span>{% endif %}{% endfor %}</pre>
+{% else %}
+<p class="muted">본문은 같습니다.</p>
+{% endif %}
+
+<h2>첨부 원본</h2>
+<table class="diff">
+  <tr><th style="width:14%">상태</th><th>이전</th><th>이후</th></tr>
+  {% for row in v.attachments %}
+  <tr class="{% if row.state != '같음' %}changed{% endif %}">
+    <td>{{ row.state }}</td>
+    <td>{% if row.old %}{% if row.old.blob_key %}<a href="/blob/{{ row.old.blob_key }}?name={{ row.old.filename | urlencode }}">{{ row.old.filename }}</a>{% else %}{{ row.old.filename }}{% endif %}{% endif %}</td>
+    <td>{% if row.new %}{% if row.new.blob_key %}<a href="/blob/{{ row.new.blob_key }}?name={{ row.new.filename | urlencode }}">{{ row.new.filename }}</a>{% else %}{{ row.new.filename }}{% endif %}{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" class="muted">첨부가 없습니다.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>필드별 라벨</h2>
+<form method="post" action="/e/{{ v.ref.to_version.id }}?round={{ round }}">
+<table class="labels" style="width:100%">
+{% for f in FIELDS %}
+  {% set s = saved.get(f) %}
+  <tr><td colspan="4"><b>{{ FIELD_NAMES[f] }}</b>
+    <span class="radios">{% for key, name in STATUSES.items() %}
+      <label><input type="radio" name="{{ f }}.status" value="{{ key }}" {% if s and s.status == key %}checked{% endif %} required> {{ name }}</label>
+    {% endfor %}</span></td></tr>
+  <tr>
+    <td><input type="text" name="{{ f }}.before" placeholder="이전 값 (정규화)" value="{{ s.before if s and s.before else '' }}"></td>
+    <td><input type="text" name="{{ f }}.after" placeholder="이후 값 (정규화)" value="{{ s.after if s and s.after else '' }}"></td>
+    <td style="width:16%"><select name="{{ f }}.visible_in"><option value="">어디서 보이나</option>
+      {% for key, name in VISIBLE.items() %}<option value="{{ key }}" {% if s and s.visible_in == key %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></td>
+    <td><input type="text" name="{{ f }}.evidence" placeholder="근거 위치 (예: 공고문.hwp 2쪽 표1)" value="{{ s.evidence if s and s.evidence else '' }}"></td>
+  </tr>
+{% endfor %}
+</table>
+<label for="note">메모</label>
+<input type="text" id="note" name="note" style="width:100%" value="{{ saved[FIELDS[0]].note if saved.get(FIELDS[0]) and saved[FIELDS[0]].note else '' }}">
+<button type="submit">{{ round }}차 라벨 저장</button>
+</form>
+{% endblock %}

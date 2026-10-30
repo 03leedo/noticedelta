@@ -51,3 +51,13 @@ def test_postgres_upgrade_matches_models():
     assert migrate.upgrade(engine) == migrate.head()
     assert diffs(engine) == []
     engine.dispose()
+
+
+def test_database_from_before_the_label_table_gets_it(tmp_path):
+    """0001 시절 create_all로 만든 DB(라벨 표 없음)는 0001로 표시한 뒤 0002를 올린다."""
+    engine = make_engine(f"sqlite:///{tmp_path / 'v1.db'}")
+    old = [t for name, t in models.Base.metadata.tables.items() if name != "label"]
+    models.Base.metadata.create_all(engine, tables=old)
+    assert migrate.upgrade(engine) == migrate.head()
+    assert "label" in sa.inspect(engine).get_table_names()
+    assert diffs(engine) == []
