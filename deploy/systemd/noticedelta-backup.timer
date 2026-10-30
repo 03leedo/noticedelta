@@ -1,0 +1,9 @@
+[Unit]
+Description=NoticeDelta DB 백업 매일
+
+[Timer]
+OnCalendar=*-*-* 04:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

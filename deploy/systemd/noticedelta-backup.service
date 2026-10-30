@@ -1,0 +1,7 @@
+[Unit]
+Description=NoticeDelta DB 백업
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/noticedelta/deploy/backup.sh

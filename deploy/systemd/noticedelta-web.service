@@ -1,0 +1,14 @@
+[Unit]
+Description=NoticeDelta 웹 (구독자 화면)
+After=docker.service
+Requires=docker.service
+
+[Service]
+User=noticedelta
+WorkingDirectory=/opt/noticedelta
+ExecStart=/opt/noticedelta/.venv/bin/python scripts/web.py --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
