@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}내 지원사업 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>내 지원사업</h1>
+<p class="muted">{{ mine.as_of }} 기준 · <a href="/p/{{ token }}/edit">조건 고치기</a> ·
+<a href="/p/{{ token }}/calendar.ics">캘린더에 마감일 추가 (ICS)</a></p>
+<p class="note">이 페이지 주소가 곧 열쇠입니다. 즐겨찾기해 두시고, 다른 사람과 공유하지 마세요.</p>
+{% set counts = mine.counts() %}
+<nav class="tabs">
+{% for g in GROUPS %}
+  <a href="/p/{{ token }}?group={{ g }}" class="{% if g == group %}on{% endif %}"
+     hx-get="/p/{{ token }}/list?group={{ g }}" hx-target="#list" hx-push-url="/p/{{ token }}?group={{ g }}"
+     onclick="document.querySelectorAll('.tabs a').forEach(a => a.classList.remove('on')); this.classList.add('on')">
+    {{ GROUP_NAMES[g] }} {{ counts[g] }}</a>
+{% endfor %}
+</nav>
+<p class="muted">해당하지 않는 사업 {{ mine.hidden }}개는 숨겼습니다.</p>
+<div id="list">{% include "_list.html" %}</div>
+{% endblock %}

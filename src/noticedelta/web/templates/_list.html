@@ -1,0 +1,34 @@
+{% set rows = mine.group(group) %}
+{% if not rows %}
+<p class="muted">여기에 해당하는 사업이 없습니다.</p>
+{% endif %}
+{% for p in rows %}
+<article class="card">
+  <span class="badge b-{{ group }}">{{ GROUP_NAMES[group] }}</span>
+  <h2>{{ p.title }}</h2>
+  <p class="muted">{% if p.org %}{{ p.org }} · {% endif %}{% if p.deadline %}마감 {{ p.deadline }} (D-{{ (p.deadline - mine.as_of).days }}){% else %}마감일 확인 필요{% endif %}</p>
+
+  {% if p.next_change %}
+  <p class="note">{{ p.next_change.on }}부터 판정이 바뀝니다:
+    {{ {"eligible": "해당", "ineligible": "비해당", "unknown": "확인 필요"}[p.next_change.before] }} →
+    {{ {"eligible": "해당", "ineligible": "비해당", "unknown": "확인 필요"}[p.next_change.after] }}</p>
+  {% endif %}
+
+  {% if group == "near" %}
+  <p><b>이 조건 하나만 맞으면 됩니다</b></p>
+  <ul class="reasons">
+  {% for n in p.near %}<li>{{ n.reason.detail | human }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  <details {% if group != "eligible" %}open{% endif %}>
+    <summary>판정 근거</summary>
+    <ul class="reasons">
+    {% for r in p.judgment.reasons %}
+      <li><b>{{ OUTCOMES.get(r.outcome, r.outcome) }}</b> · {{ r.detail | human }}
+        {% if r.source and p.sources.get(r.source) %}<blockquote>“{{ p.sources[r.source] }}”</blockquote>{% endif %}</li>
+    {% endfor %}
+    </ul>
+  </details>
+</article>
+{% endfor %}
