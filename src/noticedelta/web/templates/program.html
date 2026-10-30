@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ d.program.title }} · NoticeDelta{% endblock %}
+{% block body %}
+<style>
+  .pair { border-left:3px solid var(--line); padding:4px 10px; margin:8px 0; font-size:14px; }
+  .pair .old { background:#F8E1DE; display:block; padding:2px 6px; border-radius:6px; }
+  .pair .new { background:#E1F0E4; display:block; padding:2px 6px; border-radius:6px; margin-top:4px; }
+  .k-modified { border-color:#E8853A; } .k-added { border-color:#2F6FB0; } .k-removed { border-color:#646B72; }
+</style>
+<p class="muted"><a href="javascript:history.back()">뒤로</a></p>
+<h1>{{ d.program.title }}</h1>
+<p class="muted">{% if d.program.org %}{{ d.program.org }} · {% endif %}버전 {{ d.program.current_version_no or 1 }}개 · 정정 {{ d.corrections | length }}번</p>
+<p class="note">참고용 정보입니다. 신청 전 최종 확인은 반드시 공고 원문에서 하세요.
+{% for n in d.postings %}{% if n.url %} <a href="{{ n.url }}" rel="noopener noreferrer" target="_blank">원문{% if d.postings | length > 1 %} {{ loop.index }}{% endif %}</a>{% endif %}{% endfor %}</p>
+
+{% if d.fields %}
+<h2>지금 값</h2>
+<ul class="reasons">
+{% for name, f in d.fields.items() %}{% if name != "eligibility_rules" %}
+  <li>{{ {"deadline": "마감일", "amount": "지원 금액", "required_documents": "제출 서류", "contact": "문의처"}.get(name, name) }}: {{ f.value }}{% if f.status != "verified" %} <span class="muted">(확인 필요)</span>{% endif %}</li>
+{% endif %}{% endfor %}
+</ul>
+{% endif %}
+
+<h2>변경 이력</h2>
+{% for c in d.corrections %}
+<article class="card">
+  <p><b>v{{ c.from_no }} → v{{ c.to_no }}</b> <span class="muted">{{ c.seen_at.strftime("%Y-%m-%d %H:%M") if c.seen_at else "" }} 수집 · 조각 {{ c.total }}개 중 수정 {{ c.modified }} · 추가 {{ c.added }} · 삭제 {{ c.removed }}{% if c.unknown %} · 읽지 못한 첨부 {{ c.unknown }}{% endif %}</span></p>
+  {% for p in c.pairs %}
+  <div class="pair k-{{ p.kind }}">
+    <span class="muted">{{ {"modified": "수정", "added": "추가", "removed": "삭제"}[p.kind] }} · {{ p.where }}</span>
+    {% if p.before %}<span class="old">{{ p.before }}</span>{% endif %}
+    {% if p.after %}<span class="new">{{ p.after }}</span>{% endif %}
+  </div>
+  {% endfor %}
+  {% if c.hidden %}<p class="muted">외 {{ c.hidden }}개 조각이 더 바뀌었습니다.</p>{% endif %}
+</article>
+{% else %}
+<p class="muted">처음 게시된 뒤로 정정이 없었습니다.</p>
+{% endfor %}
+{% endblock %}
