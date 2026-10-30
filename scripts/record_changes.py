@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from capture_samples import load_env  # noqa: E402
 
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
-from noticedelta.db import make_engine, models  # noqa: E402
+from noticedelta.db import make_engine, migrate, models  # noqa: E402
 from noticedelta.history import record_program, replay  # noqa: E402
 from noticedelta.ingest import parse_attachments  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
@@ -37,7 +37,7 @@ def main() -> None:
     args = ap.parse_args()
     load_env(ROOT / ".env")
     engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    models.Base.metadata.create_all(engine)
+    migrate.upgrade(engine)
     store = LocalBlobStore(Path(args.root) / "blobs")
     parser = DockerParser()
 

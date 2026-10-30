@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from capture_samples import load_env  # noqa: E402
 
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
-from noticedelta.db import make_engine, models  # noqa: E402
+from noticedelta.db import make_engine, migrate  # noqa: E402
 from noticedelta.jobs import counts, run_worker  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
 from noticedelta.pipeline import Context, enqueue_backfill, enqueue_load, handlers  # noqa: E402
@@ -42,7 +42,7 @@ def main() -> None:
     args = ap.parse_args()
     load_env(ROOT / ".env")
     engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    models.Base.metadata.create_all(engine)
+    migrate.upgrade(engine)
     factory = sessionmaker(engine)
     root = Path(args.root)
 

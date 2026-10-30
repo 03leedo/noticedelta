@@ -5,6 +5,7 @@ description = "정정공고가 나오면 내 자격·마감·금액 변화만 �
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.20.1",
     "anthropic>=1.14.0",
     "httpx>=0.28.1",
     "pydantic>=2.14.1",

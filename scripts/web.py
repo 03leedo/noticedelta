@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from capture_samples import load_env  # noqa: E402
 
-from noticedelta.db import make_engine, models  # noqa: E402
+from noticedelta.db import make_engine, migrate  # noqa: E402
 from noticedelta.web.app import create_app  # noqa: E402
 from noticedelta.web.demo import seed_demo  # noqa: E402
 
@@ -42,7 +42,7 @@ def main() -> None:
         else os.environ.get("DATABASE_URL", "sqlite:///data/dev.db")
     )
     engine = make_engine(url)
-    models.Base.metadata.create_all(engine)
+    migrate.upgrade(engine)
     factory = sessionmaker(engine)
     if args.demo:
         with factory() as s:
