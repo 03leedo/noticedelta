@@ -126,3 +126,29 @@ def test_form_values_are_cleaned():
 
 def test_humanize():
     assert humanize("is_women_owned == True (프로필: False)") == "여성기업 = 예 (프로필: 아니오)"
+
+
+def test_inbox_shows_sent_alerts(env):
+    from datetime import UTC, datetime
+
+    client, factory = env
+    path = make_profile(client, **BUSAN_FOUNDER)
+    token = path.rsplit("/", 1)[-1]
+    assert "아직 받은 알림이 없습니다" in client.get(f"{path}/alerts").text
+    with factory() as s:
+        s.add(
+            models.OutboxAlert(
+                idempotency_key=f"{token}:demo-youth:eligibility_rules:pv-youth",
+                user_id=token,
+                program_id="demo-youth",
+                payload={
+                    "message": "(가상) 사업: 신청 자격 판정이 해당에서 비해당(으)로 바뀌었습니다."
+                },
+                status="sent",
+                sent_at=datetime(2026, 10, 30, 9, 0, tzinfo=UTC),
+            )
+        )
+        s.commit()
+    page = client.get(f"{path}/alerts").text
+    assert "해당에서 비해당" in page and "2026-10-30 09:00" in page
+    assert client.get("/p/nope/alerts").status_code == 404

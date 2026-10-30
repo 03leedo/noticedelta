@@ -3,7 +3,8 @@
 {% block body %}
 <h1>내 지원사업</h1>
 <p class="muted">{{ mine.as_of }} 기준 · <a href="/p/{{ token }}/edit">조건 고치기</a> ·
-<a href="/p/{{ token }}/calendar.ics">캘린더에 마감일 추가 (ICS)</a></p>
+<a href="/p/{{ token }}/calendar.ics">캘린더에 마감일 추가 (ICS)</a> ·
+<a href="/p/{{ token }}/alerts">알림함</a></p>
 <p class="note">이 페이지 주소가 곧 열쇠입니다. 즐겨찾기해 두시고, 다른 사람과 공유하지 마세요.</p>
 {% set counts = mine.counts() %}
 <nav class="tabs">

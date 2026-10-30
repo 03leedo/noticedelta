@@ -1,6 +1,6 @@
 """작업 종류로 이은 파이프라인 (설계 5장, 8장, 작업 목록 13번).
 
-    적재(load_run) → 파싱(parse) → 변경 기록(diff) → 영향 계산(impact) → [알림 발송은 17번]
+    적재(load_run) → 파싱(parse) → 변경 기록(diff) → 영향 계산(impact) → 알림(notify)
 
 영향 계산은 추출기(LLM)가 설정돼 있을 때만 등록한다. 첫 버전은 필드를 모두 뽑고, 다음 버전부터는
 바뀐 조각에 걸린 필드만 다시 뽑아 진짜 변경·재판정·알림(아웃박스)까지 쓴다.
@@ -46,10 +46,11 @@ from noticedelta.impact import (
 from noticedelta.ingest import parse_attachments
 from noticedelta.jobs import Handler, PermanentError, TransientError, enqueue
 from noticedelta.llm.extract import FIELD_TYPES, TEMPLATE_VERSION
+from noticedelta.notify import Channel, InboxChannel, deliver, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
 from noticedelta.programs import LoadSummary, load_run
 
-LOAD, PARSE, DIFF, IMPACT = "load_run", "parse", "diff", "impact"
+LOAD, PARSE, DIFF, IMPACT, NOTIFY = "load_run", "parse", "diff", "impact", "notify"
 LOADER_KEY = "loader"  # 실행 파일은 시간 순으로 하나씩 넣는다
 DIFF_WAIT_BASE = timedelta(minutes=30)  # 첨부를 기다리는 비교의 다음 시도 간격(두 배씩)
 DIFF_MAX_WAITS = 6
@@ -67,6 +68,7 @@ class Context:
     extractor: Extractor | None = None  # 없으면 변경 기록에서 멈춘다
     extractor_name: str = ""
     now: Callable[[], datetime] = field(default=_utcnow)
+    channel: Channel = field(default_factory=InboxChannel)
 
 
 def _unloaded_runs(session: Session, root: Path) -> list[str]:
@@ -335,6 +337,24 @@ def handle_impact(ctx: Context) -> Handler:
                 )
                 row.status = "held"
                 row.held_reason = f"근거 확인 필요 (신뢰도 {alert.confidence:.2f})"
+        if res.alerts:
+            enqueue(
+                session,
+                NOTIFY,
+                {"program_id": program_id},
+                dedupe_key=f"{NOTIFY}:{pv.id}",
+                concurrency_key=f"program:{program_id}",
+                priority=80,
+            )
+
+    return handle
+
+
+def handle_notify(ctx: Context) -> Handler:
+    def handle(session: Session, job: Job) -> None:
+        program_id = job.payload["program_id"]
+        prepare(session, program_id)
+        deliver(session, ctx.channel, program_id=program_id, now=ctx.now)
 
     return handle
 
@@ -345,4 +365,5 @@ def handlers(ctx: Context) -> dict[str, Handler]:
         PARSE: handle_parse(ctx),
         DIFF: handle_diff(ctx),
         IMPACT: handle_impact(ctx),
+        NOTIFY: handle_notify(ctx),
     }
