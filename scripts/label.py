@@ -10,20 +10,13 @@ DB는 .env의 DATABASE_URL(기본 sqlite:///data/dev.db), 첨부 원본은 data/
 from __future__ import annotations
 
 import argparse
-import os
-import sys
 from pathlib import Path
 
 import uvicorn
-from sqlalchemy.orm import sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
-from noticedelta.db import make_engine, migrate  # noqa: E402
+from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.labeling.app import create_label_app  # noqa: E402
 
 
@@ -33,12 +26,9 @@ def main() -> None:
     ap.add_argument("--labeler", default="me", help="두 번째 사람이 라벨할 때 다른 이름")
     ap.add_argument("--port", type=int, default=8001)
     args = ap.parse_args()
-    load_env(ROOT / ".env")
-    engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    migrate.upgrade(engine)
-    app = create_label_app(
-        sessionmaker(engine), LocalBlobStore(Path(args.root) / "blobs"), labeler=args.labeler
-    )
+    load_env()
+    engine, factory = open_db()
+    app = create_label_app(factory, LocalBlobStore(Path(args.root) / "blobs"), labeler=args.labeler)
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 
 

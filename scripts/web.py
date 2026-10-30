@@ -12,19 +12,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from datetime import date
 from pathlib import Path
 
 import uvicorn
-from sqlalchemy.orm import sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
-from noticedelta.db import make_engine, migrate  # noqa: E402
+from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.web.app import create_app  # noqa: E402
 from noticedelta.web.demo import seed_demo  # noqa: E402
 
@@ -34,16 +28,8 @@ def main() -> None:
     ap.add_argument("--demo", action="store_true", help="가상 사업이 든 data/demo.db로 띄운다")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
-    load_env(ROOT / ".env")
-    (ROOT / "data").mkdir(exist_ok=True)
-    url = (
-        f"sqlite:///{ROOT / 'data' / 'demo.db'}"
-        if args.demo
-        else os.environ.get("DATABASE_URL", "sqlite:///data/dev.db")
-    )
-    engine = make_engine(url)
-    migrate.upgrade(engine)
-    factory = sessionmaker(engine)
+    load_env()
+    _, factory = open_db(f"sqlite:///{ROOT / 'data' / 'demo.db'}" if args.demo else None)
     if args.demo:
         with factory() as s:
             print(f"가상 사업 {seed_demo(s, date.today())}개를 넣었습니다")

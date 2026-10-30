@@ -10,21 +10,16 @@
 from __future__ import annotations
 
 import argparse
-import os
 import statistics
-import sys
 from pathlib import Path
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
-from noticedelta.db import make_engine, migrate, models  # noqa: E402
+from noticedelta.config import load_env, open_db  # noqa: E402
+from noticedelta.db import models  # noqa: E402
 from noticedelta.history import record_program, replay  # noqa: E402
 from noticedelta.ingest import parse_attachments  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
@@ -35,9 +30,8 @@ def main() -> None:
     ap.add_argument("--root", default=str(ROOT / "data" / "snapshots"))
     ap.add_argument("--all", action="store_true", help="버전이 하나인 사업도 기록")
     args = ap.parse_args()
-    load_env(ROOT / ".env")
-    engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    migrate.upgrade(engine)
+    load_env()
+    engine, _ = open_db()
     store = LocalBlobStore(Path(args.root) / "blobs")
     parser = DockerParser()
 

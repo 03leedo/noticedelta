@@ -25,7 +25,6 @@ from sqlalchemy.orm import Session
 from noticedelta.blobstore import BlobNotFound, BlobStore
 from noticedelta.db.models import LabelRow
 from noticedelta.labeling.store import (
-    FIELD_NAMES,
     FIELDS,
     STATUSES,
     VISIBLE,
@@ -35,6 +34,7 @@ from noticedelta.labeling.store import (
     save_labels,
     second_round,
 )
+from noticedelta.names import FIELD_NAMES
 
 HERE = Path(__file__).parent
 WEB_TEMPLATES = HERE.parent / "web" / "templates"  # base.html을 같이 쓴다

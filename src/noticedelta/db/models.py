@@ -314,14 +314,3 @@ class Job(Base):
     updated_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), default=now, onupdate=now
     )
-
-
-class JobLedger(Base):
-    __tablename__ = "job_ledger"
-    stage: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
-    job_key: Mapped[str] = mapped_column(sa.String(200), primary_key=True)
-    status: Mapped[str] = mapped_column(sa.String(16), default="running")
-    attempts: Mapped[int] = mapped_column(sa.Integer, default=1)
-    updated_at: Mapped[datetime] = mapped_column(
-        sa.DateTime(timezone=True), default=now, onupdate=now
-    )

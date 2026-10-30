@@ -41,7 +41,7 @@ def find_demo_dir() -> Path:
     raise FileNotFoundError(f"데모 시나리오(scenario.json)를 찾지 못했습니다. 찾아본 곳: {tried}")
 
 
-LABEL = {"eligible": "해당", "ineligible": "비해당", "unknown": "확인 필요"}
+from noticedelta.names import RESULT_NAMES as LABEL  # noqa: E402
 
 
 @dataclass

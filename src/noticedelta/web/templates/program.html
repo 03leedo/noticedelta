@@ -17,7 +17,7 @@
 <h2>지금 값</h2>
 <ul class="reasons">
 {% for name, f in d.fields.items() %}{% if name != "eligibility_rules" %}
-  <li>{{ {"deadline": "마감일", "amount": "지원 금액", "required_documents": "제출 서류", "contact": "문의처"}.get(name, name) }}: {{ f.value }}{% if f.status != "verified" %} <span class="muted">(확인 필요)</span>{% endif %}</li>
+  <li>{{ FIELD_NAMES.get(name, name) }}: {{ f.value }}{% if f.status != "verified" %} <span class="muted">(확인 필요)</span>{% endif %}</li>
 {% endif %}{% endfor %}
 </ul>
 {% endif %}

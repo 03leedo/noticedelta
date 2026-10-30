@@ -10,8 +10,7 @@
 
   {% if p.next_change %}
   <p class="note">{{ p.next_change.on }}부터 판정이 바뀝니다:
-    {{ {"eligible": "해당", "ineligible": "비해당", "unknown": "확인 필요"}[p.next_change.before] }} →
-    {{ {"eligible": "해당", "ineligible": "비해당", "unknown": "확인 필요"}[p.next_change.after] }}</p>
+    {{ RESULT_NAMES[p.next_change.before] }} → {{ RESULT_NAMES[p.next_change.after] }}</p>
   {% endif %}
 
   {% if group == "near" %}

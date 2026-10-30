@@ -9,6 +9,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 Op = Literal["==", "!=", "<", "<=", ">", ">=", "in", "not_in", "between"]
 
+# region_sido 값: 광역시·도의 짧은 이름
+SIDO = ("서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원", "충북",
+        "충남", "전북", "전남", "경북", "경남", "제주")  # fmt: skip
+
 ATTRIBUTES: dict[str, type] = {
     "is_pre_founder": bool,
     "business_age_months": int,

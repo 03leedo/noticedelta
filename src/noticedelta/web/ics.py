@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from noticedelta.names import RESULT_NAMES
 from noticedelta.web.views import GROUP_NAMES, MyPrograms
-
-RESULT_NAMES = {"eligible": "해당", "ineligible": "비해당", "unknown": "확인 필요"}
 
 
 def _escape(text: str) -> str:

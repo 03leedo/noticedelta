@@ -8,19 +8,13 @@ DB는 .env의 DATABASE_URL(기본 sqlite:///data/dev.db). 이미 넣은 실행�
 from __future__ import annotations
 
 import argparse
-import os
-import sys
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
-from noticedelta.db import make_engine, migrate  # noqa: E402
+from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.programs import load_snapshots  # noqa: E402
 
 
@@ -28,10 +22,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=str(ROOT / "data" / "snapshots"))
     args = ap.parse_args()
-    load_env(ROOT / ".env")
-    (ROOT / "data").mkdir(exist_ok=True)
-    engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    migrate.upgrade(engine)
+    load_env()
+    engine, _ = open_db()
     root = Path(args.root)
     with Session(engine) as session:
         s = load_snapshots(session, root, LocalBlobStore(root / "blobs"))

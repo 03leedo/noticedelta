@@ -20,17 +20,10 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.db.models import OutboxAlert, Program, ProgramVersion
+from noticedelta.names import FIELD_NAMES, RESULT_NAMES
 
 UNSENT = ("pending", "held", "ready")
 MASS_IMPACT = 20  # 한 버전의 같은 필드 변경이 이만큼 넘는 사람을 비해당으로 바꾸면 붙잡는다
-RESULT_NAMES = {"eligible": "해당", "ineligible": "비해당", "unknown": "확인 필요"}
-FIELD_NAMES = {
-    "eligibility_rules": "신청 자격",
-    "deadline": "마감일",
-    "amount": "지원 금액",
-    "required_documents": "제출 서류",
-    "contact": "문의처",
-}
 
 
 def _now() -> datetime:

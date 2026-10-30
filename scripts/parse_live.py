@@ -9,8 +9,6 @@
 from __future__ import annotations
 
 import argparse
-import os
-import sys
 from collections import Counter
 from pathlib import Path
 
@@ -18,36 +16,19 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
 from noticedelta import blobstore  # noqa: E402
-from noticedelta.db import make_engine, migrate, models  # noqa: E402
+from noticedelta.config import load_env, open_db  # noqa: E402
+from noticedelta.db import models  # noqa: E402
 from noticedelta.ingest import parse_attachments, version_segments  # noqa: E402
 from noticedelta.parsing import DockerParser, ParserUnavailable  # noqa: E402
-
-NEW_COLUMNS = {"parser": "VARCHAR(64)", "parsed_key": "VARCHAR(64)", "review_reason": "TEXT"}
-
-
-def add_missing_columns(engine: sa.Engine) -> None:
-    """마이그레이션 도구를 붙이기 전까지, 예전에 만든 개발용 DB에 새 첨부 컬럼을 더한다."""
-    have = {c["name"] for c in sa.inspect(engine).get_columns("attachment")}
-    with engine.begin() as conn:
-        for name, ddl in NEW_COLUMNS.items():
-            if name not in have:
-                conn.execute(sa.text(f"ALTER TABLE attachment ADD COLUMN {name} {ddl}"))
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="처리할 버전 수 (0이면 전부)")
     args = ap.parse_args()
-    load_env(ROOT / ".env")
-    (ROOT / "data").mkdir(exist_ok=True)
-    engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    migrate.upgrade(engine)
-    add_missing_columns(engine)
+    load_env()
+    engine, _ = open_db()
     store = blobstore.from_env()
     parser = DockerParser()
 
