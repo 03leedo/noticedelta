@@ -45,7 +45,6 @@ def test_all_design_tables_exist():
         "judgment",
         "change_event",
         "outbox_alert",
-        "job_ledger",
     } <= names
 
 
@@ -84,12 +83,6 @@ def test_enqueue_alert_is_idempotent(session):
     assert repo.enqueue_alert(session, alert()) is True
     assert repo.enqueue_alert(session, alert()) is False
     assert session.scalar(sa.select(sa.func.count()).select_from(models.OutboxAlert)) == 1
-
-
-def test_claim_job_once(session):
-    assert repo.claim_job(session, "parse", "N1:abc") is True
-    assert repo.claim_job(session, "parse", "N1:abc") is False
-    assert repo.claim_job(session, "extract", "N1:abc") is True
 
 
 def test_redelivered_old_snapshot_does_not_roll_back(session):

@@ -10,19 +10,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import sys
 from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
-from noticedelta.db import make_engine, migrate  # noqa: E402
+from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.metrics import collect  # noqa: E402
 
 
@@ -30,9 +24,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=float, default=24)
     args = ap.parse_args()
-    load_env(ROOT / ".env")
-    engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    migrate.upgrade(engine)
+    load_env()
+    engine, _ = open_db()
     with Session(engine) as s:
         m = collect(
             s, window=timedelta(hours=args.hours), snapshots_root=ROOT / "data" / "snapshots"

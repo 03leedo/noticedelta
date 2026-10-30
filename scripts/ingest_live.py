@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from collections import Counter
 from pathlib import Path
 
@@ -20,12 +19,9 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
 from noticedelta import blobstore  # noqa: E402
-from noticedelta.db import make_engine, migrate, models  # noqa: E402
+from noticedelta.config import load_env, open_db  # noqa: E402
+from noticedelta.db import models  # noqa: E402
 from noticedelta.ingest import ingest_record  # noqa: E402
 from noticedelta.sources import BizinfoClient, CircuitBreaker, KStartupClient, RateLimiter  # noqa: E402
 
@@ -45,12 +41,8 @@ def main() -> None:
     ap.add_argument("--pages", type=int, default=1)
     ap.add_argument("--sources", default="kstartup,bizinfo")
     args = ap.parse_args()
-    load_env(ROOT / ".env")
-    url = os.environ.get("DATABASE_URL", "sqlite:///data/dev.db")
-    if url.startswith("sqlite:///data/"):
-        (ROOT / "data").mkdir(exist_ok=True)
-    engine = make_engine(url)
-    migrate.upgrade(engine)
+    load_env()
+    engine, _ = open_db()
     store = blobstore.from_env()
     ensure_bucket(store)
     print(f"DB: {engine.url.render_as_string(hide_password=True)}  저장소: {type(store).__name__}")

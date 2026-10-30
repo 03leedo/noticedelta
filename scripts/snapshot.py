@@ -21,10 +21,7 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
+from noticedelta.config import load_env  # noqa: E402
 from noticedelta.snapshot import PER_PAGE, run_snapshot  # noqa: E402
 from noticedelta.sources import BizinfoClient, KStartupClient, RateLimiter  # noqa: E402
 
@@ -58,7 +55,7 @@ def main() -> int:
         print(p.read_text(encoding="utf-8") if p.exists() else "아직 실행 기록이 없습니다")
         return 0
 
-    load_env(ROOT / ".env")
+    load_env()
     missing = [k for k in ("KSTARTUP_SERVICE_KEY", "BIZINFO_SERVICE_KEY") if not os.environ.get(k)]
     if missing:
         print(f".env에 {', '.join(missing)} 값이 없습니다", file=sys.stderr)

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 import time
 from collections import Counter
 from pathlib import Path
@@ -20,10 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
+from noticedelta.config import load_env  # noqa: E402
 from noticedelta.db import make_engine, migrate, models  # noqa: E402
 from noticedelta.eligibility import bulk_judge, judge, ruleset_hash  # noqa: E402
 from noticedelta.eligibility.synthetic import SAMPLE_RULESETS, virtual_profiles  # noqa: E402
@@ -73,7 +69,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=10_000)
     args = ap.parse_args()
-    load_env(ROOT / ".env")
+    load_env()
     url = os.environ.get("NOTICEDELTA_PG_URL", DEFAULT_URL)
     engine = setup(url, args.n)
     print(f"가상 프로필 {args.n:,}명, 가상 사업 {len(SAMPLE_RULESETS)}개")

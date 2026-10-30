@@ -26,8 +26,9 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
 from noticedelta.db.models import Profile
-from noticedelta.eligibility.synthetic import SIDO
+from noticedelta.eligibility.rules import SIDO
 from noticedelta.metrics import collect, prometheus_text
+from noticedelta.names import FIELD_NAMES, RESULT_NAMES
 from noticedelta.notify import inbox
 from noticedelta.web.history_views import alert_evidence, program_detail
 from noticedelta.web.ics import calendar
@@ -78,7 +79,14 @@ def create_app(
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html"]))
     env.filters["human"] = humanize
     templates = Jinja2Templates(env=env)
-    common = {"GROUPS": GROUPS, "GROUP_NAMES": GROUP_NAMES, "OUTCOMES": OUTCOME_NAMES, "SIDO": SIDO}
+    common = {
+        "GROUPS": GROUPS,
+        "GROUP_NAMES": GROUP_NAMES,
+        "OUTCOMES": OUTCOME_NAMES,
+        "SIDO": SIDO,
+        "RESULT_NAMES": RESULT_NAMES,
+        "FIELD_NAMES": FIELD_NAMES,
+    }
 
     def load(session: Session, token: str) -> Profile:
         profile = session.get(Profile, token)

@@ -27,13 +27,6 @@ from noticedelta.llm.extract import FIELD_TYPES
 from noticedelta.sources.base import _VOLATILE
 
 FIELDS = tuple(FIELD_TYPES)
-FIELD_NAMES = {
-    "deadline": "마감일",
-    "amount": "지원 금액",
-    "eligibility_rules": "신청 자격",
-    "required_documents": "제출 서류",
-    "contact": "문의처",
-}
 STATUSES = {
     "changed": "바뀜",
     "unchanged": "안 바뀜",

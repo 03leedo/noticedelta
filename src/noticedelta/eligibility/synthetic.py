@@ -5,10 +5,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from noticedelta.eligibility.rules import RuleGroup
-
-SIDO = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원", "충북",
-        "충남", "전북", "전남", "경북", "경남", "제주"]  # fmt: skip
+from noticedelta.eligibility.rules import SIDO, RuleGroup
 
 
 def virtual_profiles(n: int, seed: int = 42, *, messy: float = 0.05) -> list[dict[str, Any]]:

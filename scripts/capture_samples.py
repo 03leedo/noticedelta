@@ -19,23 +19,12 @@ from pathlib import Path
 
 import httpx
 
+from noticedelta.config import load_env
 from noticedelta.sources import bizinfo, kstartup
 from noticedelta.sources.base import normalize_service_key
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "samples"
-
-
-def load_env(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        if v.strip():
-            os.environ.setdefault(k.strip(), v.strip())
 
 
 def targets(rows: int) -> list[tuple[str, str, str, dict]]:
@@ -105,7 +94,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rows", type=int, default=5)
     args = ap.parse_args()
-    load_env(ROOT / ".env")
+    load_env()
     OUT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 

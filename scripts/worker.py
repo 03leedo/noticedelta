@@ -16,18 +16,11 @@ from __future__ import annotations
 import argparse
 import os
 import socket
-import sys
 from pathlib import Path
 
-from sqlalchemy.orm import sessionmaker
-
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from capture_samples import load_env  # noqa: E402
-
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
-from noticedelta.db import make_engine, migrate  # noqa: E402
+from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.jobs import counts, run_worker  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
 from noticedelta.pipeline import Context, enqueue_backfill, enqueue_load, handlers  # noqa: E402
@@ -40,10 +33,8 @@ def main() -> None:
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--backfill", action="store_true", help="변경 기록이 없는 버전을 모두 등록")
     args = ap.parse_args()
-    load_env(ROOT / ".env")
-    engine = make_engine(os.environ.get("DATABASE_URL", "sqlite:///data/dev.db"))
-    migrate.upgrade(engine)
-    factory = sessionmaker(engine)
+    load_env()
+    engine, factory = open_db()
     root = Path(args.root)
 
     with factory() as s:

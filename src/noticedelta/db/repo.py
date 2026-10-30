@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from noticedelta.db.models import (
     Attachment,
-    JobLedger,
     Notice,
     NoticeVersion,
     OutboxAlert,
@@ -171,16 +170,6 @@ def enqueue_alert(session: Session, alert: Alert) -> bool:
                     payload=asdict(alert),
                 )
             )
-    except IntegrityError:
-        return False
-    return True
-
-
-def claim_job(session: Session, stage: str, job_key: str) -> bool:
-    """(stage, job_key) 작업을 처음 맡을 때만 True. 끝난·진행 중 작업은 건너뛴다."""
-    try:
-        with session.begin_nested():
-            session.add(JobLedger(stage=stage, job_key=job_key))
     except IntegrityError:
         return False
     return True
