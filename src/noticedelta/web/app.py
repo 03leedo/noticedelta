@@ -1,9 +1,11 @@
 """판정 화면 (FastAPI + Jinja2 + HTMX). 가입 없이 개인 링크(추측할 수 없는 토큰)로 쓴다.
 
-/                     프로필 입력
+/                     프로필 입력과 개인정보 수집·이용 동의
+/privacy              개인정보 처리 안내 (누구나)
 /p/<토큰>             내 공고: 해당 · 거의 해당 · 확인 필요, 근거, 자격 변경 예정일
 /p/<토큰>/list        목록 조각 (HTMX가 탭을 바꿀 때)
-/p/<토큰>/edit        프로필 고치기
+/p/<토큰>/edit        프로필 고치기 (선택 동의도 여기서 바꾼다)
+/p/<토큰>/delete      내 정보 모두 지우기 (동의 철회)
 /p/<토큰>/calendar.ics 마감일·자격 변경일 캘린더
 /p/<토큰>/alerts      알림함 (정정으로 바뀐 내 판정·필드)
 /p/<토큰>/alerts/<id> 알림 근거: 바뀐 원문 조각과 근거 문장
@@ -15,7 +17,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,7 @@ from noticedelta.eligibility.rules import SIDO
 from noticedelta.metrics import collect, prometheus_text
 from noticedelta.names import FIELD_NAMES, RESULT_NAMES
 from noticedelta.notify import inbox
+from noticedelta.web import consent
 from noticedelta.web.history_views import alert_evidence, program_detail
 from noticedelta.web.ics import calendar
 from noticedelta.web.views import GROUP_NAMES, GROUPS, OUTCOME_NAMES, humanize, my_programs
@@ -74,6 +77,8 @@ def create_app(
     *,
     today: Callable[[], date] = date.today,
     metrics_token: str | None = None,
+    contact: str | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> FastAPI:
     app = FastAPI(title="NoticeDelta", docs_url=None, redoc_url=None, openapi_url=None)
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html"]))
@@ -86,6 +91,8 @@ def create_app(
         "SIDO": SIDO,
         "RESULT_NAMES": RESULT_NAMES,
         "FIELD_NAMES": FIELD_NAMES,
+        "CONSENT": consent,
+        "CONTACT": contact,
     }
 
     def load(session: Session, token: str) -> Profile:
@@ -95,17 +102,29 @@ def create_app(
         return profile
 
     @app.get("/", response_class=HTMLResponse)
-    def home(request: Request):
-        return templates.TemplateResponse(
-            request, "form.html", {**common, "attrs": {}, "token": None}
-        )
+    def home(request: Request, deleted: int = 0):
+        ctx = {**common, "attrs": {}, "token": None, "deleted": bool(deleted)}
+        return templates.TemplateResponse(request, "form.html", ctx)
+
+    @app.get("/privacy", response_class=HTMLResponse)
+    def privacy(request: Request):
+        return templates.TemplateResponse(request, "privacy.html", common)
 
     @app.post("/profiles")
     async def create_profile(request: Request):
         form = dict(await request.form())
+        attrs = attributes_from_form(form)
+        research_ok = form.get("research_ok") == "on"
+        if form.get("agree") != "on":
+            # 필수 동의 없이는 아무것도 저장하지 않는다. 입력한 값은 다시 채워 보여 준다.
+            ctx = {**common, "attrs": attrs, "token": None, "research_ok": research_ok}
+            ctx["error"] = "개인정보 수집·이용에 동의해야 내 링크를 만들 수 있습니다."
+            return templates.TemplateResponse(request, "form.html", ctx, status_code=400)
         token = secrets.token_urlsafe(TOKEN_BYTES)
         with session_factory() as s:
-            s.add(Profile(user_id=token, attributes=attributes_from_form(form)))
+            profile = Profile(user_id=token, attributes=attrs)
+            consent.record(profile, research_ok=research_ok, at=now())
+            s.add(profile)
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
 
@@ -130,10 +149,10 @@ def create_app(
     @app.get("/p/{token}/edit", response_class=HTMLResponse)
     def edit(request: Request, token: str):
         with session_factory() as s:
-            attrs = dict(load(s, token).attributes)
-        return templates.TemplateResponse(
-            request, "form.html", {**common, "attrs": attrs, "token": token}
-        )
+            profile = load(s, token)
+            attrs, research_ok = dict(profile.attributes), profile.research_ok
+        ctx = {**common, "attrs": attrs, "token": token, "research_ok": research_ok}
+        return templates.TemplateResponse(request, "form.html", ctx)
 
     @app.post("/p/{token}/edit")
     async def save(request: Request, token: str):
@@ -141,8 +160,23 @@ def create_app(
         with session_factory() as s:
             profile = load(s, token)
             profile.attributes = attributes_from_form(form)
+            profile.research_ok = form.get("research_ok") == "on"
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
+
+    @app.get("/p/{token}/delete", response_class=HTMLResponse)
+    def delete_confirm(request: Request, token: str):
+        with session_factory() as s:
+            load(s, token)
+        return templates.TemplateResponse(request, "delete.html", {**common, "token": token})
+
+    @app.post("/p/{token}/delete")
+    def delete(token: str):
+        with session_factory() as s:
+            if not consent.delete_user(s, token):
+                raise HTTPException(404, "없는 링크입니다")
+            s.commit()
+        return RedirectResponse("/?deleted=1", status_code=303)
 
     @app.get("/p/{token}/alerts", response_class=HTMLResponse)
     def alerts(request: Request, token: str):

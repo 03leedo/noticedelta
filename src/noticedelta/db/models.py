@@ -205,6 +205,10 @@ class Profile(Base):
     __tablename__ = "profile"
     user_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
     attributes: Mapped[dict] = mapped_column(JSONType, default=dict)
+    # 개인정보 수집·이용 동의 (web/consent.py). 문구 판과 시각을 남긴다. research_ok는 선택 동의
+    consent_version: Mapped[str | None] = mapped_column(sa.String(32))
+    consented_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    research_ok: Mapped[bool] = mapped_column(sa.Boolean, default=False, server_default=sa.false())
 
 
 class SubscriptionRow(Base):

@@ -34,7 +34,11 @@ def main() -> None:
         with factory() as s:
             print(f"가상 사업 {seed_demo(s, date.today())}개를 넣었습니다")
             s.commit()
-    app = create_app(factory, metrics_token=os.environ.get("NOTICEDELTA_METRICS_TOKEN"))
+    app = create_app(
+        factory,
+        metrics_token=os.environ.get("NOTICEDELTA_METRICS_TOKEN"),
+        contact=os.environ.get("NOTICEDELTA_CONTACT"),
+    )
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 
 

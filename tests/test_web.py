@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from noticedelta.db import make_engine, models  # noqa: E402
+from noticedelta.web import consent  # noqa: E402
 from noticedelta.web.app import attributes_from_form, create_app  # noqa: E402
 from noticedelta.web.demo import seed_demo  # noqa: E402
 from noticedelta.web.views import humanize  # noqa: E402
@@ -32,7 +33,7 @@ def env(tmp_path):
 
 
 def make_profile(client, **form):
-    resp = client.post("/profiles", data=form)
+    resp = client.post("/profiles", data={"agree": "on", **form})
     assert resp.status_code == 303
     return resp.headers["location"]
 
@@ -152,3 +153,69 @@ def test_inbox_shows_sent_alerts(env):
     page = client.get(f"{path}/alerts").text
     assert "해당에서 비해당" in page and "2026-10-30 09:00" in page
     assert client.get("/p/nope/alerts").status_code == 404
+
+
+def count_rows(s, model, **where):
+    q = sa.select(sa.func.count()).select_from(model)
+    for k, v in where.items():
+        q = q.where(getattr(model, k) == v)
+    return s.scalar(q)
+
+
+def test_profile_needs_consent_and_keeps_typed_values(env):
+    client, factory = env
+    with factory() as s:
+        before = count_rows(s, models.Profile)
+    resp = client.post("/profiles", data=BUSAN_FOUNDER)
+    assert resp.status_code == 400 and "동의해야" in resp.text
+    assert 'value="2021-01-01"' in resp.text  # 입력한 값은 다시 채워 보여 준다
+    with factory() as s:
+        assert count_rows(s, models.Profile) == before  # 동의 없이는 아무것도 저장하지 않는다
+
+
+def test_consent_is_recorded_and_research_can_be_turned_off(env):
+    client, factory = env
+    path = make_profile(client, research_ok="on", **BUSAN_FOUNDER)
+    token = path.rsplit("/", 1)[-1]
+    with factory() as s:
+        p = s.get(models.Profile, token)
+        assert p.consent_version == consent.VERSION and p.consented_at and p.research_ok
+    assert "checked" in client.get(f"{path}/edit").text
+    client.post(f"{path}/edit", data=BUSAN_FOUNDER)  # 선택 동의 칸을 끄고 저장
+    with factory() as s:
+        assert s.get(models.Profile, token).research_ok is False
+
+
+def test_delete_removes_everything_and_the_link_stops_working(env):
+    client, factory = env
+    path = make_profile(client, **BUSAN_FOUNDER)
+    token = path.rsplit("/", 1)[-1]
+    with factory() as s:
+        s.add(models.SubscriptionRow(user_id=token, program_id="demo-youth", fields=[]))
+        s.add(
+            models.OutboxAlert(
+                idempotency_key=f"{token}:k",
+                user_id=token,
+                program_id="demo-youth",
+                payload={},
+                status="sent",
+            )
+        )
+        s.commit()
+    assert "모두 지우기" in client.get(f"{path}/delete").text
+    resp = client.post(f"{path}/delete")
+    assert resp.status_code == 303 and resp.headers["location"] == "/?deleted=1"
+    assert client.get(path).status_code == 404
+    assert client.post(f"{path}/delete").status_code == 404
+    with factory() as s:
+        for model in (models.Profile, models.SubscriptionRow, models.OutboxAlert):
+            assert count_rows(s, model, user_id=token) == 0
+    assert "모두 지웠습니다" in client.get("/?deleted=1").text
+
+
+def test_privacy_page_shows_items_retention_and_contact(env):
+    _, factory = env
+    client = TestClient(create_app(factory, contact="베타 문의 창구"))
+    page = client.get("/privacy").text
+    assert consent.ITEMS in page and consent.KEEP_UNTIL in page and "베타 문의 창구" in page
+    assert "/privacy" in client.get("/").text  # 첫 화면에서 안내로 갈 수 있다

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}내 정보 지우기 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>내 정보 지우기</h1>
+<div class="card">
+<p>입력하신 조건, 구독, 판정 기록, 알림을 모두 지웁니다. 되돌릴 수 없고, 이 링크는 더 이상 열리지 않습니다.</p>
+<form method="post" action="/p/{{ token }}/delete">
+  <button type="submit" class="danger">모두 지우기</button>
+</form>
+</div>
+<p><a href="/p/{{ token }}">지우지 않고 돌아가기</a></p>
+{% endblock %}
