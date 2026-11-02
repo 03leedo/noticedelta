@@ -8,6 +8,21 @@ from dataclasses import dataclass, field
 from urllib.parse import unquote
 
 _VOLATILE = {"id", "totCnt", "inqireCo", "updtPnttm"}
+# 기업마당 첨부 주소. 파일이 그대로여도 주소를 한꺼번에 새로 발급한다(2026-10-30, 1,491건 전부).
+# 게시물 버전은 주소가 바뀌면 새로 만들지만(첨부를 새 주소로 다시 받아야 하므로),
+# 사업 버전은 받은 첨부의 내용 해시로 비교하므로 주소를 빼고 본다.
+_ATTACHMENT_URLS = {"flpthNm", "printFlpthNm"}
+
+
+def _raw_hash(raw: dict, skip: set[str]) -> str:
+    kept = {k: v for k, v in raw.items() if k not in skip}
+    canonical = json.dumps(kept, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def body_hash(raw: dict) -> str:
+    """첨부 주소까지 뺀 원본 항목의 해시. 사업 버전 비교에 쓴다(programs.composite_hash)."""
+    return _raw_hash(raw, _VOLATILE | _ATTACHMENT_URLS)
 
 
 def normalize_service_key(key: str) -> str:
@@ -56,6 +71,4 @@ class NoticeRecord:
         - updtPnttm(기업마당 수정 시각): 여러 공고가 같은 초에 함께 바뀌는 일괄 갱신이 있어
           내용이 그대로여도 값이 바뀐다 (docs/research/api-responses.md).
         """
-        raw = {k: v for k, v in self.raw.items() if k not in _VOLATILE}
-        canonical = json.dumps(raw, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return _raw_hash(self.raw, _VOLATILE)

@@ -8,7 +8,8 @@
 3. 사업 연결: 새 게시물은 같은 기관의 기존 게시물 중 정정 표시를 뺀 제목이 같은 것과 잇는다
    (기업마당 재게시). 제목이 비슷하기만 하면 합치지 않고 needs_review로 남긴다.
    잘못 합치는 것이 놓치는 것보다 위험하다(남의 자격 조건이 내 사업으로 들어온다).
-4. 사업 버전: 본문 해시 + 첨부 내용 해시가 바뀔 때만 새 버전. 번호는 실행 시간 순이다.
+4. 사업 버전: 본문 해시(첨부 주소 제외) + 첨부 내용 해시가 바뀔 때만 새 버전. 번호는 실행 시간 순이다.
+   주소만 새로 발급되고 파일이 같으면 게시물 버전만 생기고 사업 버전은 그대로다.
 5. 이번 실행에 없는 게시물은 닫힌 것으로 표시한다(그 출처가 오류 없이 끝났을 때만).
 """
 
@@ -38,6 +39,7 @@ from noticedelta.db.models import (
     SnapshotRecord,
 )
 from noticedelta.sources import NoticeRecord, bizinfo, kstartup
+from noticedelta.sources.base import body_hash
 
 TO_RECORD = {"kstartup": kstartup.to_record, "bizinfo": bizinfo.to_record}
 AUTO_LINK = 1.0  # 정정 표시를 뺀 제목과 기관이 같을 때만 자동으로 잇는다
@@ -82,8 +84,8 @@ def title_score(a: str, b: str) -> float:
 
 
 def composite_hash(rec: NoticeRecord, blob_keys: list[str | None]) -> str:
-    """사업 버전의 내용 해시: 게시물 본문 해시 + 첨부 내용 해시(받지 못한 첨부는 URL로)."""
-    parts = [rec.content_hash] + sorted(k or "missing" for k in blob_keys)
+    """사업 버전의 내용 해시: 첨부 주소를 뺀 본문 해시 + 첨부 내용 해시(받지 못한 첨부는 missing)."""
+    parts = [body_hash(rec.raw)] + sorted(k or "missing" for k in blob_keys)
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 

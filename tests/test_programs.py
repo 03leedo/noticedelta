@@ -16,7 +16,7 @@ PDF = b"%PDF-1.7 attachment"
 HOST = "https://www.bizinfo.go.kr"
 
 
-def item(pid, title, org, deadline="2026-11-07", files=()):
+def item(pid, title, org, deadline="2026-11-07", files=(), path="f"):
     return {
         "pblancId": pid,
         "pblancNm": title,
@@ -24,7 +24,7 @@ def item(pid, title, org, deadline="2026-11-07", files=()):
         "reqstBeginEndDe": f"2026-10-13 ~ {deadline}",
         "bsnsSumryCn": "<p>(가상) 지원사업</p>",
         "fileNm": "@".join(files) or None,
-        "flpthNm": "@".join(f"{HOST}/f/{f}" for f in files) or None,
+        "flpthNm": "@".join(f"{HOST}/{path}/{f}" for f in files) or None,
     }
 
 
@@ -143,6 +143,17 @@ def test_unchanged_content_adds_no_versions_and_updates_last_seen(env):
     snap = session.scalar(sa.select(models.SnapshotRecord))
     assert snap.last_seen_at > snap.first_seen_at
     assert count(session, models.SnapshotRecord) == 1
+
+
+def test_new_attachment_urls_for_the_same_files_add_no_program_version(env):
+    runs, session, store = env
+    runs.run([item("P1", "2026년 창업 지원 모집", "기관X", files=["공고문.hwp"])])
+    runs.run([item("P1", "2026년 창업 지원 모집", "기관X", files=["공고문.hwp"], path="new")])
+    s = load_snapshots(session, runs.root, store)
+    # 첨부를 새 주소로 다시 받으려고 게시물 버전은 생기지만, 같은 파일이라 사업 버전은 하나다
+    assert (s.new_posting_versions, s.new_program_versions) == (2, 1)
+    keys = session.scalars(sa.select(models.Attachment.blob_key)).all()
+    assert len(keys) == 2 and len(set(keys)) == 1
 
 
 def test_loading_in_two_steps_equals_loading_at_once(env):
