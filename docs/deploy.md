@@ -51,6 +51,7 @@ sudo -u noticedelta cp .env.example .env    # 그리고 아래 값을 채운다
 - `DATABASE_URL=postgresql+psycopg://noticedelta:<POSTGRES_PASSWORD>@127.0.0.1:5432/noticedelta`
 - `SITE_ADDRESS`: 도메인(예: `notice.example.com`). 없으면 비워 둔다
 - `NOTICEDELTA_METRICS_TOKEN`: `/metrics`를 볼 때 쓰는 무작위 값
+- `NOTICEDELTA_CONTACT`: 개인정보 처리 안내(`/privacy`)에 보일 문의처. 비우면 "베타 안내를 받은 연락처로" 문구가 나온다
 
 ```bash
 sudo docker compose -f deploy/compose.yml --env-file .env up -d
