@@ -11,7 +11,8 @@ PostgreSQL 작업 테이블이 붙으면 이 기록을 그대로 다시 넣는�
 - last_run.json           마지막 실행 요약 (생존 확인용)
 
 첨부는 공고 내용 해시가 처음 보이거나 바뀐 경우에만 받는다. 같은 URL의 첨부 내용만 바뀌는 경우는
-주기적 재확인(나중 작업)으로 잡는다.
+주기적 재확인(나중 작업)으로 잡는다. 첨부 주소는 호출마다 바뀌는 값(내려받기 토큰)을 뺀
+AttachmentRef.key로 비교·기록하고, 받을 때만 원래 주소를 쓴다.
 """
 
 from __future__ import annotations
@@ -108,13 +109,13 @@ def snapshot_source(
         item_key = store.put(canonical_item(rec.raw), content_type="application/json").key
         atts = []
         for ref in rec.attachments:
-            hit = index.get(ref.url, rec.content_hash)
-            entry = {"filename": ref.filename, "url": ref.url, "role": ref.role}
+            hit = index.get(ref.key, rec.content_hash)
+            entry = {"filename": ref.filename, "url": ref.key, "role": ref.role}
             if hit is None and breaker is not None and not breaker.allow():
                 entry["error"] = "서킷 열림"
             elif hit is None:
                 record = {
-                    "url": ref.url,
+                    "url": ref.key,
                     "content_hash": rec.content_hash,
                     "at": now().isoformat(timespec="seconds"),
                 }

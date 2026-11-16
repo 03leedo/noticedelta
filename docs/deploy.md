@@ -84,7 +84,7 @@ sudo -u noticedelta .venv/bin/python scripts/worker.py --backfill
 | 업데이트 | `sudo -u noticedelta git pull && sudo -u noticedelta /usr/local/bin/uv sync --no-dev --extra postgres --extra web && sudo systemctl restart noticedelta-web` |
 | 복원 | `docker exec -i noticedelta-postgres-1 pg_restore -U noticedelta -d noticedelta --clean < db-YYYYMMDD.dump` |
 
-DB 마이그레이션은 스크립트가 시작할 때 저절로 올라간다(`noticedelta.config.open_db`). systemd는 `uv run` 대신 `.venv/bin/python`을 바로 부른다. `uv run`은 extras 없이 환경을 다시 맞춰 psycopg·fastapi를 지워 버리기 때문이다.
+DB 마이그레이션은 스크립트가 시작할 때 저절로 올라간다(`noticedelta.config.open_db`). systemd는 `uv run` 대신 `.venv/bin/python`을 바로 부른다. `uv run`은 실행할 때마다 잠금 파일과 환경을 다시 확인해서, 서비스가 uv와 네트워크 상태에 기대게 되기 때문이다.
 
 ## 보안에서 정한 것
 

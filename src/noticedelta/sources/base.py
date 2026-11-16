@@ -12,6 +12,23 @@ _VOLATILE = {"id", "totCnt", "inqireCo", "updtPnttm"}
 # 게시물 버전은 주소가 바뀌면 새로 만들지만(첨부를 새 주소로 다시 받아야 하므로),
 # 사업 버전은 받은 첨부의 내용 해시로 비교하므로 주소를 빼고 본다.
 _ATTACHMENT_URLS = {"flpthNm", "printFlpthNm"}
+# 호출할 때마다 새로 발급되는 URL 쿼리 값. 주소를 비교·저장할 때는 뺀다.
+# downloadToken: 기업마당이 2026-10-30부터 첨부 주소에 붙이는 내려받기 토큰(JWT, 발급 시각이 들어 있다).
+_VOLATILE_QUERY = {"downloadToken"}
+
+
+def stable_url(url: str) -> str:
+    """호출마다 바뀌는 쿼리 값을 뺀 주소. 같은 파일이면 같은 문자열이다.
+
+    비교·저장에만 쓴다. 실제로 받을 때는 토큰이 붙은 원래 주소를 쓴다.
+    다시 인코딩하지 않고 문자열에서 그 값만 잘라 내, 토큰이 없던 때의 주소와 똑같아지게 한다.
+    """
+    head, sep, rest = url.partition("?")
+    if not sep:
+        return url
+    query, hash_sep, fragment = rest.partition("#")
+    kept = [p for p in query.split("&") if p.split("=", 1)[0] not in _VOLATILE_QUERY]
+    return head + ("?" + "&".join(kept) if kept else "") + hash_sep + fragment
 
 
 def _raw_hash(raw: dict, skip: set[str]) -> str:
@@ -48,6 +65,11 @@ class AttachmentRef:
     filename: str
     url: str
     role: str = "attachment"  # notice(공고문 본 파일) / attachment(붙임 서식 등)
+
+    @property
+    def key(self) -> str:
+        """이 첨부를 가리키는 변하지 않는 주소 (수집 기록·DB에 남기는 값)."""
+        return stable_url(self.url)
 
 
 @dataclass

@@ -5,6 +5,8 @@
     uv run python scripts/worker.py --status     # 작업 상태별 건수만 본다
     uv run python scripts/worker.py --backfill   # 변경 기록이 없는 사업 버전을 모두 등록
 
+Docker가 꺼져 있으면 적재만 하고 끝낸다. 파싱·비교 작업은 큐에 남아 다음 실행에서 이어진다.
+
 추출기(LLM)는 아직 붙이지 않았다. 그래서 변경 기록(diff)까지 돌고, 영향 계산은 등록하지 않는다.
 
 DB는 .env의 DATABASE_URL(기본 sqlite:///data/dev.db). 아직 넣지 않은 실행이 있으면 적재 작업을
@@ -23,7 +25,13 @@ from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.jobs import counts, run_worker  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
-from noticedelta.pipeline import Context, enqueue_backfill, enqueue_load, handlers  # noqa: E402
+from noticedelta.pipeline import (  # noqa: E402
+    LOAD,
+    Context,
+    enqueue_backfill,
+    enqueue_load,
+    handlers,
+)
 
 
 def main() -> None:
@@ -47,10 +55,16 @@ def main() -> None:
     if args.status:
         return
 
-    ctx = Context(root=root, store=LocalBlobStore(root / "blobs"), parser=DockerParser())
+    parser = DockerParser()
+    ctx = Context(root=root, store=LocalBlobStore(root / "blobs"), parser=parser)
+    todo = handlers(ctx)
+    if not parser.available():
+        # 파서 없이 파싱 작업을 꺼내면 재시도 횟수만 쓰고 실패로 굳는다. 적재만 하고 나머지는 둔다.
+        print("파서(Docker)를 쓸 수 없어 적재만 합니다. 파싱·비교는 다음 실행에서 이어집니다")
+        todo = {LOAD: todo[LOAD]}
     stats = run_worker(
         factory,
-        handlers(ctx),
+        todo,
         worker_id=f"{socket.gethostname()}:{os.getpid()}",
         max_jobs=args.max_jobs,
     )

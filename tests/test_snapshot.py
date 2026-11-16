@@ -194,3 +194,22 @@ def test_connect_timeout_and_5xx_are_transient():
     with pytest.raises(SourceError) as e:
         get_json(http, "https://x.test/a", {}, source="t", breaker=None, limiter=None)
     assert not isinstance(e.value, TransientSourceError)
+
+
+def test_reissued_download_tokens_do_not_refetch_attachments(tmp_path):
+    calls = []
+    http = http_with({"a.pdf": PDF}, calls)
+
+    def tokened(token):
+        r = rec("A", files=["a.pdf"])
+        url = f"https://www.bizinfo.go.kr/f/a.pdf?atchFileId=1&downloadToken={token}"
+        r.attachments = [AttachmentRef("a.pdf", url)]
+        return r
+
+    run_snapshot({"bizinfo": pages([tokened("t1")])}, http=http, root=tmp_path)
+    s = run_snapshot({"bizinfo": pages([tokened("t2")])}, http=http, root=tmp_path)
+    assert s.new_or_changed == 0 and s.sources["bizinfo"]["attachments_fetched"] == 0
+    assert calls == ["a.pdf"]  # 한 번만 받았다
+    run = json.loads(sorted((tmp_path / "runs").glob("*.json"))[-1].read_text(encoding="utf-8"))
+    att = run["sources"]["bizinfo"]["items"][0]["attachments"][0]
+    assert att["blob_key"] and "downloadToken" not in att["url"]

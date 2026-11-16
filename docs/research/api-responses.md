@@ -37,6 +37,7 @@
 | 전체 건수 | `totalCount` 약 1,400건 |
 | 날짜 | `reqstBeginEndDe` = `YYYY-MM-DD ~ YYYY-MM-DD`, `creatPnttm`·`updtPnttm` = `YYYY-MM-DD HH:MM:SS` |
 | **`updtPnttm`** | 표본 5건 중 4건이 같은 초(15:07:05)에 수정됨 → 일괄 갱신으로 보인다. 내용이 그대로여도 값이 바뀌므로 **내용 해시에서 뺀다** (조회수 `inqireCo`도 뺀다) |
+| **첨부 주소의 `downloadToken`** | 2026-10-30 수집부터 `flpthNm`·`printFlpthNm`의 주소에 `&downloadToken=<JWT>`가 붙는다. 발급 시각이 든 토큰이라 **호출할 때마다 값이 다르다**. 파일 번호(`atchFileId`, `fileSn`)는 그대로이고, 세 번의 수집에서 다시 받은 첨부 약 5,200개 중 내용이 바뀐 것은 0개였다. 토큰을 뗀 주소로 비교·저장하고 받을 때만 원래 주소를 쓴다 (`sources.base.stable_url`) |
 | **공고문 본 파일** | `printFileNm`/`printFlpthNm`에 공고문 하나(HWPX 또는 PDF)가 따로 온다. 5건 모두 있음. `fileNm`/`flpthNm`(붙임 서식, `@`로 이음)은 5건 중 2건이 null |
 | 문의처 | `refrncNm`에 기관·전화·메일이 자유 형식으로 |
 | 기타 | `pldirSportRealmLclasCodeNm`(지원 분야), `rceptEngnHmpgUrl`(접수 사이트, 대부분 null), `hashtags` |

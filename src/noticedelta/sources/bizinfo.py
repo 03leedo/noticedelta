@@ -24,6 +24,7 @@ from noticedelta.sources.base import (
     NoticeRecord,
     SourceError,
     normalize_service_key,
+    stable_url,
 )
 from noticedelta.sources.http import get_json
 from noticedelta.sources.resilience import CircuitBreaker, RateLimiter
@@ -92,7 +93,20 @@ def _items_bizinfo(payload: dict) -> list[dict]:
     return [items] if isinstance(items, dict) else list(items)
 
 
+def _stable_urls(value):
+    """'@'로 이어진 첨부 주소에서 호출마다 바뀌는 값(내려받기 토큰)을 뺀다."""
+    if not isinstance(value, str) or not value:
+        return value
+    return "@".join(stable_url(u) for u in value.split("@"))
+
+
 def to_record(item: dict) -> NoticeRecord:
+    # 원본 항목(raw)에는 토큰을 뺀 주소를 남긴다. 토큰은 호출마다 새로 발급돼, 그대로 두면
+    # 파일이 같아도 매번 "바뀐 공고"가 된다. 받을 때 쓰는 주소(attachments)에는 토큰을 둔다.
+    raw = dict(item)
+    for k in ("flpthNm", "printFlpthNm"):
+        if k in raw:
+            raw[k] = _stable_urls(raw[k])
     start, end = _period(item.get("reqstBeginEndDe"))
     blocks = [html_to_text(item.get("bsnsSumryCn") or "")]
     for label, k in [
@@ -113,7 +127,7 @@ def to_record(item: dict) -> NoticeRecord:
         apply_start=start,
         apply_end=end,
         attachments=_attachments(item),
-        raw=item,
+        raw=raw,
     )
 
 

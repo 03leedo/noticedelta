@@ -39,7 +39,7 @@ from noticedelta.db.models import (
     SnapshotRecord,
 )
 from noticedelta.sources import NoticeRecord, bizinfo, kstartup
-from noticedelta.sources.base import body_hash
+from noticedelta.sources.base import body_hash, stable_url
 
 TO_RECORD = {"kstartup": kstartup.to_record, "bizinfo": bizinfo.to_record}
 AUTO_LINK = 1.0  # 정정 표시를 뺀 제목과 기관이 같을 때만 자동으로 잇는다
@@ -173,13 +173,14 @@ def _attach_blobs(
     (첨부 키 목록, 이번에 새로 채운 수). 수집기는 실패한 첨부를 다음 실행에서 다시 받으므로,
     내용이 그대로인 게시물도 늦게 받은 첨부를 여기서 채운다.
     """
-    by_url = {a["url"]: a for a in item.get("attachments", [])}
+    # 2026-10-30~11-12 실행 파일에는 토큰이 붙은 주소가 남아 있다. 양쪽 다 토큰을 떼고 맞춘다.
+    by_url = {stable_url(a["url"]): a for a in item.get("attachments", [])}
     rows = session.scalars(
         sa.select(Attachment).where(Attachment.notice_version_id == version.id)
     ).all()
     keys, filled = [], 0
     for att in rows:
-        snap = by_url.get(att.url, {})
+        snap = by_url.get(stable_url(att.url), {})
         if snap.get("blob_key") and att.blob_key is None:
             att.blob_key, att.mime = snap["blob_key"], snap.get("mime")
             filled += 1
@@ -237,11 +238,13 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
         for item in body.get("items", []):
             summary.items += 1
             seen_ids.add(item["external_id"])
+            # 해시는 지금 규칙으로 다시 계산한 것을 쓴다(옛 실행 파일의 해시에는 토큰이 섞여 있다).
+            rec = to_record(json.loads(store.get(item["item_key"])))
             snap = session.scalar(
                 sa.select(SnapshotRecord).where(
                     SnapshotRecord.source == source,
                     SnapshotRecord.external_id == item["external_id"],
-                    SnapshotRecord.content_hash == item["content_hash"],
+                    SnapshotRecord.content_hash == rec.content_hash,
                 )
             )
             if snap is None:
@@ -249,7 +252,7 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
                     SnapshotRecord(
                         source=source,
                         external_id=item["external_id"],
-                        content_hash=item["content_hash"],
+                        content_hash=rec.content_hash,
                         item_key=item["item_key"],
                         first_seen_at=at,
                         last_seen_at=at,
@@ -258,7 +261,6 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
             else:
                 snap.last_seen_at = at
 
-            rec = to_record(json.loads(store.get(item["item_key"])))
             is_new = (
                 session.scalar(
                     sa.select(Notice.id).where(

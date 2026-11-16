@@ -206,3 +206,15 @@ def test_parse_attachments_and_version_segments(session, tmp_path):
         att_segs[0].locator["filename"] == "공고문.hwpx" and att_segs[0].locator["role"] == "notice"
     )
     assert [s.order for s in segs] == list(range(len(segs)))
+
+
+def test_available_is_false_when_docker_or_the_image_is_missing():
+    def result(code):
+        return lambda *a, **k: subprocess.CompletedProcess(a, code, b"", b"")
+
+    def no_docker(*a, **k):
+        raise FileNotFoundError
+
+    assert DockerParser(run=result(0)).available()
+    assert not DockerParser(run=result(1)).available()  # 데몬이 꺼졌거나 이미지가 없다
+    assert not DockerParser(run=no_docker).available()
