@@ -249,3 +249,37 @@ def test_kstartup_body_includes_contact_and_target_categories():
     r = KStartupClient(KEY, mock_http(load("kstartup_page.json"))).list_notices()[0]
     assert "신청 대상 구분: 일반기업,1인 창조기업" in r.body
     assert "문의처: 000-0000-0000" in r.body
+
+
+FILE_URL = "https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_{}&fileSn=0"
+
+
+def test_stable_url_drops_only_the_download_token():
+    from noticedelta.sources.base import stable_url
+
+    base = FILE_URL.format(1)
+    assert stable_url(base + "&downloadToken=aaa.bbb.ccc") == base  # 토큰이 없던 때의 주소와 같다
+    assert stable_url(base) == base and stable_url("https://x/y") == "https://x/y"
+    assert stable_url("https://x/y?downloadToken=a") == "https://x/y"
+    assert stable_url("https://x/y?downloadToken=a&k=1#top") == "https://x/y?k=1#top"
+
+
+def test_bizinfo_reissued_download_tokens_do_not_change_the_record():
+    from noticedelta.sources.bizinfo import to_record
+
+    def item(token):
+        return {
+            "pblancId": "P1",
+            "pblancNm": "(가상) 공고",
+            "fileNm": "a.hwp@b.pdf",
+            "flpthNm": "@".join(f"{FILE_URL.format(n)}&downloadToken={token}" for n in (1, 2)),
+            "printFileNm": "공고문.hwp",
+            "printFlpthNm": f"{FILE_URL.format(3)}&downloadToken={token}",
+        }
+
+    a, b = to_record(item("t1")), to_record(item("t2"))
+    assert a.content_hash == b.content_hash and "downloadToken" not in json.dumps(a.raw)
+    assert all("downloadToken=t1" in x.url for x in a.attachments)  # 받을 때는 토큰이 붙은 주소
+    assert [x.key for x in a.attachments] == [x.key for x in b.attachments]
+    assert a.attachments[0].key == FILE_URL.format(3)
+    assert to_record(a.raw).content_hash == a.content_hash  # 저장한 항목을 다시 읽어도 같다

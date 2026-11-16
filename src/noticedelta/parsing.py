@@ -214,6 +214,19 @@ class DockerParser:
             mime,
         ]
 
+    def available(self) -> bool:
+        """Docker 데몬이 떠 있고 파서 이미지가 있는가. 워커가 시작할 때 한 번 본다."""
+        try:
+            p = self._run(
+                [self.docker, "image", "inspect", self.image],
+                input=None,
+                capture_output=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return p.returncode == 0
+
     def _kill(self, name: str) -> None:
         # docker CLI만 죽으면 컨테이너는 계속 돈다(평가 문서 #6에서 재현). 이름으로 직접 끝낸다.
         with contextlib.suppress(OSError, subprocess.SubprocessError):

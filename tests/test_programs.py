@@ -1,4 +1,5 @@
 import itertools
+import json
 from datetime import datetime, timedelta
 
 import httpx
@@ -182,3 +183,32 @@ def test_region_city_or_round_differences_are_not_even_reviewed(env):
     )
     s = load_snapshots(session, runs.root, store)
     assert s.new_programs == 4 and s.links["needs_review"] == 0
+
+
+def tokened(token):
+    it = item("P1", "2026년 창업 지원 모집", "기관X", files=["공고문.hwp"])
+    it["flpthNm"] += f"?atchFileId=1&downloadToken={token}"
+    return it
+
+
+def test_reissued_download_tokens_add_no_versions_at_all(env):
+    runs, session, store = env
+    runs.run([tokened("t1")])
+    runs.run([tokened("t2")])
+    s = load_snapshots(session, runs.root, store)
+    assert (s.new_posting_versions, s.new_program_versions) == (1, 1)
+    att = session.scalar(sa.select(models.Attachment))
+    assert att.blob_key and "downloadToken" not in att.url
+    assert count(session, models.SnapshotRecord) == 1
+
+
+def test_old_run_files_with_tokens_in_urls_still_attach_blobs(env):
+    runs, session, store = env
+    runs.run([tokened("t1")])
+    path = next((runs.root / "runs").glob("*.json"))
+    run = json.loads(path.read_text(encoding="utf-8"))
+    for a in run["sources"]["bizinfo"]["items"][0]["attachments"]:
+        a["url"] += "&downloadToken=old"  # 2026-10-30~11-12 실행 파일에 남은 형태
+    path.write_text(json.dumps(run, ensure_ascii=False), encoding="utf-8")
+    load_snapshots(session, runs.root, store)
+    assert session.scalar(sa.select(models.Attachment)).blob_key

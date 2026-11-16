@@ -128,7 +128,7 @@ def upsert_notice_version(
                         Attachment(
                             notice_version_id=version.id,
                             filename=ref.filename,
-                            url=ref.url,
+                            url=ref.key,  # 호출마다 바뀌는 토큰을 뺀 주소
                             role=ref.role,
                             lineage_key=f"{base}:{seen[base]}",
                         )
