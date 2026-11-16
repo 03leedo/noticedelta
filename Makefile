@@ -1,4 +1,4 @@
-.PHONY: test lint demo up down
+.PHONY: test lint demo eval up down
 
 test:
 	uv run pytest
@@ -14,3 +14,6 @@ up:
 
 down:
 	docker compose down
+
+eval:
+	uv run python scripts/eval.py

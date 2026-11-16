@@ -1,0 +1,107 @@
+"""평가 이벤트: 사업 하나의 첫 버전과 그 뒤 정정들. DB의 변경 기록을 다시 흘려 만든다."""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+from typing import Any
+
+import sqlalchemy as sa
+from sqlalchemy.orm import Session
+
+from noticedelta.db.models import ChangeEvent, LabelRow, Notice, NoticeVersion
+from noticedelta.evaluation.metrics import Label
+from noticedelta.history import replay
+from noticedelta.matching import ChangeSet
+from noticedelta.programs import TO_RECORD
+from noticedelta.segments import Segment
+
+
+@dataclass
+class EvalEvent:
+    event_id: str  # 이후 사업 버전 ID. 라벨(label.to_version_id)과 같은 값이다
+    program_id: str
+    old_segments: list[Segment]
+    change: ChangeSet
+    unknown: set[str] = field(default_factory=set)  # 새 버전에서 읽지 못한 첨부의 조각
+    meta_before: dict[str, Any] = field(default_factory=dict)  # API의 구조화 필드 (B0가 본다)
+    meta_after: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Chain:
+    program_id: str
+    first_segments: list[Segment]  # 첫 버전. 방식마다 여기서 처음 상태를 만든다
+    events: list[EvalEvent]
+
+
+def split_of(program_id: str) -> str:
+    """사업 ID로 개발·시험을 가른다. 같은 사업의 정정은 한쪽에만 들어간다.
+
+    시험 세트는 측정 동결 때만 본다. 프롬프트와 규칙은 개발 세트만 보고 고친다.
+    """
+    return "dev" if int(hashlib.sha256(program_id.encode()).hexdigest(), 16) % 2 == 0 else "test"
+
+
+def api_meta(source: str, raw: dict) -> dict[str, Any]:
+    """출처 API가 구조화해 주는 값. 마감 연장 같은 변경은 이것만으로 보인다."""
+    to_record = TO_RECORD.get(source)
+    if to_record is None:
+        return {}
+    rec = to_record(raw)
+    return {"deadline": rec.apply_end, "apply_start": rec.apply_start}
+
+
+def _meta(session: Session, notice_version_id: str) -> dict[str, Any]:
+    row = session.execute(
+        sa.select(Notice.source_id, NoticeVersion.raw)
+        .join(Notice, Notice.id == NoticeVersion.notice_id)
+        .where(NoticeVersion.id == notice_version_id)
+    ).first()
+    return api_meta(row[0], row[1]) if row else {}
+
+
+def load_chains(
+    session: Session, *, split: str | None = None, only_changed: bool = True
+) -> list[Chain]:
+    """정정이 한 번이라도 있는 사업의 흐름. only_changed면 조각이 실제로 바뀐 정정만 남긴다."""
+    program_ids = session.scalars(
+        sa.select(ChangeEvent.program_id)
+        .where(ChangeEvent.from_version_id.is_not(None))
+        .distinct()
+        .order_by(ChangeEvent.program_id)
+    ).all()
+    chains = []
+    for program_id in program_ids:
+        if split is not None and split_of(program_id) != split:
+            continue
+        first: list[Segment] = []
+        events = []
+        for step in replay(session, program_id):
+            if step.from_version is None:
+                first = step.change.segments
+                continue
+            if only_changed and step.change.is_empty:
+                continue
+            events.append(
+                EvalEvent(
+                    event_id=step.to_version.id,
+                    program_id=program_id,
+                    old_segments=step.old_segments,
+                    change=step.change,
+                    unknown=step.unknown,
+                    meta_before=_meta(session, step.from_version.notice_version_id),
+                    meta_after=_meta(session, step.to_version.notice_version_id),
+                )
+            )
+        if events:
+            chains.append(Chain(program_id, first, events))
+    return chains
+
+
+def load_labels(session: Session, *, round_no: int = 1, labeler: str = "me") -> dict:
+    """{(이벤트 ID, 필드): Label}. 정답은 사람 라벨뿐이다(DESIGN 7.7)."""
+    rows = session.scalars(
+        sa.select(LabelRow).where(LabelRow.round == round_no, LabelRow.labeler == labeler)
+    )
+    return {(r.to_version_id, r.field): Label(r.status, r.visible_in) for r in rows}
