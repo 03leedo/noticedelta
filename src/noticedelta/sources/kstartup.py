@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import html
+
 import httpx
 
 from noticedelta.sources.base import NoticeRecord, normalize_service_key
@@ -46,11 +48,14 @@ def _items(payload: dict) -> list[dict]:
     return list(data)
 
 
+def _clean(value) -> str:
+    """보여 줄 글: HTML 문자 표기(&apos; 등)를 풀고 줄바꿈을 맞춘다."""
+    return html.unescape(str(value)).replace("\r\n", "\n").strip()
+
+
 def to_record(item: dict) -> NoticeRecord:
     blocks = [
-        f"{label}: {str(item[k]).strip()}"
-        for label, k in _BODY_FIELDS
-        if str(item.get(k) or "").strip()
+        f"{label}: {_clean(item[k])}" for label, k in _BODY_FIELDS if str(item.get(k) or "").strip()
     ]
     start, end = _ymd(item.get("pbanc_rcpt_bgng_dt")), _ymd(item.get("pbanc_rcpt_end_dt"))
     if start or end:
@@ -58,7 +63,7 @@ def to_record(item: dict) -> NoticeRecord:
     return NoticeRecord(
         source="kstartup",
         external_id=str(item["pbanc_sn"]),
-        title=str(item.get("biz_pbanc_nm") or "").strip(),
+        title=_clean(item.get("biz_pbanc_nm") or ""),
         org=item.get("pbanc_ntrp_nm") or None,
         url=item.get("detl_pg_url") or None,
         body="\n\n".join(blocks),

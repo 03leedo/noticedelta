@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.blobstore import LocalBlobStore
 from noticedelta.db import models
-from noticedelta.programs import load_snapshots, title_key
+from noticedelta.programs import detect_drift, load_snapshots, title_key
 from noticedelta.snapshot import run_snapshot
 
 PDF = b"%PDF-1.7 attachment"
@@ -212,3 +212,44 @@ def test_old_run_files_with_tokens_in_urls_still_attach_blobs(env):
     path.write_text(json.dumps(run, ensure_ascii=False), encoding="utf-8")
     load_snapshots(session, runs.root, store)
     assert session.scalar(sa.select(models.Attachment)).blob_key
+
+
+def many(n, **extra):
+    return [{**item(f"P{i}", f"(가상) 사업 {i}", "기관X"), **extra} for i in range(n)]
+
+
+def test_detect_drift_needs_many_items_unless_the_key_was_already_held():
+    before = {str(i): {"k": "값", "other": "x"} for i in range(30)}
+    gone = {i: {"k": None, "other": "x"} for i in before}
+    assert detect_drift(before, gone) == {"k": {"lost": 30, "had": 30}}
+    few = dict(list(gone.items())[:5])
+    assert detect_drift(before, few) == {}  # 5건은 형식 변화가 아니라 실제 변경일 수 있다
+    assert detect_drift(before, few, sticky={"k"}) == {"k": {"lost": 5, "had": 5}}
+    half_back = {i: {"k": "값" if int(i) % 3 else None, "other": "x"} for i in before}
+    assert detect_drift(before, half_back, sticky={"k"}) == {}  # 값이 돌아오면 풀린다
+
+
+def test_a_field_vanishing_everywhere_at_once_is_held_not_treated_as_corrections(env):
+    runs, session, store = env
+    runs.run(many(25, trgetNm="중소기업"))
+    runs.run(many(25, trgetNm=None))  # 출처가 이 항목을 한꺼번에 비워 보낸다
+    runs.run(many(25, trgetNm=None))
+    s = load_snapshots(session, runs.root, store)
+    assert s.new_posting_versions == 25 and s.new_program_versions == 25  # 처음 것뿐
+    assert len(s.drift) == 2 and all(
+        d == {"bizinfo": {"trgetNm": {"lost": 25, "had": 25}}} for d in s.drift.values()
+    )
+    raws = session.scalars(sa.select(models.NoticeVersion.raw)).all()
+    assert all(r["trgetNm"] == "중소기업" for r in raws)  # 마지막으로 본 값을 이어 둔다
+    held = session.scalars(sa.select(models.LoadedRun.drift).order_by(models.LoadedRun.name)).all()
+    assert held[0] == {"bizinfo": {}} and held[1]["bizinfo"]["trgetNm"]["lost"] == 25
+
+
+def test_one_posting_losing_a_field_is_still_a_real_change(env):
+    runs, session, store = env
+    runs.run(many(25, trgetNm="중소기업"))
+    changed = many(25, trgetNm="중소기업")
+    changed[0]["trgetNm"] = None
+    runs.run(changed)
+    s = load_snapshots(session, runs.root, store)
+    assert s.new_program_versions == 26 and s.drift == {}

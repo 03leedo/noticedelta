@@ -120,6 +120,21 @@ class LoadedRun(Base):
     __tablename__ = "snapshot_run"
     name: Mapped[str] = mapped_column(sa.String(64), primary_key=True)  # runs/<이름>.json
     loaded_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    # 출처별로 형식 변화 때문에 값을 이어 둔 키: {출처: {키: {"lost": 비게 된 수, "had": 값이 있던 수}}}
+    drift: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class ParseCache(Base):
+    """첨부 파싱 결과. 같은 파일(내용 해시)은 한 번만 파싱한다. 파서를 바꾸면 이 표를 비운다."""
+
+    __tablename__ = "parse_cache"
+    blob_key: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    mime: Mapped[str] = mapped_column(sa.String(100), primary_key=True)
+    parse_status: Mapped[str] = mapped_column(sa.String(16))  # ok / needs_review
+    parser: Mapped[str | None] = mapped_column(sa.String(64))
+    parsed_key: Mapped[str | None] = mapped_column(sa.String(64))
+    review_reason: Mapped[str | None] = mapped_column(sa.Text)
+    segments: Mapped[int] = mapped_column(sa.Integer, default=0)
 
 
 class NoticeVersion(Base):

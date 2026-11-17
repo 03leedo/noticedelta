@@ -7,6 +7,8 @@ import json
 from dataclasses import dataclass, field
 from urllib.parse import unquote
 
+from noticedelta.text import canonical_text
+
 _VOLATILE = {"id", "totCnt", "inqireCo", "updtPnttm"}
 # 기업마당 첨부 주소. 파일이 그대로여도 주소를 한꺼번에 새로 발급한다(2026-10-30, 1,491건 전부).
 # 게시물 버전은 주소가 바뀌면 새로 만들지만(첨부를 새 주소로 다시 받아야 하므로),
@@ -31,15 +33,23 @@ def stable_url(url: str) -> str:
     return head + ("?" + "&".join(kept) if kept else "") + hash_sep + fragment
 
 
-def _raw_hash(raw: dict, skip: set[str]) -> str:
+def _raw_hash(raw: dict, skip: set[str], *, canonical: bool = False) -> str:
     kept = {k: v for k, v in raw.items() if k not in skip}
+    if canonical:
+        # 표기만 다른 글을 같은 것으로, 빈 값과 없는 키를 같은 것으로 본다
+        kept = {k: canonical_text(v) if isinstance(v, str) else v for k, v in kept.items()}
+        kept = {k: v for k, v in kept.items() if v not in (None, "")}
     canonical = json.dumps(kept, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def body_hash(raw: dict) -> str:
-    """첨부 주소까지 뺀 원본 항목의 해시. 사업 버전 비교에 쓴다(programs.composite_hash)."""
-    return _raw_hash(raw, _VOLATILE | _ATTACHMENT_URLS)
+    """첨부 주소를 빼고 표기 차이를 지운 원본 항목의 해시. 사업 버전 비교에 쓴다(programs.composite_hash).
+
+    게시물 버전의 해시(content_hash)는 원본 그대로 계산한다. 원본이 글자 하나라도 다르면 게시물
+    버전으로 남기고, 내용이 같으면 사업 버전은 만들지 않는다.
+    """
+    return _raw_hash(raw, _VOLATILE | _ATTACHMENT_URLS, canonical=True)
 
 
 def normalize_service_key(key: str) -> str:

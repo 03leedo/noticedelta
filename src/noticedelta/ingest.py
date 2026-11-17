@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
-from noticedelta.db.models import Attachment, Notice, NoticeVersion
+from noticedelta.db.models import Attachment, Notice, NoticeVersion, ParseCache
 from noticedelta.parsing import (
     PARSEABLE_MIMES,
     ParsedDocument,
@@ -106,6 +106,17 @@ def parse_attachments(
             att.review_reason = f"파싱하지 않는 형식: {att.mime}"
             outcomes.append(ParseOutcome(att.filename, att.parse_status, reason=att.review_reason))
             continue
+        cached = session.get(ParseCache, (att.blob_key, att.mime))
+        if cached is not None:
+            # 같은 파일은 다시 파싱하지 않는다(재게시, 주소만 바뀐 첨부, DB를 다시 만들 때)
+            att.parsed_key, att.parser = cached.parsed_key, cached.parser
+            att.parse_status, att.review_reason = cached.parse_status, cached.review_reason
+            outcomes.append(
+                ParseOutcome(
+                    att.filename, att.parse_status, att.parser, cached.segments, att.review_reason
+                )
+            )
+            continue
         # ParserUnavailable(Docker 꺼짐 등)은 그대로 올려 보낸다. 남은 첨부는 pending으로 남는다.
         doc = parser.parse(store.get(att.blob_key), att.mime)
         # ensure_ascii: 깨진 HWP에서 나온 짝 없는 서로게이트도 인코딩 오류 없이 저장한다.
@@ -117,6 +128,20 @@ def parse_attachments(
         att.review_reason = reason
         n = 0 if reason else len(segment_document(to_blocks(doc), source=_source_id(att)))
         outcomes.append(ParseOutcome(att.filename, att.parse_status, att.parser, n, reason))
+        if doc.status == "ok":
+            # 시간 초과 같은 실패는 남기지 않는다. 다음 버전에서 다시 파싱해 볼 수 있게.
+            session.add(
+                ParseCache(
+                    blob_key=att.blob_key,
+                    mime=att.mime,
+                    parse_status=att.parse_status,
+                    parser=att.parser,
+                    parsed_key=att.parsed_key,
+                    review_reason=reason,
+                    segments=n,
+                )
+            )
+            session.flush()
     session.flush()
     return outcomes
 
