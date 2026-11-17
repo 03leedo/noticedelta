@@ -218,3 +218,68 @@ def test_available_is_false_when_docker_or_the_image_is_missing():
     assert DockerParser(run=result(0)).available()
     assert not DockerParser(run=result(1)).available()  # 데몬이 꺼졌거나 이미지가 없다
     assert not DockerParser(run=no_docker).available()
+
+
+def test_same_file_is_parsed_once_and_failures_are_not_remembered(session, tmp_path):
+    store = LocalBlobStore(tmp_path)
+    first = ingest(session, store)
+    blocks = [{"type": "paragraph", "text": PARA, "level": None, "page": 1}]
+    parser = StaticParser({"application/hwp+zip": blocks, "application/pdf": blocks})
+    parse_attachments(session, first.id, parser=parser, store=store)
+    assert sorted(parser.calls) == ["application/hwp+zip", "application/pdf"]
+
+    # 같은 파일이 다른 게시물 버전에 다시 붙으면(재게시, 주소만 바뀜) 파서를 부르지 않는다
+    again = models.NoticeVersion(
+        id="V2", notice_id=first.notice_id, version_no=2, kind="correction", content_hash="c2"
+    )
+    session.add(again)
+    session.flush()
+    for att in session.scalars(
+        sa.select(models.Attachment).where(models.Attachment.notice_version_id == first.id)
+    ).all():
+        session.add(
+            models.Attachment(
+                notice_version_id="V2",
+                filename=att.filename,
+                url=att.url,
+                role=att.role,
+                mime=att.mime,
+                blob_key=att.blob_key,
+            )
+        )
+    outcomes = {o.filename: o for o in parse_attachments(session, "V2", parser=parser, store=store)}
+    assert len(parser.calls) == 2  # 늘지 않았다
+    assert (outcomes["공고문.hwpx"].status, outcomes["공고문.hwpx"].segments) == ("ok", 1)
+
+    # 시간 초과 같은 실패는 남기지 않는다
+    session.query(models.ParseCache).delete()
+    failing = StaticParser(
+        {
+            "application/hwp+zip": ParsedDocument("failed", "container", "", error="180초 초과"),
+            "application/pdf": blocks,
+        }
+    )
+    session.add(
+        models.NoticeVersion(
+            id="V3", notice_id=first.notice_id, version_no=3, kind="correction", content_hash="c3"
+        )
+    )
+    session.flush()
+    hwpx = session.scalar(
+        sa.select(models.Attachment).where(
+            models.Attachment.notice_version_id == first.id,
+            models.Attachment.filename == "공고문.hwpx",
+        )
+    )
+    session.add(
+        models.Attachment(
+            notice_version_id="V3",
+            filename=hwpx.filename,
+            url=hwpx.url,
+            role=hwpx.role,
+            mime=hwpx.mime,
+            blob_key=hwpx.blob_key,
+        )
+    )
+    assert parse_attachments(session, "V3", parser=failing, store=store)[0].status == "needs_review"
+    assert session.get(models.ParseCache, (hwpx.blob_key, hwpx.mime)) is None

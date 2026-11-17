@@ -20,9 +20,12 @@ import os
 import socket
 from pathlib import Path
 
+import sqlalchemy as sa
+
 ROOT = Path(__file__).resolve().parents[1]
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.config import load_env, open_db  # noqa: E402
+from noticedelta.db.models import LoadedRun  # noqa: E402
 from noticedelta.jobs import counts, run_worker  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
 from noticedelta.pipeline import (  # noqa: E402
@@ -52,6 +55,15 @@ def main() -> None:
                 print(f"등록한 사업 버전: {enqueue_backfill(s)}")
             s.commit()
         print(f"작업 상태: {counts(s)}")
+        drift = s.scalar(
+            sa.select(LoadedRun.drift)
+            .where(LoadedRun.drift.is_not(None))
+            .order_by(LoadedRun.name.desc())
+            .limit(1)
+        )
+        if drift and any(drift.values()):
+            # 출처가 형식을 바꿔 값이 한꺼번에 빈 키. 정정으로 보지 않고 마지막 값을 이어 두었다
+            print(f"출처 형식 변화로 이어 둔 키: { {s: d for s, d in drift.items() if d} }")
     if args.status:
         return
 

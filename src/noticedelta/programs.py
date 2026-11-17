@@ -8,9 +8,11 @@
 3. 사업 연결: 새 게시물은 같은 기관의 기존 게시물 중 정정 표시를 뺀 제목이 같은 것과 잇는다
    (기업마당 재게시). 제목이 비슷하기만 하면 합치지 않고 needs_review로 남긴다.
    잘못 합치는 것이 놓치는 것보다 위험하다(남의 자격 조건이 내 사업으로 들어온다).
-4. 사업 버전: 본문 해시(첨부 주소 제외) + 첨부 내용 해시가 바뀔 때만 새 버전. 번호는 실행 시간 순이다.
+4. 사업 버전: 본문 해시(첨부 주소 제외, 표기 차이 무시) + 첨부 내용 해시가 바뀔 때만 새 버전. 번호는 실행 시간 순이다.
    주소만 새로 발급되고 파일이 같으면 게시물 버전만 생기고 사업 버전은 그대로다.
 5. 이번 실행에 없는 게시물은 닫힌 것으로 표시한다(그 출처가 오류 없이 끝났을 때만).
+6. 출처 형식 변화: 한 실행에서 같은 키가 여러 게시물에서 한꺼번에 비면 정정으로 보지 않는다.
+   마지막으로 본 값을 이어 두고 실행 기록(snapshot_run.drift)에 남긴다(detect_drift).
 """
 
 from __future__ import annotations
@@ -112,6 +114,7 @@ class LoadSummary:
     new_program_versions: int = 0
     links: Counter = field(default_factory=Counter)
     closed: int = 0
+    drift: dict = field(default_factory=dict)  # {실행 이름: {출처: {키: {"lost", "had"}}}}
     new_version_ids: list[str] = field(default_factory=list)  # 이번에 생긴 사업 버전
     refilled_version_ids: list[str] = field(default_factory=list)  # 첨부가 늦게 채워진 사업 버전
 
@@ -236,19 +239,99 @@ def _refill_attachments(session: Session, notice: Notice, item: dict, summary: L
         summary.refilled_version_ids.append(pv_id)
 
 
+# 한 실행에서 같은 키가 이만큼의 게시물에서 한꺼번에 비면, 정정이 아니라 출처 형식이 바뀐 것으로 본다.
+DRIFT_MIN_ITEMS = 20
+DRIFT_SHARE = 0.5
+
+
+def _empty(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def detect_drift(
+    before: dict[str, dict], now: dict[str, dict], sticky: frozenset[str] | set[str] = frozenset()
+) -> dict[str, dict[str, int]]:
+    """값이 있던 키가 한꺼번에 빈 것을 찾는다. {키: {"lost": 비게 된 수, "had": 값이 있던 수}}.
+
+    before·now는 {외부 ID: 원본 항목}. 두 쪽에 다 있는 게시물만 센다.
+    2026-11-17 K-Startup이 "신청 제외 대상"을 75개 공고에서 한꺼번에 비워 보냈다. 그대로 두면
+    자격 조건이 삭제된 정정 75건이 된다. sticky(바로 앞 실행에서 이어 둔 키)는 남은 게시물이
+    적어져도 계속 이어 둔다. 값이 절반 넘게 돌아오면 풀린다.
+    """
+    had: Counter[str] = Counter()
+    lost: Counter[str] = Counter()
+    for external_id, raw in now.items():
+        old = before.get(external_id)
+        if old is None:
+            continue
+        for key, value in old.items():
+            if _empty(value):
+                continue
+            had[key] += 1
+            if _empty(raw.get(key)):
+                lost[key] += 1
+    return {
+        key: {"lost": n, "had": had[key]}
+        for key, n in sorted(lost.items())
+        if n / had[key] >= DRIFT_SHARE and (n >= DRIFT_MIN_ITEMS or key in sticky)
+    }
+
+
+def _latest_raws(session: Session, source: str) -> dict[str, dict]:
+    """게시물마다 가장 최근 버전의 원본 항목. 이어 둔 값도 여기에 들어 있다."""
+    latest = (
+        sa.select(NoticeVersion.notice_id, sa.func.max(NoticeVersion.version_no).label("no"))
+        .group_by(NoticeVersion.notice_id)
+        .subquery()
+    )
+    rows = session.execute(
+        sa.select(Notice.external_id, NoticeVersion.raw)
+        .join(NoticeVersion, NoticeVersion.notice_id == Notice.id)
+        .join(
+            latest,
+            sa.and_(
+                latest.c.notice_id == NoticeVersion.notice_id,
+                latest.c.no == NoticeVersion.version_no,
+            ),
+        )
+        .where(Notice.source_id == source)
+    )
+    return {external_id: raw for external_id, raw in rows}
+
+
+def _held_before(session: Session, source: str) -> set[str]:
+    """이 출처를 마지막으로 넣은 실행에서 이어 둔 키."""
+    for drift in session.scalars(sa.select(LoadedRun.drift).order_by(LoadedRun.name.desc())):
+        if drift is not None and source in drift:
+            return set(drift[source])
+    return set()
+
+
 def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummary) -> None:
     run = json.loads(path.read_text(encoding="utf-8"))
     at = _when(run.get("started_at"))
+    run_drift: dict[str, dict] = {}
     for source, body in run["sources"].items():
         to_record = TO_RECORD.get(source)
         if to_record is None:
             continue
+        items = body.get("items", [])
+        raws = {it["external_id"]: json.loads(store.get(it["item_key"])) for it in items}
+        before = _latest_raws(session, source)
+        if body.get("error") is None:
+            run_drift[source] = detect_drift(before, raws, _held_before(session, source))
+        held = run_drift.get(source, {})
         seen_ids = set()
-        for item in body.get("items", []):
+        for item in items:
             summary.items += 1
             seen_ids.add(item["external_id"])
+            raw, old = raws[item["external_id"]], before.get(item["external_id"])
+            if old is not None:
+                for key in held:
+                    if _empty(raw.get(key)) and not _empty(old.get(key)):
+                        raw[key] = old[key]  # 출처 형식 변화: 마지막으로 본 값을 이어 둔다
             # 해시는 지금 규칙으로 다시 계산한 것을 쓴다(옛 실행 파일의 해시에는 토큰이 섞여 있다).
-            rec = to_record(json.loads(store.get(item["item_key"])))
+            rec = to_record(raw)
             snap = session.scalar(
                 sa.select(SnapshotRecord).where(
                     SnapshotRecord.source == source,
@@ -307,7 +390,9 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
             for n in closed:
                 n.status, n.closed_at = "closed", at
             summary.closed += len(closed)
-    session.add(LoadedRun(name=path.stem))
+    session.add(LoadedRun(name=path.stem, drift=run_drift))
+    if any(run_drift.values()):
+        summary.drift[path.stem] = {s: d for s, d in run_drift.items() if d}
     session.flush()
 
 

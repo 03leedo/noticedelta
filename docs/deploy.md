@@ -82,6 +82,7 @@ sudo -u noticedelta .venv/bin/python scripts/worker.py --backfill
 | 작업 큐 | `sudo -u noticedelta .venv/bin/python scripts/worker.py --status` |
 | 지표 | `curl -H "Authorization: Bearer $TOKEN" https://<도메인>/metrics` |
 | 업데이트 | `sudo -u noticedelta git pull && sudo -u noticedelta /usr/local/bin/uv sync --no-dev --extra postgres --extra web && sudo systemctl restart noticedelta-web` |
+| 규칙을 바꾼 뒤 다시 계산 | 정규화·묶기 규칙이 바뀌면 원문에서 DB를 다시 만든다. SQLite는 `scripts/rebuild.py`, PostgreSQL은 DB를 새로 만들고 `scripts/worker.py`. 라벨이 있으면 끊기므로 먼저 확인한다 |
 | 복원 | `docker exec -i noticedelta-postgres-1 pg_restore -U noticedelta -d noticedelta --clean < db-YYYYMMDD.dump` |
 
 DB 마이그레이션은 스크립트가 시작할 때 저절로 올라간다(`noticedelta.config.open_db`). systemd는 `uv run` 대신 `.venv/bin/python`을 바로 부른다. `uv run`은 실행할 때마다 잠금 파일과 환경을 다시 확인해서, 서비스가 uv와 네트워크 상태에 기대게 되기 때문이다.

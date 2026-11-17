@@ -283,3 +283,23 @@ def test_bizinfo_reissued_download_tokens_do_not_change_the_record():
     assert [x.key for x in a.attachments] == [x.key for x in b.attachments]
     assert a.attachments[0].key == FILE_URL.format(3)
     assert to_record(a.raw).content_hash == a.content_hash  # 저장한 항목을 다시 읽어도 같다
+
+
+def test_body_hash_ignores_notation_but_content_hash_keeps_the_raw():
+    from noticedelta.sources.base import body_hash
+    from noticedelta.sources.kstartup import to_record
+
+    def item(text, extra=None):
+        return {
+            "pbanc_sn": 1,
+            "biz_pbanc_nm": "(가상) 공고",
+            "pbanc_ctnt": text,
+            "aply_trgt": extra,
+        }
+
+    a = to_record(item("&apos;예비창업자&apos; 대상\r\n세부 내용은  공고문 참조"))
+    b = to_record(item("'예비창업자' 대상\n세부 내용은 공고문 참조", extra=""))
+    assert body_hash(a.raw) == body_hash(b.raw)  # 표기·공백·빈 값만 다르면 같은 내용
+    assert a.content_hash != b.content_hash  # 원본이 다르면 게시물 버전으로는 남긴다
+    assert body_hash(a.raw) != body_hash(to_record(item("'청년' 대상")).raw)
+    assert "&apos;" not in a.body and "'예비창업자' 대상" in a.body  # 보여 줄 글도 풀어 둔다

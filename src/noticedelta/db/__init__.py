@@ -16,10 +16,14 @@ def make_engine(url: str, **kwargs) -> sa.Engine:
         def _connect(dbapi_conn, _):
             dbapi_conn.isolation_level = None
             dbapi_conn.execute("PRAGMA foreign_keys=ON")
+            # 수집 뒤 워커와 수동 실행이 겹쳐도 "database is locked"로 죽지 않고 기다린다
+            dbapi_conn.execute("PRAGMA busy_timeout=60000")
 
         @sa.event.listens_for(engine, "begin")
         def _begin(conn):
-            conn.exec_driver_sql("BEGIN")
+            # IMMEDIATE: 쓰기 잠금을 처음에 잡는다. 읽다가 쓰기로 올리면(BEGIN만 쓰면) 다른 쓰는
+            # 쪽이 있을 때 busy_timeout을 기다리지 않고 바로 "database is locked"가 난다.
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
 
     return engine
 

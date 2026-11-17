@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from noticedelta.document import Table, TextBlock
+from noticedelta.text import canonical_text
 
 SegmentKind = Literal["heading", "paragraph", "table_cell"]
 
@@ -38,7 +39,7 @@ class _Draft:
 
 
 def normalize_text(text: str) -> str:
-    return _WS.sub(" ", unicodedata.normalize("NFC", text)).strip()
+    return canonical_text(unicodedata.normalize("NFC", text))
 
 
 def text_hash(text: str) -> str:

@@ -101,7 +101,7 @@
 |---|---|---|
 | **알림 발송** | 채널(이메일·웹 푸시·웹훅), 사용자별 수신 설정, 방해 금지 시간, 급한 것만 바로·나머지는 묶음 발송, 정확히 한 번(멱등 키), ICS 캘린더 구독, 보류 상태(7장) | 아웃박스와 멱등 키 (`db/`) |
 | **문서 파싱** | HWP/HWPX/PDF/HTML → 위치(`locator`)가 붙은 조각 JSON. 네트워크 차단·읽기 전용·자원 제한 컨테이너. 실패하면 `needs_review` | 조각화 (`segments.py`) |
-| **수집 스케줄러** | 출처별 주기 결정(변경 빈도 추정·마감 임박도·구독자 수), 속도 제한, 서킷 브레이커, 재시도. 바뀐 것만 다음 단계로 | 속도 제한·서킷 브레이커 (`sources/resilience.py`) |
+| **수집 스케줄러** | 출처별 주기 결정(변경 빈도 추정·마감 임박도·구독자 수), 속도 제한, 서킷 브레이커, 재시도. 바뀐 것만 다음 단계로 | 속도 제한·서킷 브레이커·재시도, 출처 형식 변화 대응: 호출마다 바뀌는 주소 값, 표기만 바뀐 글, 한꺼번에 빈 항목을 변경으로 보지 않는다 (`sources/`, `text.py`, `programs.detect_drift`) |
 | **개인정보 금고** | 프로필·업로드 서류·위치 같은 민감 데이터 보관, 용도별 동의 기록, 보관 기한, **용도와 세션 상태로 범위를 줄인 토큰**으로만 꺼냄 | 없음 |
 | **도구 게이트웨이** | 에이전트 도구 호출의 능력 선언, 세션 상태 추적, 전이 시점 정책, 보류 후 확정 (7장) | 없음 (이전 보고서 5장 제안) |
 | **LLM 게이트웨이** | 모델 라우팅, 녹화·재생, 캐시, 토큰·비용 집계, 앱별 예산, **하네스**(아래) | 녹화·재생·비용 집계 (`llm/gateway.py`), 하네스 1차: 개인정보 가리기·인젝션 탐지 (`llm/harness.py`, 실측은 docs/research/harness.md) |
@@ -384,7 +384,7 @@ web/                 앱 화면
 
 | 층 | 모듈 |
 |---|---|
-| 공통 | `blobstore` `config` `db`(모델·마이그레이션) `document` `jobs` `llm`(게이트웨이·녹화본·하네스) `metrics` `notify` `parsing` `snapshot` `sources.base·http·resilience·attachments` |
+| 공통 | `blobstore` `config` `db`(모델·마이그레이션) `document` `jobs` `llm`(게이트웨이·녹화본·하네스) `metrics` `notify` `parsing` `snapshot` `sources.base·http·resilience·attachments` `text` |
 | 엔진 | `segments` `matching` `values` `citation` `impact` `history` `ingest` `eligibility`(규칙·판정·대량 판정) `evaluation` `db.repo` |
 | 팩 (지원사업) | `sources.bizinfo·kstartup` `llm.extract`(필드 정의·프롬프트) `programs`(사업 묶기) `names` `labeling` `eligibility.synthetic` |
 | 앱 | `web` `demo` `pipeline`(조립) |

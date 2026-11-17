@@ -38,6 +38,8 @@
 | 날짜 | `reqstBeginEndDe` = `YYYY-MM-DD ~ YYYY-MM-DD`, `creatPnttm`·`updtPnttm` = `YYYY-MM-DD HH:MM:SS` |
 | **`updtPnttm`** | 표본 5건 중 4건이 같은 초(15:07:05)에 수정됨 → 일괄 갱신으로 보인다. 내용이 그대로여도 값이 바뀌므로 **내용 해시에서 뺀다** (조회수 `inqireCo`도 뺀다) |
 | **첨부 주소의 `downloadToken`** | 2026-10-30 수집부터 `flpthNm`·`printFlpthNm`의 주소에 `&downloadToken=<JWT>`가 붙는다. 발급 시각이 든 토큰이라 **호출할 때마다 값이 다르다**. 파일 번호(`atchFileId`, `fileSn`)는 그대로이고, 세 번의 수집에서 다시 받은 첨부 약 5,200개 중 내용이 바뀐 것은 0개였다. 토큰을 뗀 주소로 비교·저장하고 받을 때만 원래 주소를 쓴다 (`sources.base.stable_url`) |
+| **K-Startup의 문자 표기 변경** | 2026-11-17 수집부터 작은따옴표가 `&apos;`가 아니라 `'`로 온다. 글자만 다르고 내용은 같다. 사업 버전의 해시와 조각 해시는 HTML 문자 표기를 풀고 공백을 줄인 글로 계산한다 (`text.canonical_text`) |
+| **K-Startup `aply_excl_trgt_ctnt`가 한꺼번에 빔** | 같은 날 "신청 제외 대상"이 값이 있던 75개 공고 전부에서 `null`로 왔다. 정정 75건이 아니라 출처 형식 변화다. 한 실행에서 같은 키가 20건 이상, 값이 있던 게시물의 절반 이상에서 비면 마지막으로 본 값을 이어 두고 실행 기록에 남긴다 (`programs.detect_drift`, `snapshot_run.drift`) |
 | **공고문 본 파일** | `printFileNm`/`printFlpthNm`에 공고문 하나(HWPX 또는 PDF)가 따로 온다. 5건 모두 있음. `fileNm`/`flpthNm`(붙임 서식, `@`로 이음)은 5건 중 2건이 null |
 | 문의처 | `refrncNm`에 기관·전화·메일이 자유 형식으로 |
 | 기타 | `pldirSportRealmLclasCodeNm`(지원 분야), `rceptEngnHmpgUrl`(접수 사이트, 대부분 null), `hashtags` |

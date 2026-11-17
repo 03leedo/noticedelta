@@ -49,10 +49,10 @@ def record(deadline):
     )
 
 
-def http(ok=True):
+def http(ok=True, content=PDF):
     return httpx.Client(
         transport=httpx.MockTransport(
-            lambda r: httpx.Response(200, content=PDF) if ok else httpx.Response(503)
+            lambda r: httpx.Response(200, content=content) if ok else httpx.Response(503)
         )
     )
 
@@ -87,7 +87,9 @@ def test_unreadable_attachment_is_unknown_not_removed(session, tmp_path):
     old = match_segments([], version_segments(session, v1, store), new_id=ids).segments
     rules_lid = next(s.lineage_id for s in old if "신청 자격" in s.text)
 
-    v2 = ingest_record(session, record("2026-11-14"), http=http(), store=store).version
+    # 정정에서 공고문이 스캔본으로 바뀌었다(다른 파일). 같은 파일이면 앞의 파싱 결과를 그대로 쓴다
+    replaced = http(content=b"%PDF-1.7 scanned")
+    v2 = ingest_record(session, record("2026-11-14"), http=replaced, store=store).version
     scanned = StaticParser({"application/pdf": [{"type": "paragraph", "text": " "}]})
     parse_attachments(session, v2.id, parser=scanned, store=store)
     assert attachments_settled(session, v2.id)[0]  # needs_review도 끝 상태다

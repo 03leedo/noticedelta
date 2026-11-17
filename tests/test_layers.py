@@ -28,6 +28,7 @@ LAYERS: dict[str, list[str]] = {
         "document",
         "jobs",
         "llm",  # gateway, cassette, harness, anthropic_provider
+        "mcp_adapter",  # 등록부의 도구를 MCP로 내놓는다
         "metrics",
         "notify",
         "parsing",
@@ -36,6 +37,8 @@ LAYERS: dict[str, list[str]] = {
         "sources.base",
         "sources.http",
         "sources.resilience",
+        "text",
+        "tooling",  # 도구와 능력 속성, 등록부
     ],
     "엔진": [
         "citation",
@@ -45,6 +48,7 @@ LAYERS: dict[str, list[str]] = {
         "history",
         "impact",
         "ingest",
+        "item_tools",  # 항목·변경을 조회하는 읽기 도구
         "matching",
         "segments",
         "values",

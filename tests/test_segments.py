@@ -51,3 +51,9 @@ def test_order_is_contiguous_from_zero():
     segs = segment_document(["x\n\ny", table, "z"], source="body")
     assert [s.order for s in segs] == list(range(len(segs)))
     assert all(s.lineage_id is None for s in segs)
+
+
+def test_text_hash_ignores_html_notation_and_spacing():
+    assert text_hash("&apos;중소기업&apos;  지원") == text_hash("'중소기업' 지원")
+    assert normalize_text("A &amp;amp; B\r\n C") == "A & B C"
+    assert text_hash("5,000만원") != text_hash("3,000만원")
