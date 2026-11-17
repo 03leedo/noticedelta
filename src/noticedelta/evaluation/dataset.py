@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -13,7 +14,6 @@ from noticedelta.db.models import ChangeEvent, LabelRow, Notice, NoticeVersion
 from noticedelta.evaluation.metrics import Label
 from noticedelta.history import replay
 from noticedelta.matching import ChangeSet
-from noticedelta.programs import TO_RECORD
 from noticedelta.segments import Segment
 
 
@@ -43,26 +43,27 @@ def split_of(program_id: str) -> str:
     return "dev" if int(hashlib.sha256(program_id.encode()).hexdigest(), 16) % 2 == 0 else "test"
 
 
-def api_meta(source: str, raw: dict) -> dict[str, Any]:
-    """출처 API가 구조화해 주는 값. 마감 연장 같은 변경은 이것만으로 보인다."""
-    to_record = TO_RECORD.get(source)
-    if to_record is None:
+# (출처 이름, 원본 항목) → 출처 API가 구조화해 주는 값. 도메인 팩이 넘긴다 (B0가 본다)
+MetaReader = Callable[[str, dict], dict[str, Any]]
+
+
+def _meta(session: Session, notice_version_id: str, meta: MetaReader | None) -> dict[str, Any]:
+    if meta is None:
         return {}
-    rec = to_record(raw)
-    return {"deadline": rec.apply_end, "apply_start": rec.apply_start}
-
-
-def _meta(session: Session, notice_version_id: str) -> dict[str, Any]:
     row = session.execute(
         sa.select(Notice.source_id, NoticeVersion.raw)
         .join(Notice, Notice.id == NoticeVersion.notice_id)
         .where(NoticeVersion.id == notice_version_id)
     ).first()
-    return api_meta(row[0], row[1]) if row else {}
+    return meta(row[0], row[1]) if row else {}
 
 
 def load_chains(
-    session: Session, *, split: str | None = None, only_changed: bool = True
+    session: Session,
+    *,
+    split: str | None = None,
+    only_changed: bool = True,
+    meta: MetaReader | None = None,
 ) -> list[Chain]:
     """정정이 한 번이라도 있는 사업의 흐름. only_changed면 조각이 실제로 바뀐 정정만 남긴다."""
     program_ids = session.scalars(
@@ -90,8 +91,8 @@ def load_chains(
                     old_segments=step.old_segments,
                     change=step.change,
                     unknown=step.unknown,
-                    meta_before=_meta(session, step.from_version.notice_version_id),
-                    meta_after=_meta(session, step.to_version.notice_version_id),
+                    meta_before=_meta(session, step.from_version.notice_version_id, meta),
+                    meta_after=_meta(session, step.to_version.notice_version_id, meta),
                 )
             )
         if events:

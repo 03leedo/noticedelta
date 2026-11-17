@@ -16,8 +16,8 @@ from noticedelta.evaluation import (
     Chain,
     Engine,
     EvalEvent,
+    Fields,
     Label,
-    api_meta,
     disagreements,
     evaluate,
     input_sizes,
@@ -31,6 +31,7 @@ from noticedelta.evaluation import (
 from noticedelta.impact import FieldValue
 from noticedelta.llm import FileCassetteStore, Gateway, LLMResponse, MissingCassette, Mode
 from noticedelta.matching import ChangeSet
+from noticedelta.programs import api_meta
 from noticedelta.segments import Segment
 
 
@@ -50,6 +51,12 @@ def fake_extractor(fields, segments):
     return out
 
 
+SPEC = Fields(
+    {"deadline": "datetime", "amount": "amount"},
+    guide={"deadline": "신청 마감", "amount": "지원 금액"},
+    meta=("deadline",),
+    diff_system="바뀐 필드를 판단한다",
+)
 V1 = [
     seg("s1", "신청 마감 2026-11-07"),
     seg("s2", "지원금 5,000만원"),
@@ -90,9 +97,9 @@ LABELS = {
     ("e3", "deadline"): Label("unchanged"),
 }
 METHODS = {
-    "B0": B0Meta,
-    "B2": lambda: B2Full(fake_extractor),
-    "엔진": lambda: Engine(fake_extractor),
+    "B0": lambda: B0Meta(SPEC),
+    "B2": lambda: B2Full(fake_extractor, SPEC),
+    "엔진": lambda: Engine(fake_extractor, SPEC),
 }
 
 
@@ -117,7 +124,7 @@ def test_without_cassettes_nothing_is_judged_or_scored(chain):
     def no_cassette(fields, segments):
         raise MissingCassette("k")
 
-    (row,) = evaluate([chain], {"엔진": lambda: Engine(no_cassette)}, LABELS)
+    (row,) = evaluate([chain], {"엔진": lambda: Engine(no_cassette, SPEC)}, LABELS)
     assert row.judged == 0 and row.score.labeled == 0 and row.calls == 0
     assert "라벨 없음" in render([row])
 
@@ -132,7 +139,7 @@ def test_b3_trusts_the_llm_answer_about_what_changed(tmp_path, chain):
             return LLMResponse({"fields": [answer]}, 1, 1, 0.0)
 
     gateway = Gateway(DiffProvider(), FileCassetteStore(tmp_path), Mode.LIVE)
-    (row,) = evaluate([chain], {"B3": lambda: B3Diff(fake_extractor, gateway)}, LABELS)
+    (row,) = evaluate([chain], {"B3": lambda: B3Diff(fake_extractor, gateway, SPEC)}, LABELS)
     # 가짜 LLM이 매번 "금액이 바뀌었다"고 답한다. B3는 그대로 믿으므로 문구만 바뀐 e2에서 가짜 알림이 난다
     assert row.predictions == {"e1": {"amount"}, "e2": {"amount"}, "e3": {"amount"}}
     assert row.score.fp == 2 and row.calls == 3
@@ -267,7 +274,7 @@ def test_chains_and_labels_load_from_recorded_events():
         )
         s.commit()
 
-        (chain,) = load_chains(s, split=split_of("P1"))
+        (chain,) = load_chains(s, split=split_of("P1"), meta=api_meta)
         assert load_chains(s, split="dev" if split_of("P1") == "test" else "test") == []
         labels = load_labels(s)
     assert [x.text for x in chain.first_segments] == [x.text for x in V1]
@@ -275,5 +282,5 @@ def test_chains_and_labels_load_from_recorded_events():
     assert ev.event_id == "PV2" and ev.change.modified == ["s1"]
     assert (ev.meta_before["deadline"], ev.meta_after["deadline"]) == ("2026-11-07", "2026-11-14")
     assert labels == {("PV2", "deadline"): Label("changed", "api_meta")}
-    (row,) = evaluate([chain], {"B0": B0Meta}, labels)
+    (row,) = evaluate([chain], {"B0": lambda: B0Meta(SPEC)}, labels)
     assert row.score.recall() == 1.0 and json.dumps(sa.inspect(engine).get_table_names())

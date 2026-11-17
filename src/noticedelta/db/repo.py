@@ -18,7 +18,7 @@ from noticedelta.db.models import (
 )
 from noticedelta.impact import Alert
 from noticedelta.matching import stable_filename
-from noticedelta.sources import NoticeRecord
+from noticedelta.sources.base import NoticeRecord
 
 
 def _ensure_source(session: Session, source_id: str) -> None:

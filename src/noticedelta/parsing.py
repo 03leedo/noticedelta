@@ -19,7 +19,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from noticedelta.segments import Table, TextBlock
+from noticedelta.document import Table, TextBlock
 
 CONTRACT = 1
 PARSEABLE_MIMES = {"application/x-hwp", "application/hwp+zip", "application/pdf"}

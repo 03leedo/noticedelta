@@ -12,12 +12,11 @@
 from noticedelta.evaluation.dataset import (
     Chain,
     EvalEvent,
-    api_meta,
     load_chains,
     load_labels,
     split_of,
 )
-from noticedelta.evaluation.methods import B0Meta, B2Full, B3Diff, Engine, Outcome
+from noticedelta.evaluation.methods import B0Meta, B2Full, B3Diff, Engine, Fields, Outcome
 from noticedelta.evaluation.metrics import Label, Score, score, wilson
 from noticedelta.evaluation.run import Row, disagreements, evaluate, input_sizes, render
 
@@ -32,7 +31,7 @@ __all__ = [
     "Outcome",
     "Row",
     "Score",
-    "api_meta",
+    "Fields",
     "disagreements",
     "evaluate",
     "input_sizes",

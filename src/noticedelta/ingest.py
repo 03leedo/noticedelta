@@ -24,8 +24,8 @@ from noticedelta.parsing import (
     to_blocks,
 )
 from noticedelta.segments import Segment, segment_document
-from noticedelta.sources import AttachmentRef, NoticeRecord, SourceError
 from noticedelta.sources.attachments import StoredAttachment, download_attachment
+from noticedelta.sources.base import AttachmentRef, NoticeRecord, SourceError
 from noticedelta.sources.resilience import CircuitBreaker, CircuitOpen, RateLimiter
 
 

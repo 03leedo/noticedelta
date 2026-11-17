@@ -1,6 +1,6 @@
 import sqlalchemy as sa
 
-from noticedelta.db import models, repo
+from noticedelta.db import models
 
 
 def make_engine(url: str, **kwargs) -> sa.Engine:
@@ -24,4 +24,4 @@ def make_engine(url: str, **kwargs) -> sa.Engine:
     return engine
 
 
-__all__ = ["make_engine", "models", "repo"]
+__all__ = ["make_engine", "models"]
