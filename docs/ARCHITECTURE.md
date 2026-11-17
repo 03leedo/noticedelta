@@ -108,7 +108,7 @@
 | **검증** | 틀을 지킨 엔진·앱이면 무엇이든: 백테스트(과거 기록으로 미리 돌려 보기), 버전·엔진 비교(달라진 결과만), 하네스 실험(하네스를 바꿔 다시 돌린 지표 비교) | 재생 (`history.replay`), 라벨 (`labeling/`), 방식 비교 틀 (`evaluation/`, `make eval`: 같은 이벤트에 방식·하네스를 바꿔 돌려 한 표로) |
 | **비행 기록기** | 에이전트 실행(프롬프트·도구 호출·결과)과 엔진 이벤트를 이벤트 소싱으로 저장, 결정적 재생, 프롬프트를 바꿔 재생한 결과 비교 | LLM 녹화본 (`llm/cassette.py`) |
 | **작업 큐** | 단계별 워커, 재시도 3회 후 실패 큐, 미확인 작업 회수, KEDA 자동 확장 지표 | 작업 원장 (`db/`) |
-| **MCP 서버** | 엔진·앱 기능을 외부 에이전트에 도구로 제공 (5.2). 반드시 도구 게이트웨이 뒤에 둔다 | 읽기 도구 넷(`search_items` `get_item` `list_changes` `get_change`), 능력 속성을 선언하는 등록부, 결과의 지시문 가리기 (`tooling.py`, `item_tools.py`, `mcp_adapter.py`, docs/mcp.md) |
+| **MCP 서버** | 엔진·앱 기능을 외부 에이전트에 도구로 제공 (5.2). 반드시 도구 게이트웨이 뒤에 둔다 | 공통 기능 도구 셋(`read_document` `compare_documents` `check_text`), 조회 도구 넷(`search_items` `get_item` `list_changes` `get_change`), 능력 속성을 선언하는 등록부, 결과의 지시문 가리기 (`tooling.py`, `doc_tools.py`, `item_tools.py`, `mcp_adapter.py`, docs/mcp.md) |
 
 **하네스**: LLM 호출 앞뒤에 끼우는 단계들. 앱 설정의 민감도 등급에 따라 플랫폼이 기본으로 켠다. 목록은 초안이다.
 
@@ -385,7 +385,7 @@ web/                 앱 화면
 | 층 | 모듈 |
 |---|---|
 | 공통 | `blobstore` `config` `db`(모델·마이그레이션) `document` `jobs` `llm`(게이트웨이·녹화본·하네스) `metrics` `notify` `parsing` `snapshot` `sources.base·http·resilience·attachments` `text` `tooling` `mcp_adapter` |
-| 엔진 | `segments` `matching` `values` `citation` `impact` `history` `ingest` `eligibility`(규칙·판정·대량 판정) `evaluation` `item_tools` `db.repo` |
+| 엔진 | `segments` `matching` `values` `citation` `impact` `history` `ingest` `eligibility`(규칙·판정·대량 판정) `evaluation` `doc_tools` `item_tools` `db.repo` |
 | 팩 (지원사업) | `sources.bizinfo·kstartup` `llm.extract`(필드 정의·프롬프트) `programs`(사업 묶기) `names` `labeling` `eligibility.synthetic` |
 | 앱 | `web` `demo` `pipeline`(조립) |
 
@@ -425,7 +425,7 @@ web/                 앱 화면
 | 순서 | 공통 기능 | 지금 | 할 일 | 완료 기준 |
 |---|---|---|---|---|
 | 1 | 층 경계 | **완료** (`tests/test_layers.py`, 9장의 표) | 남은 것: 엔진·공통 안의 지원사업 지식 세 가지를 팩으로(9장). 팩 규약을 정할 때 한다 | 플랫폼 공통·엔진이 도메인 팩과 앱을 가져다 쓰지 않는다 |
-| 2 | MCP 서버 | **읽기 도구 완료** (docs/mcp.md) | 남은 것: B가 붙는 도구(`check`, `explain`, `get_profile`)와 구독. 3번 게이트웨이와 함께 | 외부 에이전트가 MCP로 항목과 변경을 조회한다 |
+| 2 | MCP 서버 | **공통 기능·조회 도구 완료** (docs/mcp.md) | 남은 것: B가 붙는 도구(`check`, `explain`, `get_profile`)와 구독(3번 게이트웨이와 함께), 앱을 만드는 조종 도구(앱 정의 규격 뒤) | 외부 에이전트가 MCP로 플랫폼 기능을 쓴다 |
 | 3 | 도구 게이트웨이 | 없음 | 능력 선언, 세션 상태, 전이 시점 정책, 보류 후 확정(7장) | B·C 속성 도구가 게이트웨이를 거쳐야만 불린다 |
 | 4 | 개인정보 금고 | 프로필이 앱 테이블에 있다 | 용도별 동의, 범위를 줄인 토큰, 보관 기한 | `get_profile(scope)`가 범위 밖 값을 주지 않는다 |
 | 5 | 비행 기록기 | LLM 녹화본뿐 | 엔진 이벤트·도구 호출·LLM 호출을 한 줄기로 기록하고 다시 돌린다 | 한 실행을 처음부터 그대로 재생한다 |
