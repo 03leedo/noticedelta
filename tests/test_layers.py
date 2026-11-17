@@ -42,6 +42,7 @@ LAYERS: dict[str, list[str]] = {
     ],
     "엔진": [
         "citation",
+        "doc_tools",  # 문서 읽기·두 판 비교·글 검사 도구
         "db.repo",  # 게시물 버전·알림을 엔진 타입으로 저장한다
         "eligibility",  # 규칙·판정·대량 판정(SQL)·시간에 따른 자격
         "evaluation",
