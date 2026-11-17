@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
+from noticedelta.document import Table, TextBlock
+
 SegmentKind = Literal["heading", "paragraph", "table_cell"]
 
 HEADING_MARKERS = ("□", "■", "◆", "◇", "Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "Ⅴ")
@@ -26,28 +28,6 @@ class Segment:
     locator: dict
     order: int
     lineage_id: str | None = None
-
-
-@dataclass(frozen=True)
-class Table:
-    """첫 행이 머리글인 표.
-
-    병합 칸이 덮는 자리는 None이다. None 자리는 조각을 만들지 않고, 행 키·열 머리글을 정할 때만
-    위(행 병합)나 왼쪽(열 병합) 칸의 값으로 채워 본다.
-    """
-
-    rows: list[list[str | None]]
-    caption: str = ""
-    page: int | None = None
-
-
-@dataclass(frozen=True)
-class TextBlock:
-    """파서가 준 문단·제목 하나. 파서가 제목이라고 알려 주면 그대로 제목 조각이 된다."""
-
-    text: str
-    heading: bool = False
-    page: int | None = None
 
 
 @dataclass

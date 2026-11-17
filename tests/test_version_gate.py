@@ -10,15 +10,15 @@ from sqlalchemy.orm import Session
 from noticedelta.blobstore import LocalBlobStore
 from noticedelta.db import models
 from noticedelta.eligibility import Judgment
-from noticedelta.impact import FieldValue, run_impact
-from noticedelta.ingest import ingest_record, parse_attachments, version_segments
-from noticedelta.matching import match_segments
-from noticedelta.parsing import StaticParser
-from noticedelta.programs import (
+from noticedelta.history import (
     attachments_settled,
     comparable_old_segments,
     unreadable_attachments,
 )
+from noticedelta.impact import FieldValue, run_impact
+from noticedelta.ingest import ingest_record, parse_attachments, version_segments
+from noticedelta.matching import match_segments
+from noticedelta.parsing import StaticParser
 from noticedelta.sources import AttachmentRef, NoticeRecord
 
 HOST = "https://www.bizinfo.go.kr"

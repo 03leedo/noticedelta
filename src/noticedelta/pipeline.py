@@ -12,7 +12,7 @@ dedupe_key로 한 번만 등록되고, 사업 하나의 작업은 concurrency_ke
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -46,6 +46,7 @@ from noticedelta.impact import (
 from noticedelta.ingest import parse_attachments
 from noticedelta.jobs import Handler, PermanentError, TransientError, enqueue
 from noticedelta.llm.extract import FIELD_TYPES, TEMPLATE_VERSION
+from noticedelta.names import ALERT_LABELS
 from noticedelta.notify import Channel, InboxChannel, deliver, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
 from noticedelta.programs import LoadSummary, load_run
@@ -69,6 +70,7 @@ class Context:
     extractor_name: str = ""
     now: Callable[[], datetime] = field(default=_utcnow)
     channel: Channel = field(default_factory=InboxChannel)
+    labels: Mapping[str, str] = field(default_factory=lambda: dict(ALERT_LABELS))  # 알림 표시 이름
 
 
 def _unloaded_runs(session: Session, root: Path) -> list[str]:
@@ -354,7 +356,7 @@ def handle_notify(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         program_id = job.payload["program_id"]
         prepare(session, program_id)
-        deliver(session, ctx.channel, program_id=program_id, now=ctx.now)
+        deliver(session, ctx.channel, program_id=program_id, now=ctx.now, labels=ctx.labels)
 
     return handle
 

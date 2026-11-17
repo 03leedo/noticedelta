@@ -11,7 +11,7 @@ prepare가 정책을 적용하고 deliver가 ready만 채널로 보낸다. 같�
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -20,7 +20,6 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.db.models import OutboxAlert, Program, ProgramVersion
-from noticedelta.names import FIELD_NAMES, RESULT_NAMES
 
 UNSENT = ("pending", "held", "ready")
 MASS_IMPACT = 20  # 한 버전의 같은 필드 변경이 이만큼 넘는 사람을 비해당으로 바꾸면 붙잡는다
@@ -36,9 +35,9 @@ def _version_no(session: Session, pv_id: str) -> int:
     )
 
 
-def _show(value) -> str:
+def _show(value, labels: Mapping[str, str]) -> str:
     if isinstance(value, str):
-        return RESULT_NAMES.get(value, value)
+        return labels.get(value, value)
     if isinstance(value, list):
         return ", ".join(map(str, value))
     if isinstance(value, int) and not isinstance(value, bool):
@@ -46,15 +45,19 @@ def _show(value) -> str:
     return "없음" if value is None else str(value)
 
 
-def render(alert: OutboxAlert, title: str) -> str:
-    """알림 본문. 원문을 길게 옮기지 않고 무엇이 어떻게 바뀌었는지만 쓴다(근거는 화면에서)."""
+def render(alert: OutboxAlert, title: str, labels: Mapping[str, str] | None = None) -> str:
+    """알림 본문. 원문을 길게 옮기지 않고 무엇이 어떻게 바뀌었는지만 쓴다(근거는 화면에서).
+
+    labels는 필드 이름과 판정 값의 표시 이름이다. 도메인 팩이 넘기고, 없으면 값을 그대로 쓴다.
+    """
+    labels = labels or {}
     p = alert.payload
-    field = FIELD_NAMES.get(p["field"], p["field"])
+    field = labels.get(p["field"], p["field"])
     prefix = "[정정] 앞서 보낸 알림을 바로잡습니다. " if p.get("corrects") else ""
     if p["kind"] == "judgment_changed":
-        body = f"{field} 판정이 {_show(p['before'])}에서 {_show(p['after'])}(으)로 바뀌었습니다."
+        body = f"{field} 판정이 {_show(p['before'], labels)}에서 {_show(p['after'], labels)}(으)로 바뀌었습니다."
     else:
-        body = f"{field}이(가) {_show(p['before'])}에서 {_show(p['after'])}(으)로 바뀌었습니다."
+        body = f"{field}이(가) {_show(p['before'], labels)}에서 {_show(p['after'], labels)}(으)로 바뀌었습니다."
     return f"{prefix}{title}: {body}"
 
 
@@ -169,6 +172,7 @@ def deliver(
     *,
     program_id: str | None = None,
     now: Callable[[], datetime] = _now,
+    labels: Mapping[str, str] | None = None,
 ) -> int:
     """ready 알림을 보낸다. 본문을 payload에 남기고 sent로 바꾼다. 보낸 수를 준다."""
     q = sa.select(OutboxAlert).where(OutboxAlert.status == "ready")
@@ -177,7 +181,7 @@ def deliver(
     sent = 0
     for a in session.scalars(q.order_by(OutboxAlert.created_at)).all():
         program = session.get(Program, a.program_id)
-        message = render(a, program.title if program else a.program_id)
+        message = render(a, program.title if program else a.program_id, labels)
         a.status = "sending"
         session.flush()
         channel.send(a, message)  # 채널 쪽은 idempotency_key로 중복을 거른다

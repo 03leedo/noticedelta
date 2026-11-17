@@ -11,3 +11,6 @@ FIELD_NAMES = {
     "required_documents": "제출 서류",
     "contact": "문의처",
 }
+
+# 알림 본문에 쓰는 표시 이름 (notify.render의 labels)
+ALERT_LABELS = {**FIELD_NAMES, **RESULT_NAMES}

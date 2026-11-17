@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.db import models, repo
 from noticedelta.impact import Alert
+from noticedelta.names import ALERT_LABELS
 from noticedelta.notify import deliver, inbox, prepare, release, render
 
 T0 = datetime(2026, 11, 1, tzinfo=UTC)
@@ -78,8 +79,8 @@ def test_ready_alerts_are_sent_once_with_a_message(s):
     alert(s, "u1", 2, "eligible", "ineligible")
     assert prepare(s, "PG").ready == 1
     ch = Recorder()
-    assert deliver(s, ch, now=clock()) == 1
-    assert deliver(s, ch, now=clock()) == 0  # 같은 알림은 두 번 나가지 않는다
+    assert deliver(s, ch, now=clock(), labels=ALERT_LABELS) == 1
+    assert deliver(s, ch, now=clock(), labels=ALERT_LABELS) == 0  # 같은 알림은 두 번 나가지 않는다
     assert ch.sent == [
         ("u1", "(가상) 창업 지원: 신청 자격 판정이 해당에서 비해당(으)로 바뀌었습니다.")
     ]
@@ -92,7 +93,7 @@ def test_newer_unsent_alert_supersedes_the_older(s):
     p = prepare(s, "PG")
     assert (p.ready, p.superseded) == (1, 1)
     ch = Recorder()
-    deliver(s, ch, now=clock())
+    deliver(s, ch, now=clock(), labels=ALERT_LABELS)
     # 두 번의 변경이 하나로 합쳐진다: 처음 값 → 마지막 값
     assert ch.sent == [
         ("u1", "(가상) 창업 지원: 마감일이(가) 2026-11-07에서 2026-11-21(으)로 바뀌었습니다.")
@@ -114,7 +115,7 @@ def test_reversing_a_sent_alert_marks_it_corrected(s):
     alert(s, "u1", 3, "ineligible", "eligible")
     prepare(s, "PG")
     ch = Recorder()
-    deliver(s, ch, now=clock())
+    deliver(s, ch, now=clock(), labels=ALERT_LABELS)
     assert ch.sent[0][1].startswith("[정정] 앞서 보낸 알림을 바로잡습니다.")
     assert s.get(models.OutboxAlert, first.id).status == "corrected"
 
@@ -151,5 +152,6 @@ def test_render_values():
         }
     )
     assert (
-        render(row, "사업") == "사업: 지원 금액이(가) 50,000,000에서 30,000,000(으)로 바뀌었습니다."
+        render(row, "사업", ALERT_LABELS)
+        == "사업: 지원 금액이(가) 50,000,000에서 30,000,000(으)로 바뀌었습니다."
     )

@@ -23,6 +23,7 @@ from noticedelta.evaluation import (  # noqa: E402
     B2Full,
     B3Diff,
     Engine,
+    Fields,
     disagreements,
     evaluate,
     input_sizes,
@@ -31,8 +32,14 @@ from noticedelta.evaluation import (  # noqa: E402
     render,
 )
 from noticedelta.llm import AnthropicProvider, FileCassetteStore, Gateway, Mode  # noqa: E402
-from noticedelta.llm.extract import LLMExtractor  # noqa: E402
+from noticedelta.llm.extract import (  # noqa: E402
+    DIFF_SYSTEM,
+    FIELD_GUIDE,
+    FIELD_TYPES,
+    LLMExtractor,
+)
 from noticedelta.llm.harness import for_sensitivity  # noqa: E402
+from noticedelta.programs import api_meta  # noqa: E402
 
 
 def main() -> None:
@@ -51,19 +58,21 @@ def main() -> None:
     def extractor(harnesses=()):
         return LLMExtractor(Gateway(provider, store, mode, harnesses=harnesses))
 
+    # 지원사업 팩의 필드 정의. API가 구조화해 주는 것은 접수 기간뿐이다
+    spec = Fields(FIELD_TYPES, FIELD_GUIDE, meta=("deadline",), diff_system=DIFF_SYSTEM)
     plain, diff_gateway = extractor(), Gateway(provider, store, mode)
     methods = {
-        "B0 메타 비교": B0Meta,
-        "B2 전체 재추출": lambda: B2Full(plain),
-        "B3 diff 기반 LLM": lambda: B3Diff(plain, diff_gateway),
-        "변경 영향 엔진": lambda: Engine(plain),
+        "B0 메타 비교": lambda: B0Meta(spec),
+        "B2 전체 재추출": lambda: B2Full(plain, spec),
+        "B3 diff 기반 LLM": lambda: B3Diff(plain, diff_gateway, spec),
+        "변경 영향 엔진": lambda: Engine(plain, spec),
     }
     if args.harness:
         guarded = extractor(for_sensitivity(args.harness))
-        methods[f"엔진 + 하네스({args.harness})"] = lambda: Engine(guarded)
+        methods[f"엔진 + 하네스({args.harness})"] = lambda: Engine(guarded, spec)
 
     with factory() as s:
-        chains = load_chains(s, split=None if args.split == "all" else args.split)
+        chains = load_chains(s, split=None if args.split == "all" else args.split, meta=api_meta)
         labels = load_labels(s)
     events = sum(len(c.events) for c in chains)
     labeled = len({e for e, _ in labels} & {ev.event_id for c in chains for ev in c.events})

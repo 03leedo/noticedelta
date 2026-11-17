@@ -27,9 +27,8 @@ from pathlib import Path
 import httpx
 
 from noticedelta.blobstore import BlobStore, LocalBlobStore
-from noticedelta.sources import NoticeRecord, SourceError, TransientSourceError
 from noticedelta.sources.attachments import download_attachment
-from noticedelta.sources.base import _VOLATILE
+from noticedelta.sources.base import _VOLATILE, NoticeRecord, SourceError, TransientSourceError
 from noticedelta.sources.resilience import CircuitBreaker, CircuitOpen, RateLimiter
 
 PER_PAGE = 100
