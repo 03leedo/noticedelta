@@ -1,16 +1,16 @@
-# 앱 정의 규격 (초안 v0)
+# 앱 정의 규격 (초안 v0.1)
 
 | 항목 | 내용 |
 |---|---|
 | 상태 | **초안.** 확정은 두 번째 앱을 실제로 올릴 때 한다(ARCHITECTURE 11장: 첫 앱 하나만 보고 규약을 굳히지 않는다). |
-| 작성일 | 2026-11-17 |
-| 관계 | ARCHITECTURE 3.4(앱은 서버가 아니라 설정), 3.6(빌더와 검증), 4장(도메인 팩 규약)을 구체화한다. |
+| 작성일 | 2026-11-17 (v0.1: 설계 검토의 보완점 반영) |
+| 관계 | ARCHITECTURE 3.4(앱은 서버가 아니라 설정), 3.5(엔진 틀), 3.6(빌더와 검증), 4장(도메인 팩 규약)을 구체화한다. 출처는 [source-catalog.md](source-catalog.md)에서 고른다. |
 
 ---
 
 ## 0. 한 줄
 
-**앱은 플랫폼이 돌리는 설정 한 장이다.** 코드를 배포하지 않는다. 어떤 출처에서 무엇을 읽고, 어떤 값을 뽑고, 누구에게 무엇이 바뀌면 알릴지를 적는다. 수집, 파싱, 변경 감지, 판정, 알림, 하네스, 운영은 플랫폼이 한다.
+**앱은 플랫폼이 돌리는 설정 한 장이다.** 코드를 배포하지 않는다. 어떤 출처에서 무엇을 읽고, 어떤 엔진으로 무엇을 뽑고, 누구에게 무엇이 바뀌면 알릴지를 적는다. 수집, 파싱, 변경 감지, 판정, 알림, 하네스, 운영은 플랫폼이 한다.
 
 ## 1. 왜 지금 필요한가
 
@@ -27,24 +27,36 @@
 
 | 층 | 누가 쓰나 | 모양 | 들어 있는 것 |
 |---|---|---|---|
-| **출처 카탈로그** | 플랫폼 운영자 | 코드(어댑터) + 출처 설명 | API 호출·페이지 넘기기·인증, 원본 키 목록, 구조화 메타(접수 기간 등), 변동 값(호출마다 바뀌는 값), 이용 조건, 같은 항목 묶기 규칙. **이미 계속 모으고 있어 과거 기록이 있다** |
-| **앱** | 만드는 사람(빌더 에이전트) | 설정 한 장 | 읽을 출처와 키, 뽑을 필드, 구독자 모델, 알림 정책, 민감도, 표시 이름 |
-| **플랫폼 함수 목록** | 플랫폼 개발자 | 코드, 이름으로 고른다 | 값 타입과 비교(날짜·금액·규칙·목록), 파생 속성 함수(업력, 나이), 묶기 규칙, 매칭 방식 |
+| **출처 카탈로그** | 운영자, 또는 사용자(정해진 커넥터로) | 출처 한 장 (source-catalog.md) | 가져오는 법, 키 목록, 구조화 메타, 무시할 값, 같은 항목 묶기, 이용 조건, 과거 기록 |
+| **앱 정의** | 만드는 사람(대개 그 사람의 에이전트) | 설정 한 장 | 읽을 출처와 키, 엔진과 엔진 설정, 구독자 모델, 알림 정책, 민감도, 예산, 표시 이름 |
+| **플랫폼 함수 목록** | 플랫폼 개발자 | 코드, 이름으로 고른다 | 값 타입과 비교, 파생 속성 함수(업력, 나이), 묶기 규칙, 맞추기 방식 |
+| **엔진** | 플랫폼 개발자(나중에 다른 개발자) | 코드, 엔진 틀(ARCHITECTURE 3.5) | 변경 영향 엔진. 앱은 엔진을 고르고 그 엔진의 설정 칸을 채운다 |
 
-앱이 고를 수 없는 것을 하려면(새 계산이 필요하면) 사용자 엔진(ARCHITECTURE 3.5의 템플릿, 격리 실행)으로 넘어간다. 이 문서의 범위 밖이다.
+설정으로 안 되는 계산이 필요하면 사용자 엔진(ARCHITECTURE 3.5의 템플릿, 격리 실행)으로 넘어간다.
 
-## 3. 앱 정의 한 장: 지금의 지원사업 앱
+## 3. 에이전트가 쓰기 좋은 규격
 
-저장은 JSON이고(에이전트가 JSON 스키마로 쓰고 검증한다), 사람이 읽는 문서에는 같은 내용을 YAML로 적는다.
+플랫폼을 쓰는 쪽은 대부분 에이전트다. 사람은 말하고, 미리보기를 보고, 중요한 순간에 확인한다.
+
+- **JSON 스키마를 공개한다.** 에이전트는 스키마를 읽고 쓰고, 플랫폼은 저장 전에 검증한다(8장).
+- **고칠 방법이 적힌 오류.** "알림의 `fields`에 `amount2`가 없다. 정의된 필드: deadline, amount, …"
+- **초안·검증·미리 돌려 보기·비교는 공짜이고 아무것도 남기지 않는다.** 켜기 전에 몇 번이든 돌린다.
+- **결과마다 사람에게 보여 줄 문장을 같이 준다.** 에이전트는 그 문장을 그대로 보여 주고 답을 받는다.
+- **사람의 확인이 꼭 필요한 순간은 정해져 있다**: 앱 켜기, 판 바꾸기, 사용자 출처 등록(이용 조건 동의), 밖으로 나가는 알림 채널, 예산 올리기. 이 순간은 플랫폼이 사람의 확인 없이 넘어가지 않는다(도구 게이트웨이, ARCHITECTURE 7장).
+
+## 4. 앱 정의 한 장: 지금의 지원사업 앱
+
+저장은 JSON이고, 사람이 읽는 문서에는 같은 내용을 YAML로 적는다.
 
 ```yaml
 kind: app
 id: grant-alerts
 version: 3                  # 고칠 때마다 올린다. 켠 판은 바꾸지 않는다
 title: 지원사업 정정 알림
-sensitivity: personal       # public | personal | sensitive → 하네스 기본값(3.2)
+owner: user:42              # 6장
+sensitivity: personal       # public | personal | sensitive → 하네스 기본값
 
-sources:                    # 카탈로그에서 고른다
+sources:                    # 카탈로그에서 고른다. 묶기 규칙은 출처에 있다
   - id: bizinfo
     read: [pblancNm, bsnsSumryCn, trgetNm, reqstBeginEndDe, reqstMthPapersCn, refrncNm]
     attachments: true
@@ -52,33 +64,33 @@ sources:                    # 카탈로그에서 고른다
     read: [biz_pbanc_nm, pbanc_ctnt, aply_trgt_ctnt, aply_excl_trgt_ctnt, biz_enyy,
            biz_trgt_age, supt_regin, prfn_matr, aply_trgt, supt_biz_clsfc, prch_cnpl_no,
            pbanc_rcpt_bgng_dt, pbanc_rcpt_end_dt]
-items:
-  group: repost_title       # 카탈로그의 묶기 규칙: 기관이 같고 정정 표시를 뺀 제목이 같으면 한 항목
 
-fields:
-  deadline:
-    type: datetime
-    from: {meta: apply_end}         # 출처가 구조화해 준 값. LLM을 부르지 않는다
-    else: extract                   # 메타가 없으면 글에서 뽑는다
-    guide: 신청 마감 일시
-    keywords: [마감, 접수 기간, 신청 기간, 모집 기간, 소진 시까지]
-  amount:
-    type: amount
-    from: extract
-    guide: 기업당 최대 지원 금액(원)
-    keywords: [지원금, 지원 규모, 지원 한도, 사업비, "최대 \\d"]
-  eligibility_rules:
-    type: ruleset                   # 아래 subjects.attributes 위의 규칙식
-    from: extract
-    guide: 신청 자격
-    keywords: [신청 자격, 지원 대상, 자격 요건, 제외 대상, 업력, 연령, 소재, 예비 창업, 매출]
-  required_documents: {type: list, from: extract, guide: 제출 서류 이름, keywords: [제출 서류, 구비 서류, 증빙]}
-  contact: {type: text, from: extract, guide: 문의처, keywords: [문의, 연락처, 담당자]}
+engine:
+  kind: change_impact@1     # 엔진을 바꾸면 이 칸을 바꾼다. 아래 칸은 이 엔진의 설정이다
+  fields:
+    deadline:
+      type: datetime
+      from: {meta: apply_end}         # 출처가 구조화해 준 값. LLM을 부르지 않는다
+      else: extract                   # 메타가 없으면 글에서 뽑는다
+      guide: 신청 마감 일시
+      keywords: [마감, 접수 기간, 신청 기간, 모집 기간, 소진 시까지]
+    amount:
+      type: amount
+      from: extract
+      guide: 기업당 최대 지원 금액(원)
+      keywords: [지원금, 지원 규모, 지원 한도, 사업비, "최대 \\d"]
+    eligibility_rules:
+      type: ruleset                   # subjects.attributes 위의 규칙식
+      from: extract
+      guide: 신청 자격
+      keywords: [신청 자격, 지원 대상, 자격 요건, 제외 대상, 업력, 연령, 소재, 예비 창업, 매출]
+    required_documents: {type: list, from: extract, guide: 제출 서류 이름, keywords: [제출 서류, 구비 서류, 증빙]}
+    contact: {type: text, from: extract, guide: 문의처, keywords: [문의, 연락처, 담당자]}
 
 subjects:
   model: rules                      # rules | watchlist | everyone
   rules_field: eligibility_rules
-  attributes:
+  attributes:                       # 이름과 타입만. 값은 개인정보 금고에 있다
     founded_on:          {type: date, label: 창업일}
     ceo_birth_date:      {type: date, label: 대표자 생년월일}
     business_age_months: {type: int, derive: months_since(founded_on), label: 업력(개월)}
@@ -92,14 +104,18 @@ subjects:
     is_restart:          {type: bool, label: 재창업}
 
 alerts:
-  - on: verdict_changed             # 판정이 바뀐 사람에게
-    urgent: [eligible→ineligible]   # 나머지는 묶어서
-  - on: field_changed
-    fields: [deadline, amount, required_documents]
-    to: subscribers                 # 이 항목을 구독한 사람에게
+  rules:
+    - on: verdict_changed           # 판정이 바뀐 사람에게
+      urgent: [eligible→ineligible] # 나머지는 묶어서
+    - on: field_changed
+      fields: [deadline, amount, required_documents]
+      to: subscribers
+  channels: [inbox, email]          # 구독자 본인에게 가는 채널만 기본(7장)
   hold:
     mass_impact: 20                 # 한 변경이 이만큼 넘는 사람을 비해당으로 바꾸면 붙잡는다
     min_confidence: 0.7             # 인용 검증을 통과하지 못한 값은 "확인 필요"
+
+budget: {llm_usd_per_month: 5, on_exceed: pause_extraction}   # 9장
 
 labels:
   fields: {deadline: 마감일, amount: 지원 금액, eligibility_rules: 신청 자격,
@@ -107,7 +123,7 @@ labels:
   results: {eligible: 해당, ineligible: 비해당, unknown: 확인 필요}
 ```
 
-## 4. 두 번째 예시로 틀 검증: 약국 앱 (가상)
+## 5. 두 번째 예시로 틀 검증: 약국 앱 (가상)
 
 규격이 지원사업에만 맞는지 보려고 모양이 다른 앱을 하나 더 적어 본다. **출처와 키 이름은 가정이다**(카탈로그에 아직 없다).
 
@@ -116,20 +132,21 @@ kind: app
 id: pharmacy-permits
 version: 1
 title: 우리 약국 약 허가 사항 변경 알림
-sensitivity: public                 # 재고 목록은 민감 정보가 아니라고 본다
+owner: user:77
+sensitivity: public
 
 sources:
-  - id: mfds_permits                # (가상) 의약품 허가 사항 변경 공개 목록
+  - id: mfds_permits                # (가상) 의약품 허가 사항 변경 공개 목록. 품목 번호로 묶는다
     read: [item_name, ingredient, change_type, change_text, changed_on]
     attachments: false
-items:
-  group: by_key                     # 출처가 주는 품목 번호로 묶는다
 
-fields:
-  item_name:  {type: text, from: {meta: item_name}}
-  ingredient: {type: text, from: {meta: ingredient}}
-  dosage:     {type: text, from: extract, guide: 용법·용량, keywords: [용법, 용량, 1회, 1일]}
-  warnings:   {type: list, from: extract, guide: 사용상 주의사항 항목, keywords: [주의, 금기, 투여하지]}
+engine:
+  kind: change_impact@1
+  fields:
+    item_name:  {type: text, from: {meta: item_name}}
+    ingredient: {type: text, from: {meta: ingredient}}
+    dosage:     {type: text, from: extract, guide: 용법·용량, keywords: [용법, 용량, 1회, 1일]}
+    warnings:   {type: list, from: extract, guide: 사용상 주의사항 항목, keywords: [주의, 금기, 투여하지]}
 
 subjects:
   model: watchlist                  # 구독자가 낸 목록과 항목 필드가 겹치면 해당
@@ -137,47 +154,74 @@ subjects:
   list_label: 우리 약국 재고 성분
 
 alerts:
-  - on: field_changed
-    fields: [dosage, warnings]
-    to: matched                     # 목록이 겹치는 구독자에게
-    urgent: [warnings]
+  rules:
+    - on: field_changed
+      fields: [dosage, warnings]
+      to: matched
+      urgent: [warnings]
+  channels: [inbox]
   hold: {mass_impact: 200, min_confidence: 0.7}
 
+budget: {llm_usd_per_month: 2, on_exceed: pause_extraction}
 labels:
   fields: {dosage: 용법·용량, warnings: 주의사항}
 ```
 
-**틀이 버틴 것**
-- 출처·읽을 키·필드·알림·하네스가 같은 자리에 들어간다.
-- 구독자 모델만 바꾸면 된다(`rules` → `watchlist`). 필드의 `from: meta`로 LLM 없이 도는 앱도 된다.
+**틀이 버틴 것**: 출처·엔진·구독자·알림·하네스·예산이 같은 자리에 들어간다. 구독자 모델만 바꾸면 된다(`rules` → `watchlist`). 필드의 `from: meta`로 LLM 없이 도는 앱도 된다.
 
-**틀이 드러낸 빈 곳 (열린 질문, 7장)**
-- `watchlist`의 맞추기(성분 이름 정규화)는 도메인 지식인데 설정으로 적기 어렵다. 지금은 플랫폼 함수 목록에서 고르게 했다(`korean_drug_name`). 함수 목록이 도메인마다 늘어날 수 있다.
-- 출처가 "변경 내역"을 직접 주는 경우(`change_type`, `changed_on`)에는 조각 비교가 필요 없을 수 있다. 엔진을 거치지 않는 경로가 필요한지 정해야 한다.
+**틀이 드러낸 빈 곳** (12장): 성분 이름 맞추기 같은 도메인 지식을 설정으로 적기 어렵다. 출처가 "변경 내역"을 직접 주는 경우에는 조각 비교가 필요 없을 수 있다(다른 엔진이 필요하다는 뜻일 수 있다).
 
-## 5. 판(버전)과 공유
+## 6. 사람과 권한
 
-- **판**: `version`과 내용 해시를 함께 쓴다. 켠 판은 바꾸지 않는다. 플랫폼이 만드는 결과(필드 값, 판정, 알림)에는 어느 앱의 어느 판으로 계산했는지 남긴다. 새 판을 켜면 지금 상태를 새 판으로 다시 계산한다(비용을 먼저 보여 준다). 과거는 다시 쓰지 않는다.
+| 역할 | 할 수 있는 것 |
+|---|---|
+| **소유자** (앱을 만든 사람) | 앱 정의를 고치고, 미리 돌려 보고, 켜고 끄고, 예산을 정한다. 사용자 출처를 등록한다 |
+| **구독자** (앱을 쓰는 사람) | 링크나 초대로 들어와 자기 정보(속성 값, 목록)를 넣고 알림을 받는다. 다른 구독자는 보지 못한다 |
+| **관리자** (기관) | 구독자 여럿의 정보를 대신 관리한다(창업지원단이 보육기업 여러 곳을 맡는 경우). 구독자의 동의가 필요하다 |
+
+- 한 사람이 여러 앱을 구독할 수 있다. 같은 속성(예: 창업일)은 금고에 한 번 두고, 앱마다 용도별 동의를 받는다.
+- 지금의 "링크 하나 = 프로필 하나"는 구독자 한 명, 앱 하나인 경우다. 링크는 그대로 쓰고 그 위에 소유자·관리자를 얹는다.
+
+## 7. 알림
+
+- **채널과 능력 속성**: 화면 알림함, 이메일, 캘린더처럼 구독자 본인에게 가는 채널은 기본으로 쓸 수 있다. 웹훅처럼 밖의 주소로 보내는 채널은 외부 효과(C)라서 도구 게이트웨이의 승인 뒤에만 쓸 수 있다.
+- **판을 바꿀 때의 알림 폭탄 막기**: 새 판을 켜면 규칙이나 필드가 바뀌어 판정이 대량으로 달라질 수 있다. 이것은 공고의 정정이 아니므로 정정 알림으로 보내지 않는다. 구독자에게는 한 번만 요약해 알리거나(예: "자격 기준이 바뀌어 3개 사업의 결과가 달라졌습니다") 조용히 반영한다. 어느 쪽인지는 켤 때 소유자가 고른다.
+
+## 8. 검증 규칙 (앱을 저장하기 전에)
+
+- 출처는 카탈로그에 있고 소유자가 쓸 수 있어야 한다(사용자 출처는 소유자만). `read`의 키는 그 출처가 내는 키여야 한다.
+- 엔진은 플랫폼에 등록된 엔진이어야 하고, 엔진 칸은 그 엔진의 스키마를 따른다.
+- 필드(변경 영향 엔진): 이름이 겹치지 않는다. `type`은 정해진 것(datetime, amount, ruleset, list, text, enum)만. `from: meta`면 카탈로그가 내는 메타 키여야 하고, `extract`면 `guide`가 있어야 한다.
+- 구독자: `rules`면 `rules_field`가 ruleset 필드여야 하고 `attributes`가 있어야 한다. `derive`와 `normalize`는 플랫폼 함수 목록에 있는 이름만.
+- 알림: `fields`는 정의된 필드여야 한다. 밖으로 나가는 채널은 승인 기록이 있어야 한다. `hold`는 범위 안의 값만.
+- 민감도: `personal` 이상이면 개인정보 가리기를 끌 수 없다. `sensitive`는 외부 모델로 보내지 않는다(로컬 모델이 생기기 전까지는 켤 수 없다).
+- 예산: 있어야 한다. 한도: 필드 수, 낱말 수, 구독자 목록 크기, 출처 수.
+
+## 9. 판·공유·비용
+
+- **판**: `version`과 내용 해시를 함께 쓴다. 켠 판은 바꾸지 않는다. 플랫폼이 만드는 결과(필드 값, 판정, 알림)에는 어느 앱의 어느 판으로 계산했는지 남긴다. 새 판을 켜면 지금 상태를 새 판으로 다시 계산하고(비용을 먼저 보여 준다, 7장의 알림 처리), 과거는 다시 쓰지 않는다.
 - **수집·원문은 출처 단위로 한 번.** 여러 앱이 같은 출처를 읽어도 한 번 받고 한 번 파싱한다(RQ10).
-- **변경은 앱이 읽는 것 기준.** 출처 단위의 버전 하나를 두고(앱들이 읽는 키의 합집합), 본문 조각마다 어느 키에서 왔는지 적어 둔다(`locator.key`). 앱은 자기가 읽는 키의 조각이 바뀐 변경만 받는다. 빈 버전 200개는 이것으로 풀린다.
-- **필드 추출은 앱 단위.** 같은 출처를 읽어도 뽑는 필드가 다르면 따로 뽑는다. 같은 정의(필드 이름·타입·안내가 같음)는 녹화본 키가 같아 한 번만 부른다.
+- **변경은 앱이 읽는 것 기준.** 출처 단위의 버전 하나를 두고(앱들이 읽는 키의 합집합), 본문 조각마다 어느 키에서 왔는지 적는다(`locator.key`). 앱은 자기가 읽는 키의 조각이 바뀐 변경만 받는다. 빈 버전 200개는 이것으로 풀린다.
+- **필드 추출은 앱 단위.** 같은 정의(필드 이름·타입·안내가 같음)는 녹화본 키가 같아 한 번만 부른다.
+- **비용과 한도**: 앱마다 LLM 예산을 둔다. 넘으면 추출을 멈추고(수집과 메타 필드는 계속), 소유자에게 알린다. 미리 돌려 보기와 새 판 켜기 전에 예상 비용을 보여 준다(평가 틀의 입력 크기 계산을 쓴다). 무료 한도와 누가 내는지는 운영 방식이 정해질 때 정한다.
 
-## 6. 미리 돌려 보기와 비교
+## 10. 미리 돌려 보기와 비교
 
-### 6.1 미리 돌려 보기 (backtest)
+### 10.1 미리 돌려 보기 (backtest)
 
 ```text
-입력  앱 정의(초안이어도 됨) · 기간(예: 지난 90일) · 구독자(만든 사람의 프로필, 또는 가상 구독자 N명)
+입력  앱 정의(초안이어도 됨) · 기간(예: 지난 90일) · 구독자(만든 사람의 정보, 또는 가상 구독자 N명)
 돌림  기록된 수집 실행을 시간 순으로 다시 흘린다. 다시 수집하지 않는다.
       앱이 읽는 키로 판을 만들고 → 필드를 뽑고(녹화본, 없으면 비용을 보여 주고 묻는다) → 판정·알림을 계산한다.
       알림은 보내지 않고 목록으로만 낸다.
 출력  알림 목록(언제·누구에게·무엇이 어떻게·근거 조각) · 요약(건수, 확인 필요 비율, 붙잡힘, LLM 호출·비용)
+      · 기록의 빈틈(이 기간 수집하지 못한 구간 n곳, 그 사이의 중간 판은 놓쳤을 수 있다)
 ```
 
-- 사람은 알림 카드마다 맞다/틀리다를 누른다. 이 표시를 **앱의 시험**으로 저장한다(`expected`). 사람 라벨(5a)과 같은 모양이다.
 - LLM 키가 없으면 `from: meta` 필드만 계산된다. 나머지 필드는 "녹화본 없음"으로 표시한다(평가 틀과 같다).
+- 사람은 알림 카드마다 맞다/틀리다를 누른다. 이것이 **앱의 시험**이 된다.
 
-### 6.2 비교 (compare)
+### 10.2 비교 (compare)
 
 ```text
 입력  두 판(켠 판과 초안, 또는 두 초안) · 같은 기간 · 같은 구독자
@@ -185,52 +229,63 @@ labels:
 ```
 
 - "용량 변경은 빼 줘" → 초안을 만들고 비교 → "알림 3건이 사라집니다. 그중 1건은 전에 맞다고 표시하셨습니다."
-- 평가 틀(`evaluation`)의 방식 비교와 같은 엔진을 쓴다. 방식 대신 앱 판을 바꿔 끼우는 것이다.
+- 평가 틀(`evaluation`)의 방식 비교와 같은 엔진을 쓴다. 방식 대신 앱 판을 바꿔 끼운다.
 
-## 7. 검증 규칙 (앱을 저장하기 전에)
+### 10.3 앱의 시험과 평가 라벨은 같은 모양
 
-- 출처는 카탈로그에 있어야 하고, `read`의 키는 그 출처가 내는 키여야 한다.
-- 필드: 이름이 겹치지 않는다. `type`은 정해진 것(datetime, amount, ruleset, list, text, enum)만. `from: meta`면 카탈로그가 내는 메타 키여야 하고, `extract`면 `guide`가 있어야 한다.
-- 구독자: `rules`면 `rules_field`가 ruleset 필드여야 하고 `attributes`가 있어야 한다. `derive`와 `normalize`는 플랫폼 함수 목록에 있는 이름만.
-- 알림: `fields`는 정의된 필드여야 한다. `hold`는 범위 안의 값만(예: `mass_impact` 1 이상).
-- 민감도: `personal` 이상이면 개인정보 가리기를 끌 수 없다. `sensitive`는 외부 모델로 보내지 않는다(로컬 모델이 생기기 전까지는 `sensitive` 앱을 켤 수 없다).
-- 한도: 필드 수, 낱말 수, 구독자 목록 크기, 출처 수.
+사람이 단 "맞다/틀리다"와 연구용 사람 라벨(5a, `label` 테이블)을 같은 모양으로 둔다: (항목 버전, 필드 또는 알림, 판단, 누가, 언제). 사용자가 쓸수록 평가 데이터가 쌓이고, 연구 측정(RQ1)과 앱 시험이 같은 데이터를 본다. 구독자의 판단을 연구에 쓰는 것은 선택 동의를 한 경우만이다.
 
-## 8. 지금 코드에서 옮길 것
+## 11. 앱 상태 보고
+
+플랫폼이 앱마다 아래를 계산하고, 소유자에게 주 1회 사람 말로 요약한다("이번 주 출처가 두 번 멈췄지만 다시 받아서 놓친 것은 없습니다").
+
+| 지표 | 뜻 |
+|---|---|
+| 수집 성공률, 빈틈 | 출처별로 제때 받았는가 |
+| 형식 변화 | 붙잡아 둔 변경이 있는가(source-catalog.md 5장) |
+| 파싱 실패, 확인 필요 비율 | 읽지 못했거나 근거가 약한 값이 얼마나 되는가 |
+| 붙잡힌 알림 | 운영자·소유자가 봐야 할 것 |
+| 예산 사용 | 이번 달 LLM 비용과 한도 |
+| 시험 | 맞다고 표시한 알림 중 지금 판에서 깨진 것 |
+
+## 12. 지금 코드에서 옮길 것
 
 | 지금 있는 곳 | 갈 곳 |
 |---|---|
 | `eligibility.rules.ATTRIBUTES`, `SIDO` | 앱 `subjects.attributes` |
 | `eligibility.temporal`의 업력·나이 계산 | 플랫폼 파생 함수(`months_since`, `age`), 앱은 `derive`로 이름만 고른다 |
-| `impact._KEYWORDS`, `RULES_FIELD` | 앱 `fields[].keywords`, `subjects.rules_field` |
-| `llm.extract`의 `FIELD_TYPES`, `FIELD_GUIDE` | 앱 `fields[].type`, `guide`. 프롬프트 틀은 플랫폼에 남는다 |
+| `impact._KEYWORDS`, `RULES_FIELD` | 앱 `engine.fields[].keywords`, `subjects.rules_field` |
+| `llm.extract`의 `FIELD_TYPES`, `FIELD_GUIDE` | 앱 `engine.fields[].type`, `guide`. 프롬프트 틀은 플랫폼에 남는다 |
 | `names`의 표시 이름 | 앱 `labels` |
-| `programs.api_meta`, 어댑터의 `apply_end` | 카탈로그의 메타 + 앱 `fields[].from.meta` |
-| `sources.base._VOLATILE`, `_ATTACHMENT_URLS`, 스냅샷의 `updtPnttm` | 카탈로그(출처 설명) |
-| 어댑터 `to_record`의 본문 키 목록 | 앱 `sources[].read` |
 | `notify.MASS_IMPACT`, `impact.REVIEW_THRESHOLD` | 앱 `alerts.hold` |
-| `programs`의 재게시 묶기(`title_key`) | 카탈로그의 묶기 규칙, 앱은 `items.group`으로 고른다 |
+| 어댑터 `to_record`의 본문 키 목록 | 앱 `sources[].read` |
+| `programs.api_meta`, 변동 값, 재게시 묶기 | 출처 카탈로그(source-catalog.md 7장) |
 
 옮기고 나면 ARCHITECTURE 9장의 "엔진·공통 안에 남은 지원사업 지식"이 없어진다.
 
-## 9. 만드는 순서 (초안)
+## 13. 만드는 순서 (초안)
 
 | 순서 | 할 일 | 완료 기준 |
 |---|---|---|
-| 1 | 앱 정의 스키마와 검증, 출처 카탈로그 설명. 지원사업 앱을 정의 파일 한 장으로 적고, 지금 코드가 그 파일에서 읽게 바꾼다(8장) | 동작이 그대로이고(기존 테스트 통과), 엔진·공통에 지원사업 낱말이 없다 |
-| 2 | 본문 조각에 원본 키 적기, 앱이 읽는 키 기준으로 변경 거르기 | K-Startup 빈 버전 200개가 변경 목록에서 사라진다 |
-| 3 | 미리 돌려 보기 | 지원사업 앱으로 지난 기간의 알림 목록이 나온다(LLM 없이는 마감일만) |
-| 4 | 비교와 앱의 시험(맞다/틀리다 저장) | 판 두 개의 알림 차이와 깨진 시험이 나온다 |
-| 5 | MCP 조종 도구: `list_sources`, `draft_app`, `validate_app`, `backtest`, `compare_app`, `enable_app` | 에이전트가 말로 받은 요구를 앱 정의로 만들고, 미리 돌려 보고, 켠다 |
-| 6 | 두 번째 앱을 실제 출처로 올리고 규격을 확정한다 | 두 번째 앱이 플랫폼 코드를 거의 고치지 않고 돈다(RQ7) |
+| 1 | **형식 변화 감시 일반화**: 한 번의 수집에서 항목 대부분의 같은 키가 바뀌면 붙잡는다, 무시할 값 후보 찾기 | 지난 세 사건(토큰, 표기, 빔)을 다시 흘리면 손으로 고치지 않아도 붙잡힌다 |
+| 2 | 출처 한 장과 앱 정의 한 장의 스키마·검증. 기업마당·K-Startup을 출처 한 장으로, 지원사업 앱을 정의 한 장으로 옮기고 지금 코드가 거기서 읽게 바꾼다(12장) | 동작이 그대로이고(기존 테스트 통과), 엔진·공통에 지원사업 낱말이 없다 |
+| 3 | 본문 조각에 원본 키 적기, 앱이 읽는 키 기준으로 변경 거르기 | K-Startup 빈 버전 200개가 변경 목록에서 사라진다 |
+| 4 | 미리 돌려 보기(빈틈 표시 포함) | 지원사업 앱으로 지난 기간의 알림 목록이 나온다(LLM 없이는 마감일만) |
+| 5 | 비교와 앱의 시험 | 판 두 개의 알림 차이와 깨진 시험이 나온다 |
+| 6 | MCP 조종 도구: `list_sources`, `draft_app`, `validate_app`, `backtest`, `compare_app`, `enable_app` | 에이전트가 말로 받은 요구를 앱 정의로 만들고, 미리 돌려 보고, 사람의 확인을 받아 켠다 |
+| 7 | 사용자 출처 등록(`rss`, `html_list`, `file_drop`) | 에이전트가 주소 하나로 출처를 등록하고 사람의 확인을 받는다 |
+| 8 | 소유자·구독자·관리자, 예산, 판 바꾸기의 알림 처리, 상태 보고 | 다른 사람이 만든 앱이 내 앱과 섞이지 않고 돈다 |
+| 9 | 두 번째 앱을 실제 출처로 올리고 규격을 확정한다 | 두 번째 앱이 플랫폼 코드를 거의 고치지 않고 돈다(RQ7) |
 
-## 10. 열린 질문
+## 14. 열린 질문
 
 | 질문 | 초안의 선택 | 정할 때 |
 |---|---|---|
-| 버전을 앱마다 따로 둘까, 출처 단위 하나에서 거를까 | 출처 단위 하나 + 앱별 거르기(5장) | 2번 |
+| 버전을 앱마다 따로 둘까, 출처 단위 하나에서 거를까 | 출처 단위 하나 + 앱별 거르기(9장) | 3번 |
 | `watchlist`의 맞추기 같은 도메인 지식을 어디에 둘까 | 플랫폼 함수 목록에서 이름으로 고름 | 두 번째 앱 |
-| 출처가 변경 내역을 직접 줄 때 엔진을 건너뛸까 | 미정 | 두 번째 앱 |
-| 구독자 속성의 값은 어디에 둘까 | 속성 사전(이름·타입)은 앱 정의에, 값은 개인정보 금고에 | 금고 단계(10.1의 4번) |
-| 가상 구독자로 미리 돌려 볼 때 가상 프로필을 어떻게 만들까 | 속성 사전에서 무작위(지금의 `eligibility.synthetic`과 같은 방식) | 3번 |
+| 출처가 변경 내역을 직접 줄 때 | 변경 영향 엔진을 건너뛰는 다른 엔진(`engine.kind`)으로 | 두 번째 앱 |
+| 구독자 속성의 값은 어디에 둘까 | 속성 사전은 앱 정의에, 값은 개인정보 금고에 | 금고 단계 |
+| 가상 구독자로 미리 돌려 볼 때 가상 정보를 어떻게 만들까 | 속성 사전에서 무작위(`eligibility.synthetic`과 같은 방식) | 4번 |
+| 판을 바꿀 때 구독자에게 알릴지 | 소유자가 켤 때 고른다(요약 한 번 / 조용히) | 8번 |
+| 무료 한도와 비용을 누가 내나 | 미정 | 다른 사람이 앱을 만들기 전 |
 | 사용자 엔진(코드)과 앱 정의(설정)의 경계 | 설정으로 안 되는 계산만 엔진으로 | 빌더 단계 |
