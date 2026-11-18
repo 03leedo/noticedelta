@@ -274,7 +274,11 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
         if to_record is None:
             continue
         items = body.get("items", [])
-        raws = {it["external_id"]: json.loads(store.get(it["item_key"])) for it in items}
+        # 형식 변화는 어댑터가 정리한 항목으로 비교한다(DB에 남긴 항목도 정리한 것이다). 원본으로 비교하면
+        # 어댑터가 이미 흡수하는 차이(예: 첨부 주소의 토큰)까지 형식 변화로 잡혀, 그 키의 진짜 변경을 가린다.
+        raws = {
+            it["external_id"]: to_record(json.loads(store.get(it["item_key"]))).raw for it in items
+        }
         before = _latest_raws(session, source)
         watch = drift.Watch(session, source)
         if body.get("error") is None:
