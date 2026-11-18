@@ -17,7 +17,6 @@ from noticedelta.matching import ChangeSet
 from noticedelta.segments import Segment
 from noticedelta.values import find_amounts, find_datetimes, values_equal
 
-RULES_FIELD = "eligibility_rules"
 REVIEW_THRESHOLD = 0.7
 
 
@@ -74,37 +73,30 @@ STALE_CONFIDENCE = 0.3  # 판정기의 기본 신뢰도 하한(0.7)보다 낮아
 _NOT_ELIGIBLE = Judgment("ineligible")  # 판정 기록이 없는 사용자의 이전 상태
 
 
-_KEYWORDS: dict[str, re.Pattern] = {
-    # 날짜가 있는 조각은 find_datetimes가 따로 잡는다. "까지"만으로는 고르지 않는다.
-    "deadline": re.compile(r"마감|접수\s*기간|신청\s*기간|모집\s*기간|소진\s*시\s*까지"),
-    "amount": re.compile(r"지원\s*금|지원\s*규모|지원\s*한도|사업비|최대\s*\d"),
-    RULES_FIELD: re.compile(
-        r"신청\s*자격|지원\s*대상|자격\s*요건|제외\s*대상|업력|창업\s*\d+\s*년|만\s*\d+\s*세|"
-        r"연령|나이|소재|예비\s*창업|재창업|여성|매출|상시\s*근로자|중복\s*수혜"
-    ),
-    # "서류 평가"처럼 서류만 들어간 문장은 고르지 않는다.
-    "required_documents": re.compile(
-        r"(?:제출|구비|증빙|첨부|신청|필요|준비)\s*서류|서류\s*(?:제출|목록)|증빙\s*자료|사본"
-    ),
-    "contact": re.compile(r"문의|연락처|담당자|☎|\d{2,3}-\d{3,4}-\d{4}"),
-}
-
-
-def keyword_candidates(seg: Segment) -> set[str]:
-    """새로 추가·수정·삭제된 조각이 어느 필드와 관련 있을지 가볍게 고른다 (LLM 없이).
-
-    표 칸은 칸 글만으로는 모른다("5년"). 열 머리글과 행 키("업력")까지 함께 본다.
+def keyword_detector(
+    keywords: Mapping[str, str | re.Pattern], types: Mapping[str, str]
+) -> Callable[[Segment], set[str]]:
+    """필드 정의(이름별 낱말, 타입)로 만든 후보 찾기: 새로 추가·수정·삭제된 조각이 어느 필드와
+    관련 있을지 가볍게 고른다(LLM 없이). 날짜가 든 조각은 날짜 필드, 금액이 든 조각은 금액 필드의
+    후보다. 표 칸은 칸 글만으로는 모른다("5년"). 열 머리글과 행 키까지 함께 본다.
     """
-    text = seg.text
-    if seg.kind == "table_cell":
-        loc = seg.locator
-        text = f"{loc.get('header', '')} {loc.get('row_key', '')} {seg.text}"
-    out = {name for name, pat in _KEYWORDS.items() if pat.search(text)}
-    if find_datetimes(text, default_year=2000):
-        out.add("deadline")
-    if find_amounts(text):
-        out.add("amount")
-    return out
+    patterns = {n: re.compile(p) if isinstance(p, str) else p for n, p in keywords.items()}
+    dated = {n for n, t in types.items() if t == "datetime"}
+    money = {n for n, t in types.items() if t == "amount"}
+
+    def candidates(seg: Segment) -> set[str]:
+        text = seg.text
+        if seg.kind == "table_cell":
+            loc = seg.locator
+            text = f"{loc.get('header', '')} {loc.get('row_key', '')} {seg.text}"
+        out = {name for name, pat in patterns.items() if pat.search(text)}
+        if dated and find_datetimes(text, default_year=2000):
+            out |= dated
+        if money and find_amounts(text):
+            out |= money
+        return out
+
+    return candidates
 
 
 def build_field_source_index(fields: Mapping[str, FieldValue]) -> dict[str, set[str]]:
@@ -130,7 +122,7 @@ def run_impact(
     subscriptions: Sequence[Subscription],
     profiles: Mapping[str, Mapping[str, Any]],
     old_judgments: Mapping[str, Judgment],
-    candidate_detector: Callable[[Segment], set[str]] = keyword_candidates,
+    candidate_detector: Callable[[Segment], set[str]],
     default_year: int | None = None,
     old_segments: Sequence[Segment] = (),
     unknown_lineages: frozenset[str] | set[str] = frozenset(),
@@ -199,27 +191,30 @@ def run_impact(
 
     # ④⑤⑥ 영향 사용자 재판정과 알림
     alerts: dict[str, Alert] = {}
-    if RULES_FIELD in real:
-        new_rules = RuleGroup.model_validate(fields[RULES_FIELD].value)
+    rules_fields = {
+        n for n in real if fields[n].value_type == "rules"
+    }  # 규칙식 필드: 사람별로 다시 판정
+    for rules_field in sorted(rules_fields):
+        new_rules = RuleGroup.model_validate(fields[rules_field].value)
         # 판정 기록이 없는 사용자도 본다. 조건이 완화돼 새로 해당하게 된 사람에게도 알려야 한다.
         for user_id in sorted(set(old_judgments) | set(profiles)):
             before = old_judgments.get(user_id, _NOT_ELIGIBLE)
             after = judge(new_rules, profiles.get(user_id, {}))
             if after.result != before.result:
-                k = _key(user_id, program_id, RULES_FIELD, to_version_id)
+                k = _key(user_id, program_id, rules_field, to_version_id)
                 alerts[k] = Alert(
                     user_id,
                     program_id,
-                    RULES_FIELD,
+                    rules_field,
                     to_version_id,
                     "judgment_changed",
                     before.result,
                     after.result,
-                    fields[RULES_FIELD].sources,
+                    fields[rules_field].sources,
                     k,
-                    fields[RULES_FIELD].confidence,
+                    fields[rules_field].confidence,
                 )
-    for name in sorted(real - {RULES_FIELD}):
+    for name in sorted(real - rules_fields):
         for sub in subscriptions:
             if name in sub.fields:
                 k = _key(sub.user_id, program_id, name, to_version_id)

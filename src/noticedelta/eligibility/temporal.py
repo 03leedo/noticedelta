@@ -1,11 +1,11 @@
-"""시간에 따라 바뀌는 자격과 "거의 해당" (DESIGN.md 14장 5주차, ARCHITECTURE.md 6.1).
+"""시간에 따라 바뀌는 판정과 "거의 해당" (DESIGN.md 14장 5주차, ARCHITECTURE.md 6.1).
 
-자격 규칙이 코드라서 "언제 자격이 바뀌는지"를 계산할 수 있다.
+규칙이 코드라서 "언제 판정이 바뀌는지"를 계산할 수 있다.
 
-- 프로필에 개업일(`founded_on`)·대표자 생년월일(`ceo_birth_date`)이 있으면 날짜마다
-  `business_age_months`(만 개월)·`ceo_age`(만 나이)를 다시 계산한다.
+- 속성 사전에서 파생 속성(Attribute.derive)을 찾아, 프로필의 날짜(예: 개업일)로부터 기준일마다
+  다시 계산한다(예: 만 개월 수, 만 나이). 어떤 속성이 파생인지는 도메인 팩이 정한다.
 - 규칙의 경계값에서 속성이 바뀌는 날만 후보로 뽑아 판정을 다시 돌린다. 날마다 돌지 않는다.
-- 공고가 "공고일 기준"처럼 기준일을 정해 두면 그날 하루만 판정한다(`fixed_on`).
+- 문서가 "공고일 기준"처럼 기준일을 정해 두면 그날 하루만 판정한다(`fixed_on`).
 """
 
 from __future__ import annotations
@@ -18,10 +18,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from noticedelta.eligibility.judge import Judgment, Reason, Result, _coerce, _eval_rule, judge
-from noticedelta.eligibility.rules import Rule, RuleGroup
-
-FOUNDED_ON = "founded_on"
-CEO_BIRTH_DATE = "ceo_birth_date"
+from noticedelta.eligibility.rules import Attributes, Rule, RuleGroup
 
 
 def _as_date(v: Any) -> date | None:
@@ -70,13 +67,14 @@ def add_years(birth: date, n: int) -> date:
         return date(birth.year + n, 3, 1)
 
 
-def derive_profile(profile: Mapping[str, Any], on: date) -> dict[str, Any]:
-    """기준일의 업력·나이를 채운 프로필. 날짜가 없으면 원래 값을 그대로 둔다."""
+def derive_profile(profile: Mapping[str, Any], on: date, attributes: Attributes) -> dict[str, Any]:
+    """기준일의 파생 속성을 채운 프로필. 바탕 날짜가 없으면 원래 값을 그대로 둔다."""
     out = dict(profile)
-    if (founded := _as_date(profile.get(FOUNDED_ON))) is not None:
-        out["business_age_months"] = months_between(founded, on) if on >= founded else 0
-    if (birth := _as_date(profile.get(CEO_BIRTH_DATE))) is not None:
-        out["ceo_age"] = age_on(birth, on)
+    for name, attr in attributes.items():
+        if attr.derive is None:
+            continue
+        if (source := _as_date(profile.get(attr.derive.source))) is not None:
+            out[name] = DERIVE[attr.derive.fn][0](source, on)
     return out
 
 
@@ -93,18 +91,29 @@ def _thresholds(rule: Rule) -> list[int]:
     return [int(v) for v in vals if isinstance(v, int | float) and not isinstance(v, bool)]
 
 
-def _candidate_dates(group: RuleGroup, profile: Mapping[str, Any]) -> set[date]:
+# 파생 속성 함수: (바탕 날짜, 기준일 → 값), (바탕 날짜, 값 n → 그 값에 닿는 날)
+DERIVE = {
+    "months_since": (months_between, add_months),
+    "age": (age_on, add_years),
+}
+
+
+def _candidate_dates(
+    group: RuleGroup, profile: Mapping[str, Any], attributes: Attributes
+) -> set[date]:
     """속성 값이 규칙 경계를 넘나드는 날. 경계값 v와 v+1에 닿는 날을 모두 넣는다."""
-    founded = _as_date(profile.get(FOUNDED_ON))
-    birth = _as_date(profile.get(CEO_BIRTH_DATE))
     out: set[date] = set()
     for rule in _walk(group):
+        attr = attributes.get(rule.attribute)
+        if attr is None or attr.derive is None:
+            continue
+        source = _as_date(profile.get(attr.derive.source))
+        if source is None:
+            continue
+        reach = DERIVE[attr.derive.fn][1]
         for v in _thresholds(rule):
             for n in (v, v + 1):
-                if rule.attribute == "business_age_months" and founded is not None:
-                    out.add(add_months(founded, n))
-                elif rule.attribute == "ceo_age" and birth is not None:
-                    out.add(add_years(birth, n))
+                out.add(reach(source, n))
     return out
 
 
@@ -131,6 +140,7 @@ def eligibility_timeline(
     group: RuleGroup,
     profile: Mapping[str, Any],
     *,
+    attributes: Attributes,
     start: date,
     until: date | None = None,
     horizon_days: int = 365,
@@ -143,13 +153,16 @@ def eligibility_timeline(
     """
     if fixed_on is not None:
         return Timeline(
-            fixed_on, judge(group, derive_profile(profile, fixed_on), min_confidence=min_confidence)
+            fixed_on,
+            judge(
+                group, derive_profile(profile, fixed_on, attributes), min_confidence=min_confidence
+            ),
         )
     end = until if until is not None else start + timedelta(days=horizon_days)
-    prev = judge(group, derive_profile(profile, start), min_confidence=min_confidence)
+    prev = judge(group, derive_profile(profile, start, attributes), min_confidence=min_confidence)
     timeline = Timeline(start, prev)
-    for d in sorted(x for x in _candidate_dates(group, profile) if start < x <= end):
-        cur = judge(group, derive_profile(profile, d), min_confidence=min_confidence)
+    for d in sorted(x for x in _candidate_dates(group, profile, attributes) if start < x <= end):
+        cur = judge(group, derive_profile(profile, d, attributes), min_confidence=min_confidence)
         if cur.result != prev.result:
             changed = [
                 new
@@ -187,16 +200,17 @@ def near_misses(
     group: RuleGroup,
     profile: Mapping[str, Any],
     *,
+    attributes: Attributes,
     on: date | None = None,
     min_confidence: float = 0.7,
 ) -> list[NearMiss]:
     """비해당인 공고에서, 조건 하나만 맞으면 비해당을 벗어나는 규칙들.
 
-    on을 주면 그날 기준 업력·나이를 채운 프로필로 본다. 개업일만 있는 프로필에서 업력 조건이
+    on을 주면 그날 기준 파생 속성(업력·나이 등)을 채운 프로필로 본다. 개업일만 있는 프로필에서 업력 조건이
     "값 없음"으로 빠져 다른 조건 하나만 다른 것처럼 보이지 않게 한다.
     """
     if on is not None:
-        profile = derive_profile(profile, on)
+        profile = derive_profile(profile, on, attributes)
     base = judge(group, profile, min_confidence=min_confidence)
     if base.result != "ineligible":
         return []

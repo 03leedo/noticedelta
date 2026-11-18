@@ -11,6 +11,7 @@ from noticedelta.eligibility.temporal import (
     months_between,
     near_misses,
 )
+from noticedelta.grants import ATTRIBUTES
 
 
 def group(*rules, kind="all_of"):
@@ -48,7 +49,7 @@ def test_age_on_including_leap_day():
 
 def test_derive_profile_fills_age_from_dates():
     p = derive_profile(
-        {"founded_on": "2019-12-01", "ceo_birth_date": "1990-05-01"}, date(2026, 10, 18)
+        {"founded_on": "2019-12-01", "ceo_birth_date": "1990-05-01"}, date(2026, 10, 18), ATTRIBUTES
     )
     assert (p["business_age_months"], p["ceo_age"]) == (82, 36)
 
@@ -56,7 +57,7 @@ def test_derive_profile_fills_age_from_dates():
 def test_timeline_finds_the_day_eligibility_is_lost():
     g = group(AGE7, REGION)
     profile = {"founded_on": "2019-12-01", "region_sido": "부산"}
-    t = eligibility_timeline(g, profile, start=date(2026, 10, 18))
+    t = eligibility_timeline(g, profile, start=date(2026, 10, 18), attributes=ATTRIBUTES)
     assert t.current.result == "eligible"
     ch = t.next_change
     assert (ch.on, ch.before, ch.after) == (date(2027, 1, 1), "eligible", "ineligible")
@@ -67,14 +68,20 @@ def test_timeline_finds_the_day_eligibility_is_lost():
 def test_timeline_stops_at_deadline():
     g = group(AGE7)
     t = eligibility_timeline(
-        g, {"founded_on": "2019-12-01"}, start=date(2026, 10, 18), until=date(2026, 12, 31)
+        g,
+        {"founded_on": "2019-12-01"},
+        start=date(2026, 10, 18),
+        until=date(2026, 12, 31),
+        attributes=ATTRIBUTES,
     )
     assert t.changes == []  # 마감 전에는 바뀌지 않는다
 
 
 def test_timeline_finds_gain_too():
     g = group({"attribute": "ceo_age", "op": ">=", "value": 20})
-    t = eligibility_timeline(g, {"ceo_birth_date": "2007-03-15"}, start=date(2026, 10, 18))
+    t = eligibility_timeline(
+        g, {"ceo_birth_date": "2007-03-15"}, start=date(2026, 10, 18), attributes=ATTRIBUTES
+    )
     assert t.current.result == "ineligible"
     assert (t.next_change.on, t.next_change.after) == (date(2027, 3, 15), "eligible")
 
@@ -82,27 +89,37 @@ def test_timeline_finds_gain_too():
 def test_timeline_two_rules_two_changes():
     g = group(AGE7, CEO39)
     profile = {"founded_on": "2026-01-01", "ceo_birth_date": "1987-02-10"}
-    t = eligibility_timeline(g, profile, start=date(2026, 10, 18), horizon_days=400)
+    t = eligibility_timeline(
+        g, profile, start=date(2026, 10, 18), horizon_days=400, attributes=ATTRIBUTES
+    )
     assert [(c.on, c.after) for c in t.changes] == [(date(2027, 2, 10), "ineligible")]
 
 
 def test_fixed_reference_date_means_no_changes():
     g = group(AGE7)
     t = eligibility_timeline(
-        g, {"founded_on": "2019-12-01"}, start=date(2026, 10, 18), fixed_on=date(2026, 10, 1)
+        g,
+        {"founded_on": "2019-12-01"},
+        start=date(2026, 10, 18),
+        fixed_on=date(2026, 10, 1),
+        attributes=ATTRIBUTES,
     )
     assert t.as_of == date(2026, 10, 1) and t.changes == []
 
 
 def test_timeline_without_dates_is_static():
     g = group(AGE7)
-    t = eligibility_timeline(g, {"business_age_months": 30}, start=date(2026, 10, 18))
+    t = eligibility_timeline(
+        g, {"business_age_months": 30}, start=date(2026, 10, 18), attributes=ATTRIBUTES
+    )
     assert t.current.result == "eligible" and t.changes == []
 
 
 def test_near_miss_single_failing_rule_with_gap():
     g = group(REGION, REVENUE)
-    misses = near_misses(g, {"region_sido": "부산", "revenue_krw": "1,020,000,000"})
+    misses = near_misses(
+        g, {"region_sido": "부산", "revenue_krw": "1,020,000,000"}, attributes=ATTRIBUTES
+    )
     assert [(m.rule.id, m.result_if_met, m.gap) for m in misses] == [
         ("r_rev", "eligible", 20_000_000)
     ]
@@ -110,12 +127,15 @@ def test_near_miss_single_failing_rule_with_gap():
 
 def test_two_failures_are_not_near_misses():
     g = group(REGION, REVENUE)
-    assert near_misses(g, {"region_sido": "서울", "revenue_krw": 2_000_000_000}) == []
+    assert (
+        near_misses(g, {"region_sido": "서울", "revenue_krw": 2_000_000_000}, attributes=ATTRIBUTES)
+        == []
+    )
 
 
 def test_near_miss_may_lead_to_unknown():
     g = group(REGION, CEO39)
-    misses = near_misses(g, {"region_sido": "서울"})  # 나이 정보 없음
+    misses = near_misses(g, {"region_sido": "서울"}, attributes=ATTRIBUTES)  # 나이 정보 없음
     assert [(m.rule.id, m.result_if_met) for m in misses] == [("r_reg", "unknown")]
 
 

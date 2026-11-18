@@ -1,11 +1,11 @@
 import itertools
 
+from noticedelta import grants
 from noticedelta.eligibility import Judgment
 from noticedelta.impact import (
     FieldValue,
     Subscription,
     build_field_source_index,
-    keyword_candidates,
     run_impact,
 )
 from noticedelta.matching import match_segments
@@ -75,6 +75,7 @@ def run(new_doc, results, **kw):
     old_fields, change = setup_versions(new_doc)
     ex = FakeExtractor(results)
     res = run_impact(
+        candidate_detector=grants.candidates,
         program_id="N1",
         to_version_id="V2",
         change=change,
@@ -167,7 +168,7 @@ def test_field_source_index_and_keyword_candidates():
     seg = segment_document(["○ 신청기간: 2026. 10. 1. ~ 10. 31. / 지원금 최대 1억원"], source="b")[
         0
     ]
-    assert {"deadline", "amount"} <= keyword_candidates(seg)
+    assert {"deadline", "amount"} <= grants.candidates(seg)
 
 
 def test_equal_value_reextraction_updates_sources():
@@ -182,6 +183,7 @@ def test_equal_value_reextraction_updates_sources():
         {"deadline": FieldValue("deadline", "datetime", "2026-10-31 18:00", [new_lid])}
     )
     res = run_impact(
+        candidate_detector=grants.candidates,
         program_id="N1",
         to_version_id="V2",
         change=change,
@@ -211,7 +213,7 @@ def test_low_confidence_value_is_flagged_on_alert():
 
 def test_keyword_candidates_ignore_bare_kkaji_and_seoryu():
     def cands(text):
-        return keyword_candidates(segment_document([text], source="b")[0])
+        return grants.candidates(segment_document([text], source="b")[0])
 
     assert "deadline" not in cands("선정 기업은 협약일부터 사업 종료일까지 지원을 받는다")
     assert "required_documents" not in cands("서류 평가와 발표 평가로 선정한다")

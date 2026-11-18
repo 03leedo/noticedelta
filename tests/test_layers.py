@@ -8,13 +8,12 @@
 새 모듈을 만들면 아래 표에 층을 적어야 한다. 폴더는 아직 나누지 않았고(두 번째 팩을 붙일 때 옮긴다),
 이 테스트가 그때까지 경계를 지킨다.
 
-가져다 쓰지는 않지만 엔진·공통 안에 남아 있는 지원사업 지식 (팩 규약을 정할 때 옮긴다):
-- eligibility.rules의 속성 사전(ATTRIBUTES, SIDO)과 eligibility.temporal의 속성 계산(업력, 나이)
-- impact의 낱말 목록(_KEYWORDS)과 규칙 필드 이름(RULES_FIELD)
-- sources.base의 변동 값 이름(_VOLATILE, _ATTACHMENT_URLS)과 snapshot의 updtPnttm
+지원사업 지식은 팩에만 있다: 필드 정의·낱말·자격 속성 사전은 grants, 출처 지식은 어댑터
+(sources.bizinfo·kstartup), 표시 이름은 names. test_no_domain_words_in_platform이 지킨다.
 """
 
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "src" / "noticedelta"
@@ -57,6 +56,7 @@ LAYERS: dict[str, list[str]] = {
     ],
     "팩": [
         "eligibility.synthetic",  # 가상 프로필과 예시 규칙
+        "grants",  # 필드 정의, 필드별 낱말, 자격 속성 사전
         "labeling",
         "llm.extract",  # 지원사업 필드 정의와 프롬프트
         "names",
@@ -117,3 +117,35 @@ def test_lower_layers_do_not_import_upper_layers():
             if theirs is not None and ORDER.index(theirs) > mine:
                 wrong.append(f"{name}({ORDER[mine]}) → {target}({theirs})")
     assert wrong == []
+
+
+# 플랫폼(공통·엔진)의 코드에 나오면 안 되는 지원사업 낱말. 주석·독스트링은 보지 않는다.
+DOMAIN_WORDS = re.compile(
+    r"bizinfo|kstartup|pblanc|pbanc|reqst|flpth|updtPnttm|inqireCo|기업마당|지원사업|업력|창업|"
+    r"founded_on|ceo_|business_age|revenue_krw|region_sido|SIDO|eligibility_rules|"
+    r"required_documents|\"deadline\"|\"contact\""  # "amount"는 값 타입(금액) 이름이라 뺀다
+)
+
+
+def code_lines(path: Path):
+    src = path.read_text(encoding="utf-8")
+    docs = set()
+    for node in ast.walk(ast.parse(src)):
+        body = getattr(node, "body", None)
+        first = body[0] if isinstance(body, list) and body else None
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+            docs |= set(range(first.lineno, first.end_lineno + 1))
+    for no, line in enumerate(src.splitlines(), 1):
+        if no not in docs:
+            yield no, line.split("#", 1)[0]
+
+
+def test_no_domain_words_in_platform():
+    found = [
+        f"{name}:{no}: {code.strip()[:60]}"
+        for name, path in modules()
+        if layer_of(name) in ("공통", "엔진")
+        for no, code in code_lines(path)
+        if DOMAIN_WORDS.search(code) and not code.lstrip().startswith(("from ", "import "))
+    ]
+    assert found == []

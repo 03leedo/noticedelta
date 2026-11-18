@@ -7,10 +7,11 @@ from datetime import date, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
+from noticedelta import grants
 from noticedelta.citation import verify_rule
 from noticedelta.eligibility import Judgment, Rule, RuleGroup, judge
 from noticedelta.eligibility.temporal import derive_profile, near_misses
-from noticedelta.impact import FieldValue, keyword_candidates, run_impact
+from noticedelta.impact import FieldValue, run_impact
 from noticedelta.llm.cassette import FileCassetteStore
 from noticedelta.matching import match_segments
 from noticedelta.segments import Table, segment_document
@@ -32,7 +33,9 @@ def test_nested_empty_group_does_not_pass():
 
 
 def rule(attr, op, value):
-    return Rule(attribute=attr, op=op, value=value)
+    return Rule.model_validate(
+        {"attribute": attr, "op": op, "value": value}, context=grants.RULES_CONTEXT
+    )
 
 
 @pytest.mark.parametrize(
@@ -50,7 +53,7 @@ def rule(attr, op, value):
     ],
 )
 def test_rule_citation_checks_unit_and_direction(r, cited, ok):
-    assert verify_rule(r, [cited]) is ok
+    assert verify_rule(r, [cited], grants.ATTRIBUTES) is ok
 
 
 def test_rule_value_type_must_match_attribute():
@@ -171,6 +174,7 @@ def test_deleted_uncited_clause_is_detected():
     }
     ex = Extractor({})
     run_impact(
+        candidate_detector=grants.candidates,
         program_id="N",
         to_version_id="v2",
         change=change,
@@ -186,7 +190,7 @@ def test_deleted_uncited_clause_is_detected():
 
 def test_table_cell_candidates_use_header_and_row_key():
     seg = segment_document([Table([["구분", "업력"], ["예비", "5년"]])], source="b")[-1]
-    assert "eligibility_rules" in keyword_candidates(seg)
+    assert "eligibility_rules" in grants.candidates(seg)
 
 
 def test_field_not_found_again_becomes_stale():
@@ -195,6 +199,7 @@ def test_field_not_found_again_becomes_stale():
         "deadline": FieldValue("deadline", "datetime", "2026-10-31 18:00", [old[0].lineage_id])
     }
     res = run_impact(
+        candidate_detector=grants.candidates,
         program_id="N",
         to_version_id="v2",
         change=change,
@@ -225,6 +230,7 @@ def test_newly_eligible_user_without_prior_judgment_is_alerted():
         }
     )
     res = run_impact(
+        candidate_detector=grants.candidates,
         program_id="N",
         to_version_id="v2",
         change=change,
@@ -252,7 +258,7 @@ def test_tampered_cassette_is_ignored(tmp_path):
     "founded", [datetime(2019, 11, 1, 9), "2019.11.01", "2019/11/01", "20191101", "2019-11-01"]
 )
 def test_founded_on_accepts_common_date_forms(founded):
-    p = derive_profile({"founded_on": founded}, date(2026, 10, 1))
+    p = derive_profile({"founded_on": founded}, date(2026, 10, 1), grants.ATTRIBUTES)
     assert p["business_age_months"] == 83
 
 
@@ -267,9 +273,13 @@ def test_near_misses_use_derived_profile():
         }
     )
     profile = {"founded_on": "2010-01-01", "revenue_krw": 2_000_000_000}
-    assert near_misses(g, profile, on=date(2026, 10, 1)) == []  # 두 조건 모두 실패
+    assert (
+        near_misses(g, profile, on=date(2026, 10, 1), attributes=grants.ATTRIBUTES) == []
+    )  # 두 조건 모두 실패
     young = {
         "founded_on": str(date(2026, 10, 1) - timedelta(days=400)),
         "revenue_krw": 2_000_000_000,
     }
-    assert [m.rule.id for m in near_misses(g, young, on=date(2026, 10, 1))] == ["rev"]
+    assert [
+        m.rule.id for m in near_misses(g, young, on=date(2026, 10, 1), attributes=grants.ATTRIBUTES)
+    ] == ["rev"]

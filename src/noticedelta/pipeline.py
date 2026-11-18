@@ -34,10 +34,10 @@ from noticedelta.db.models import (
     SubscriptionRow,
 )
 from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
+from noticedelta.grants import RULES_FIELD, candidates
 from noticedelta.history import MATCHER_VERSION, record_program, replay
 from noticedelta.impact import (
     REVIEW_THRESHOLD,
-    RULES_FIELD,
     Extractor,
     FieldValue,
     Subscription,
@@ -300,6 +300,7 @@ def handle_impact(ctx: Context) -> Handler:
             for p in session.scalars(sa.select(Profile).where(Profile.user_id.in_(users)))
         }
         res = run_impact(
+            candidate_detector=candidates,
             program_id=program_id,
             to_version_id=pv.id,
             change=step.change,

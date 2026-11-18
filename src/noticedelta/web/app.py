@@ -28,7 +28,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
 from noticedelta.db.models import Profile
-from noticedelta.eligibility.rules import SIDO
+from noticedelta.grants import SIDO
 from noticedelta.metrics import collect, prometheus_text
 from noticedelta.names import FIELD_NAMES, RESULT_NAMES
 from noticedelta.notify import inbox

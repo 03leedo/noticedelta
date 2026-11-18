@@ -1,6 +1,8 @@
 from noticedelta.eligibility.judge import Judgment, Reason, judge
 from noticedelta.eligibility.rules import (
-    ATTRIBUTES,
+    Attribute,
+    Attributes,
+    Derive,
     ManualCondition,
     Rule,
     RuleGroup,
@@ -17,7 +19,9 @@ from noticedelta.eligibility.temporal import (
 )
 
 __all__ = [
-    "ATTRIBUTES",
+    "Attribute",
+    "Attributes",
+    "Derive",
     "Change",
     "NearMiss",
     "Timeline",

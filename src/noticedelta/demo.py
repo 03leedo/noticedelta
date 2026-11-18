@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from noticedelta.eligibility import RuleGroup, judge
+from noticedelta.grants import candidates
 from noticedelta.impact import Alert, Subscription, run_impact
 from noticedelta.llm import FileCassetteStore, Gateway, LLMRequest, LLMResponse, Mode
 from noticedelta.llm.extract import FIELD_TYPES, LLMExtractor
@@ -133,6 +134,7 @@ def run_demo(
         out(f"  수정 {lid}: {_show(by_id[lid])}")
 
     res = run_impact(
+        candidate_detector=candidates,
         program_id=sc["notice_id"],
         to_version_id=v2["version_id"],
         change=change,

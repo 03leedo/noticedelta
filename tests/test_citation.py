@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from noticedelta.citation import verify_citation, verify_rule
 from noticedelta.eligibility import Rule
+from noticedelta.grants import ATTRIBUTES
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -30,14 +31,14 @@ def test_amount_across_formats():
 
 def test_rule_months_found_as_years():
     rule = Rule(id="r", attribute="business_age_months", op="<=", value=84)
-    assert verify_rule(rule, ["공고일 기준 창업 7년 이내 기업"])
-    assert not verify_rule(rule, ["공고일 기준 창업 5년 이내 기업"])
+    assert verify_rule(rule, ["공고일 기준 창업 7년 이내 기업"], ATTRIBUTES)
+    assert not verify_rule(rule, ["공고일 기준 창업 5년 이내 기업"], ATTRIBUTES)
 
 
 def test_rule_string_values_must_appear():
     rule = Rule(id="r", attribute="region_sido", op="not_in", value=["서울", "경기"])
-    assert verify_rule(rule, ["수도권(서울, 경기) 소재 기업 제외"])
-    assert not verify_rule(rule, ["비수도권 기업"])
+    assert verify_rule(rule, ["수도권(서울, 경기) 소재 기업 제외"], ATTRIBUTES)
+    assert not verify_rule(rule, ["비수도권 기업"], ATTRIBUTES)
 
 
 def test_rules_value_requires_every_rule():
@@ -48,8 +49,8 @@ def test_rules_value_requires_every_rule():
             {"id": "b", "attribute": "business_age_months", "op": "<=", "value": 84},
         ],
     }
-    assert verify_citation("rules", value, ["만 39세 이하", "창업 7년 이내"])
-    assert not verify_citation("rules", value, ["만 39세 이하"])
+    assert verify_citation("rules", value, ["만 39세 이하", "창업 7년 이내"], attributes=ATTRIBUTES)
+    assert not verify_citation("rules", value, ["만 39세 이하"], attributes=ATTRIBUTES)
 
 
 def test_text_is_normalized_substring():
@@ -61,4 +62,6 @@ def test_text_is_normalized_substring():
 
 
 def test_rule_without_cited_text_is_not_verified():
-    assert not verify_rule(Rule(id="p", attribute="is_pre_founder", op="==", value=True), [])
+    assert not verify_rule(
+        Rule(id="p", attribute="is_pre_founder", op="==", value=True), [], ATTRIBUTES
+    )
