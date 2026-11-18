@@ -304,3 +304,20 @@ def test_held_key_recovers_when_values_come_back(env):
     s = summary_run(runs, session, store, many(25, trgetNm="중소기업"))
     assert s.new_program_versions == 0
     assert session.scalar(sa.select(models.SourceDrift.status)) == "recovered"
+
+
+def test_differences_the_adapter_absorbs_are_not_format_changes(env):
+    runs, session, store = env
+
+    def tokened(n, token):
+        out = []
+        for i in range(n):
+            it = item(f"P{i}", f"(가상) 사업 {i}", "기관X", files=["공고문.hwp"])
+            it["flpthNm"] += f"?atchFileId={i}&downloadToken={token}"
+            out.append(it)
+        return out
+
+    summary_run(runs, session, store, tokened(25, "t1"))
+    s = summary_run(runs, session, store, tokened(25, "t2"))  # 토큰만 전부 새로 발급됐다
+    assert s.drift == {} and session.scalar(sa.select(models.SourceDrift)) is None
+    assert s.new_program_versions == 0
