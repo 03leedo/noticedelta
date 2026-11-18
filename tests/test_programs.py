@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.blobstore import LocalBlobStore
 from noticedelta.db import models
-from noticedelta.programs import detect_drift, load_snapshots, title_key
+from noticedelta.programs import load_snapshots, title_key
 from noticedelta.snapshot import run_snapshot
 
 PDF = b"%PDF-1.7 attachment"
@@ -218,17 +218,6 @@ def many(n, **extra):
     return [{**item(f"P{i}", f"(가상) 사업 {i}", "기관X"), **extra} for i in range(n)]
 
 
-def test_detect_drift_needs_many_items_unless_the_key_was_already_held():
-    before = {str(i): {"k": "값", "other": "x"} for i in range(30)}
-    gone = {i: {"k": None, "other": "x"} for i in before}
-    assert detect_drift(before, gone) == {"k": {"lost": 30, "had": 30}}
-    few = dict(list(gone.items())[:5])
-    assert detect_drift(before, few) == {}  # 5건은 형식 변화가 아니라 실제 변경일 수 있다
-    assert detect_drift(before, few, sticky={"k"}) == {"k": {"lost": 5, "had": 5}}
-    half_back = {i: {"k": "값" if int(i) % 3 else None, "other": "x"} for i in before}
-    assert detect_drift(before, half_back, sticky={"k"}) == {}  # 값이 돌아오면 풀린다
-
-
 def test_a_field_vanishing_everywhere_at_once_is_held_not_treated_as_corrections(env):
     runs, session, store = env
     runs.run(many(25, trgetNm="중소기업"))
@@ -236,13 +225,14 @@ def test_a_field_vanishing_everywhere_at_once_is_held_not_treated_as_corrections
     runs.run(many(25, trgetNm=None))
     s = load_snapshots(session, runs.root, store)
     assert s.new_posting_versions == 25 and s.new_program_versions == 25  # 처음 것뿐
-    assert len(s.drift) == 2 and all(
-        d == {"bizinfo": {"trgetNm": {"lost": 25, "had": 25}}} for d in s.drift.values()
-    )
+    assert len(s.drift) == 2
+    assert all(d["bizinfo"]["trgetNm"]["kind"] == "emptied" for d in s.drift.values())
     raws = session.scalars(sa.select(models.NoticeVersion.raw)).all()
     assert all(r["trgetNm"] == "중소기업" for r in raws)  # 마지막으로 본 값을 이어 둔다
     held = session.scalars(sa.select(models.LoadedRun.drift).order_by(models.LoadedRun.name)).all()
-    assert held[0] == {"bizinfo": {}} and held[1]["bizinfo"]["trgetNm"]["lost"] == 25
+    assert held[0] == {"bizinfo": {}} and held[1]["bizinfo"]["trgetNm"]["changed"] == 25
+    row = session.scalar(sa.select(models.SourceDrift))
+    assert (row.status, row.kind, row.runs) == ("held", "emptied", 2)
 
 
 def test_one_posting_losing_a_field_is_still_a_real_change(env):
@@ -253,3 +243,64 @@ def test_one_posting_losing_a_field_is_still_a_real_change(env):
     runs.run(changed)
     s = load_snapshots(session, runs.root, store)
     assert s.new_program_versions == 26 and s.drift == {}
+
+
+def summary_run(runs, session, store, items):
+    runs.run(items)
+    return load_snapshots(session, runs.root, store)
+
+
+def test_a_key_rewritten_everywhere_at_once_is_held_then_released_on_decision(env):
+    from noticedelta import drift
+
+    runs, session, store = env
+    summary_run(runs, session, store, many(25, trgetNm="중소기업"))
+    # 출처가 같은 키의 표기를 통째로 바꿨다(예: 날짜 형식). 정정 25건이 아니라 형식 변화다
+    s = summary_run(runs, session, store, many(25, trgetNm="중소 기업(소상공인 포함)"))
+    assert s.new_program_versions == 0 and s.drift
+    row = session.scalar(sa.select(models.SourceDrift))
+    assert (row.status, row.kind, row.changed, row.compared) == ("held", "changed", 25, 25)
+    assert len(row.samples) == 3
+
+    drift.decide(session, "bizinfo", "trgetNm", drift.RELEASED, "출처가 실제로 대상을 넓혔다")
+    session.commit()
+    s = summary_run(runs, session, store, many(25, trgetNm="중소 기업(소상공인 포함)"))
+    assert s.new_program_versions == 25  # 진짜 변경으로 받았다
+    assert row.status == "closed"
+    s = summary_run(runs, session, store, many(25, trgetNm="중소 기업(소상공인 포함)"))
+    assert s.new_program_versions == 0 and not s.drift
+
+
+def test_ignored_key_is_carried_forward_silently(env):
+    from noticedelta import drift
+
+    runs, session, store = env
+    summary_run(runs, session, store, many(25, trgetNm="중소기업"))
+    summary_run(
+        runs, session, store, many(25, trgetNm="2026-11-18 10:00")
+    )  # 호출마다 바뀌는 값처럼
+    drift.decide(session, "bizinfo", "trgetNm", drift.IGNORED)
+    session.commit()
+    s = summary_run(runs, session, store, many(25, trgetNm="2026-11-18 16:00"))
+    assert s.new_program_versions == 0 and drift.pending(session) == []
+    changed = many(25, trgetNm="2026-11-18 22:00")
+    changed[0]["pblancNm"] = "(가상) 사업 0 (변경)"  # 다른 키의 변경은 그대로 보인다
+    s = summary_run(runs, session, store, changed)
+    assert s.new_program_versions == 1
+
+
+def test_a_key_newly_filled_everywhere_is_held(env):
+    runs, session, store = env
+    summary_run(runs, session, store, many(25))
+    s = summary_run(runs, session, store, many(25, newKey="출처가 새로 주기 시작한 값"))
+    assert s.new_program_versions == 0
+    assert session.scalar(sa.select(models.SourceDrift.kind)) == "filled"
+
+
+def test_held_key_recovers_when_values_come_back(env):
+    runs, session, store = env
+    summary_run(runs, session, store, many(25, trgetNm="중소기업"))
+    summary_run(runs, session, store, many(25, trgetNm=None))
+    s = summary_run(runs, session, store, many(25, trgetNm="중소기업"))
+    assert s.new_program_versions == 0
+    assert session.scalar(sa.select(models.SourceDrift.status)) == "recovered"
