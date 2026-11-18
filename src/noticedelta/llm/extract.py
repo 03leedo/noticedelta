@@ -12,7 +12,8 @@ from collections.abc import Sequence
 from pydantic import ValidationError
 
 from noticedelta.citation import verify_citation, verify_rule
-from noticedelta.eligibility import ATTRIBUTES, Rule, RuleGroup
+from noticedelta.eligibility import Rule, RuleGroup
+from noticedelta.grants import ATTRIBUTES, FIELD_GUIDE, FIELD_TYPES, RULES_CONTEXT
 from noticedelta.impact import FieldValue
 from noticedelta.llm.anthropic_provider import DEFAULT_MODEL
 from noticedelta.llm.gateway import Gateway, LLMRequest
@@ -20,22 +21,6 @@ from noticedelta.segments import Segment
 
 TEMPLATE_VERSION = "extract-v1"
 LOW_CONFIDENCE = 0.3
-
-FIELD_TYPES: dict[str, str] = {
-    "deadline": "datetime",
-    "amount": "amount",
-    "eligibility_rules": "rules",
-    "required_documents": "list",
-    "contact": "text",
-}
-
-FIELD_GUIDE: dict[str, str] = {
-    "deadline": '신청 마감 일시. "YYYY-MM-DD HH:MM" 문자열 (시각이 없으면 "YYYY-MM-DD")',
-    "amount": "기업당 최대 지원 금액. 원 단위 정수",
-    "eligibility_rules": "신청 자격 규칙. 아래 규칙 형식의 JSON 객체",
-    "required_documents": "제출 서류 이름 목록. 문자열 배열",
-    "contact": "문의처. 문자열",
-}
 
 SYSTEM_PROMPT = f"""너는 한국 정부 지원사업 공고에서 정해진 필드만 뽑는 추출기다.
 입력의 각 줄은 `[조각ID] 원문`이다. 요청된 필드만 뽑고, 값마다 근거가 된 조각ID를 sources에 적는다.
@@ -141,12 +126,12 @@ class LLMExtractor:
         vtype = FIELD_TYPES[name]
         if vtype == "rules":
             try:
-                group = RuleGroup.model_validate(value)
+                group = RuleGroup.model_validate(value, context=RULES_CONTEXT)
             except ValidationError:
                 return None
             for rule in _iter_rules(group):
                 rule: Rule
-                if not verify_rule(rule, cited):
+                if not verify_rule(rule, cited, ATTRIBUTES):
                     rule.confidence = min(rule.confidence, LOW_CONFIDENCE)
             # 규칙이 하나도 없으면 믿지 않는다. 판정기도 빈 그룹을 확인 필요로 본다.
             confs = [r.confidence for r in _iter_rules(group)] or [LOW_CONFIDENCE]

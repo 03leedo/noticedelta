@@ -61,6 +61,7 @@ def ingest_record(
                 source=rec.source,
                 breaker=breaker,
                 limiter=limiter,
+                allowed_hosts=rec.attachment_hosts,
             )
         except CircuitOpen:
             result.failed.append((att.filename, "서킷 열림"))

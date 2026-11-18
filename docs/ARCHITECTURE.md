@@ -387,15 +387,21 @@ web/                 앱 화면
 |---|---|
 | 공통 | `blobstore` `config` `db`(모델·마이그레이션) `document` `jobs` `llm`(게이트웨이·녹화본·하네스) `metrics` `notify` `parsing` `snapshot` `sources.base·http·resilience·attachments` `text` `tooling` `mcp_adapter` |
 | 엔진 | `segments` `matching` `values` `citation` `impact` `history` `ingest` `eligibility`(규칙·판정·대량 판정) `evaluation` `doc_tools` `item_tools` `db.repo` |
-| 팩 (지원사업) | `sources.bizinfo·kstartup` `llm.extract`(필드 정의·프롬프트) `programs`(사업 묶기) `names` `labeling` `eligibility.synthetic` |
+| 팩 (지원사업) | `grants`(필드 정의·낱말·자격 속성 사전) `sources.bizinfo·kstartup`(출처 지식) `llm.extract`(프롬프트) `programs`(사업 묶기) `names` `labeling` `eligibility.synthetic` |
 | 앱 | `web` `demo` `pipeline`(조립) |
 
 팩이 엔진·공통에 넘겨 주는 것: 알림 본문의 표시 이름(`notify.render`의 `labels`), 평가할 필드 정의(`evaluation.Fields`), 출처 API의 구조화 값 읽기(`load_chains`의 `meta`).
 
-가져다 쓰지는 않지만 엔진·공통 안에 남아 있는 지원사업 지식 (두 번째 팩과 함께 팩 규약을 정할 때 옮긴다):
-- `eligibility.rules`의 속성 사전과 `eligibility.temporal`의 속성 계산(업력, 나이)
-- `impact`의 낱말 목록(`_KEYWORDS`)과 규칙 필드 이름
-- `sources.base`의 변동 값 이름, `snapshot`의 `updtPnttm`
+엔진·공통에는 지원사업 지식이 없다(2026-11-18 정리, `tests/test_layers.py`의 `test_no_domain_words_in_platform`이 지킨다). 지원사업 지식은 팩에만 있다.
+
+| 지식 | 있는 곳 | 엔진·공통이 받는 방법 |
+|---|---|---|
+| 필드 정의, 필드별 낱말, 규칙 필드 이름 | `grants` | 영향 계산은 후보 찾기(`keyword_detector`)를 넘겨받고, 규칙식 필드는 값 타입(`rules`)으로 알아낸다 |
+| 자격 속성 사전(타입, 단위, 배수, 금액 표기, 파생 속성) | `grants.ATTRIBUTES` | 규칙 검증(`context`), 인용 검증, 시간에 따른 자격이 인자로 받는다. 대량 판정 SQL은 규칙 값의 타입을 쓴다 |
+| 출처 지식(무시할 키, 첨부 주소 키, 토큰, 허용 호스트) | 어댑터(`sources.bizinfo`, `kstartup`) | 레코드(`NoticeRecord`)가 들고 온다 |
+| 표시 이름 | `names` | 알림 발송이 `labels`로 받는다 |
+
+`grants`는 앱 정의 한 장의 코드판이다. app-spec.md 13장의 2번 단계에서 데이터(파일 → DB)가 된다.
 
 ---
 
@@ -425,7 +431,7 @@ web/                 앱 화면
 
 | 순서 | 공통 기능 | 지금 | 할 일 | 완료 기준 |
 |---|---|---|---|---|
-| 1 | 층 경계 | **완료** (`tests/test_layers.py`, 9장의 표) | 남은 것: 엔진·공통 안의 지원사업 지식 세 가지를 팩으로(9장). 팩 규약을 정할 때 한다 | 플랫폼 공통·엔진이 도메인 팩과 앱을 가져다 쓰지 않는다 |
+| 1 | 층 경계 | **완료** (`tests/test_layers.py`, 9장의 표). 엔진·공통의 지원사업 지식도 팩으로 옮겼다(2026-11-18) | | 플랫폼 공통·엔진이 도메인 팩과 앱을 가져다 쓰지 않는다 |
 | 2 | MCP 서버 | **공통 기능·조회 도구 완료** (docs/mcp.md) | 남은 것: B가 붙는 도구(`check`, `explain`, `get_profile`)와 구독(3번 게이트웨이와 함께), 앱을 만드는 조종 도구(앱 정의 규격 뒤) | 외부 에이전트가 MCP로 플랫폼 기능을 쓴다 |
 | 3 | 도구 게이트웨이 | 없음 | 능력 선언, 세션 상태, 전이 시점 정책, 보류 후 확정(7장) | B·C 속성 도구가 게이트웨이를 거쳐야만 불린다 |
 | 4 | 개인정보 금고 | 프로필이 앱 테이블에 있다 | 용도별 동의, 범위를 줄인 토큰, 보관 기한 | `get_profile(scope)`가 범위 밖 값을 주지 않는다 |
@@ -485,3 +491,4 @@ web/                 앱 화면
 | 2026-11-17 | v0.3 | 출처 형식 변화 대응과 MCP 서버(읽기 도구)를 "지금 있는 것"에 적음 |
 | 2026-11-17 | v0.3 | 앱 정의 규격 초안(app-spec.md)을 4장과 10.1에 연결 |
 | 2026-11-17 | v0.3 | 설계 검토 보완: 출처 카탈로그 규격(source-catalog.md), 앱 정의에 엔진 칸·권한·알림 채널·판 바꾸기·예산·상태 보고 (app-spec.md v0.1) |
+| 2026-11-18 | v0.3 | 엔진·공통에 남은 지원사업 지식을 팩(grants, 어댑터)으로 옮김(9장) |

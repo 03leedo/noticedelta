@@ -25,6 +25,8 @@ def rec(ext, deadline="2026-11-07", files=(), views=1):
             "inqireCo": views,
             "updtPnttm": "2026-10-23 01:00:00",
         },
+        ignore=frozenset({"inqireCo", "updtPnttm"}),  # 출처가 정한 "바뀌어도 변경이 아닌 키"
+        attachment_hosts=frozenset({"www.bizinfo.go.kr"}),
     )
 
 
@@ -46,8 +48,14 @@ def http_with(files, calls):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_canonical_item_ignores_volatile_fields():
-    assert canonical_item({"a": 1, "inqireCo": 5, "updtPnttm": "x"}) == canonical_item({"a": 1})
+def test_canonical_item_ignores_the_keys_the_source_names():
+    volatile = {"inqireCo", "updtPnttm"}
+    assert canonical_item({"a": 1, "inqireCo": 5, "updtPnttm": "x"}, volatile) == canonical_item(
+        {"a": 1}
+    )
+    assert canonical_item({"a": 1, "inqireCo": 5}) != canonical_item(
+        {"a": 1}
+    )  # 출처가 안 정하면 그대로
 
 
 def test_paginates_until_short_page(tmp_path):
@@ -203,7 +211,7 @@ def test_reissued_download_tokens_do_not_refetch_attachments(tmp_path):
     def tokened(token):
         r = rec("A", files=["a.pdf"])
         url = f"https://www.bizinfo.go.kr/f/a.pdf?atchFileId=1&downloadToken={token}"
-        r.attachments = [AttachmentRef("a.pdf", url)]
+        r.attachments = [AttachmentRef("a.pdf", url, drop_params=("downloadToken",))]
         return r
 
     run_snapshot({"bizinfo": pages([tokened("t1")])}, http=http, root=tmp_path)

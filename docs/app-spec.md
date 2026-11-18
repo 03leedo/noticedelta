@@ -261,7 +261,7 @@ labels:
 | 어댑터 `to_record`의 본문 키 목록 | 앱 `sources[].read` |
 | `programs.api_meta`, 변동 값, 재게시 묶기 | 출처 카탈로그(source-catalog.md 7장) |
 
-옮기고 나면 ARCHITECTURE 9장의 "엔진·공통 안에 남은 지원사업 지식"이 없어진다.
+2026-11-18에 코드 안에서 먼저 옮겼다: 엔진·공통이 받던 지식은 지원사업 팩(`grants`)과 어댑터로 갔고, 엔진·공통은 인자로 받는다(ARCHITECTURE 9장). 2번 단계는 `grants`를 데이터(앱 정의 한 장)로 바꾸는 일만 남는다.
 
 ## 13. 만드는 순서 (초안)
 

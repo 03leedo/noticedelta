@@ -3,6 +3,7 @@ import sqlalchemy as sa
 from pydantic import ValidationError
 
 from noticedelta.eligibility import RuleGroup, judge, to_sql_where
+from noticedelta.grants import RULES_CONTEXT
 
 BASE = {
     "group": "all_of",
@@ -133,7 +134,8 @@ def test_unknown_attribute_rejected():
             {
                 "group": "all_of",
                 "rules": [{"id": "x", "attribute": "favorite_color", "op": "==", "value": "blue"}],
-            }
+            },
+            context=RULES_CONTEXT,  # 믿을 수 없는 입력은 속성 사전을 주고 검사한다
         )
 
 
@@ -208,3 +210,13 @@ def test_uncoercible_value_stays_unknown():
         {"group": "all_of", "rules": [{"attribute": "is_pre_founder", "op": "==", "value": True}]}
     )
     assert judge(g, {"is_pre_founder": "모름"}).result == "unknown"
+
+
+def test_without_an_attribute_dictionary_only_the_shape_is_checked():
+    g = RuleGroup.model_validate(
+        {
+            "group": "all_of",
+            "rules": [{"id": "x", "attribute": "favorite_color", "op": "==", "value": "blue"}],
+        }
+    )
+    assert judge(g, {"favorite_color": "blue"}).result == "eligible"  # 엔진은 속성 이름을 모른다

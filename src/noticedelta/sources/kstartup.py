@@ -17,6 +17,8 @@ from noticedelta.sources.base import NoticeRecord, normalize_service_key
 from noticedelta.sources.http import get_json
 from noticedelta.sources.resilience import CircuitBreaker, RateLimiter
 
+# 바뀌어도 변경이 아닌 키: 행 번호(id) 등. 기업마당과 같은 묶음을 쓴다(지금까지의 해시와 같게)
+IGNORE = frozenset({"id", "totCnt", "inqireCo", "updtPnttm"})
 ENDPOINT = "https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
 
 _BODY_FIELDS = [
@@ -71,6 +73,7 @@ def to_record(item: dict) -> NoticeRecord:
         apply_end=end,
         attachments=[],
         raw=item,
+        ignore=IGNORE,
     )
 
 

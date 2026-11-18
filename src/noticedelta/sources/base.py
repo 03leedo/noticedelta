@@ -4,23 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from urllib.parse import unquote
 
 from noticedelta.text import canonical_text
 
-_VOLATILE = {"id", "totCnt", "inqireCo", "updtPnttm"}
-# 기업마당 첨부 주소. 파일이 그대로여도 주소를 한꺼번에 새로 발급한다(2026-10-30, 1,491건 전부).
-# 게시물 버전은 주소가 바뀌면 새로 만들지만(첨부를 새 주소로 다시 받아야 하므로),
-# 사업 버전은 받은 첨부의 내용 해시로 비교하므로 주소를 빼고 본다.
-_ATTACHMENT_URLS = {"flpthNm", "printFlpthNm"}
-# 호출할 때마다 새로 발급되는 URL 쿼리 값. 주소를 비교·저장할 때는 뺀다.
-# downloadToken: 기업마당이 2026-10-30부터 첨부 주소에 붙이는 내려받기 토큰(JWT, 발급 시각이 들어 있다).
-_VOLATILE_QUERY = {"downloadToken"}
 
-
-def stable_url(url: str) -> str:
-    """호출마다 바뀌는 쿼리 값을 뺀 주소. 같은 파일이면 같은 문자열이다.
+def stable_url(url: str, drop: Iterable[str] = ()) -> str:
+    """호출마다 바뀌는 쿼리 값(drop)을 뺀 주소. 같은 파일이면 같은 문자열이다.
 
     비교·저장에만 쓴다. 실제로 받을 때는 토큰이 붙은 원래 주소를 쓴다.
     다시 인코딩하지 않고 문자열에서 그 값만 잘라 내, 토큰이 없던 때의 주소와 똑같아지게 한다.
@@ -29,7 +21,8 @@ def stable_url(url: str) -> str:
     if not sep:
         return url
     query, hash_sep, fragment = rest.partition("#")
-    kept = [p for p in query.split("&") if p.split("=", 1)[0] not in _VOLATILE_QUERY]
+    drop = set(drop)
+    kept = [p for p in query.split("&") if p.split("=", 1)[0] not in drop]
     return head + ("?" + "&".join(kept) if kept else "") + hash_sep + fragment
 
 
@@ -41,15 +34,6 @@ def _raw_hash(raw: dict, skip: set[str], *, canonical: bool = False) -> str:
         kept = {k: v for k, v in kept.items() if v not in (None, "")}
     canonical = json.dumps(kept, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def body_hash(raw: dict) -> str:
-    """첨부 주소를 빼고 표기 차이를 지운 원본 항목의 해시. 사업 버전 비교에 쓴다(programs.composite_hash).
-
-    게시물 버전의 해시(content_hash)는 원본 그대로 계산한다. 원본이 글자 하나라도 다르면 게시물
-    버전으로 남기고, 내용이 같으면 사업 버전은 만들지 않는다.
-    """
-    return _raw_hash(raw, _VOLATILE | _ATTACHMENT_URLS, canonical=True)
 
 
 def normalize_service_key(key: str) -> str:
@@ -74,12 +58,13 @@ class TransientSourceError(SourceError):
 class AttachmentRef:
     filename: str
     url: str
-    role: str = "attachment"  # notice(공고문 본 파일) / attachment(붙임 서식 등)
+    role: str = "attachment"  # notice(본 문서) / attachment(붙임 서식 등)
+    drop_params: tuple[str, ...] = ()  # 주소에서 호출마다 바뀌는 쿼리 값 (출처가 정한다)
 
     @property
     def key(self) -> str:
         """이 첨부를 가리키는 변하지 않는 주소 (수집 기록·DB에 남기는 값)."""
-        return stable_url(self.url)
+        return stable_url(self.url, self.drop_params)
 
 
 @dataclass
@@ -94,13 +79,20 @@ class NoticeRecord:
     apply_end: str | None  # YYYY-MM-DD
     attachments: list[AttachmentRef] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
+    # 아래는 출처가 정한다(어댑터의 to_record). 출처 카탈로그(source-catalog.md)의 코드판이다.
+    ignore: frozenset[str] = frozenset()  # 바뀌어도 변경이 아닌 키(조회수, 일괄 수정 시각 등)
+    url_keys: frozenset[str] = frozenset()  # 첨부 주소가 든 키. 항목 버전은 받은 파일로 비교한다
+    attachment_hosts: frozenset[str] = frozenset()  # 첨부를 받아도 되는 호스트. 비면 받지 않는다
 
     @property
     def content_hash(self) -> str:
-        """원본 응답 항목의 해시. 내용과 무관한 값은 빼고 계산한다.
+        """원본 응답 항목의 해시. 내용과 무관한 값(ignore)은 빼고 계산한다. 게시물 버전을 가른다."""
+        return _raw_hash(self.raw, set(self.ignore))
 
-        - id(K-Startup 행 번호), totCnt, inqireCo(조회수)
-        - updtPnttm(기업마당 수정 시각): 여러 공고가 같은 초에 함께 바뀌는 일괄 갱신이 있어
-          내용이 그대로여도 값이 바뀐다 (docs/research/api-responses.md).
+    @property
+    def body_hash(self) -> str:
+        """첨부 주소까지 빼고 표기 차이를 지운 해시. 항목(사업) 버전 비교에 쓴다(programs.composite_hash).
+
+        원본이 글자 하나라도 다르면 게시물 버전으로는 남기고, 내용이 같으면 항목 버전은 만들지 않는다.
         """
-        return _raw_hash(self.raw, _VOLATILE)
+        return _raw_hash(self.raw, set(self.ignore | self.url_keys), canonical=True)

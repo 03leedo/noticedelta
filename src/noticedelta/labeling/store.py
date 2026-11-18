@@ -24,7 +24,7 @@ from noticedelta.db.models import (
     ProgramVersion,
 )
 from noticedelta.llm.extract import FIELD_TYPES
-from noticedelta.sources.base import _VOLATILE
+from noticedelta.sources import bizinfo, kstartup
 
 FIELDS = tuple(FIELD_TYPES)
 STATUSES = {
@@ -92,7 +92,7 @@ def _show(v) -> str:
 
 
 def _api_rows(before: dict, after: dict) -> list[tuple[str, str, str, bool]]:
-    keys = sorted((set(before) | set(after)) - _VOLATILE)
+    keys = sorted((set(before) | set(after)) - (bizinfo.IGNORE | kstartup.IGNORE))
     rows = [(k, _show(before.get(k)), _show(after.get(k))) for k in keys]
     rows = [(k, b, a, b != a) for k, b, a in rows]
     return sorted(rows, key=lambda r: not r[3])  # 바뀐 키를 위로

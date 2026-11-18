@@ -7,6 +7,7 @@ import pytest
 from conftest import sqlite_engine
 from sqlalchemy.orm import Session
 
+from noticedelta import grants
 from noticedelta.blobstore import LocalBlobStore
 from noticedelta.db import models
 from noticedelta.eligibility import Judgment
@@ -46,6 +47,7 @@ def record(deadline):
         apply_end=deadline,
         attachments=[AttachmentRef("공고문.pdf", f"{HOST}/f/a.pdf", role="notice")],
         raw={"pblancId": "P1", "end": deadline},
+        attachment_hosts=frozenset({"www.bizinfo.go.kr"}),
     )
 
 
@@ -105,6 +107,7 @@ def test_unreadable_attachment_is_unknown_not_removed(session, tmp_path):
     }
     fields = {"eligibility_rules": FieldValue("eligibility_rules", "rules", rules, [rules_lid])}
     res = run_impact(
+        candidate_detector=grants.candidates,
         program_id="PG1",
         to_version_id="v2",
         change=change,

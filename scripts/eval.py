@@ -31,6 +31,7 @@ from noticedelta.evaluation import (  # noqa: E402
     load_labels,
     render,
 )
+from noticedelta.grants import KEYWORDS  # noqa: E402
 from noticedelta.llm import AnthropicProvider, FileCassetteStore, Gateway, Mode  # noqa: E402
 from noticedelta.llm.extract import (  # noqa: E402
     DIFF_SYSTEM,
@@ -59,7 +60,9 @@ def main() -> None:
         return LLMExtractor(Gateway(provider, store, mode, harnesses=harnesses))
 
     # 지원사업 팩의 필드 정의. API가 구조화해 주는 것은 접수 기간뿐이다
-    spec = Fields(FIELD_TYPES, FIELD_GUIDE, meta=("deadline",), diff_system=DIFF_SYSTEM)
+    spec = Fields(
+        FIELD_TYPES, FIELD_GUIDE, meta=("deadline",), diff_system=DIFF_SYSTEM, keywords=KEYWORDS
+    )
     plain, diff_gateway = extractor(), Gateway(provider, store, mode)
     methods = {
         "B0 메타 비교": lambda: B0Meta(spec),

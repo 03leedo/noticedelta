@@ -5,7 +5,8 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from noticedelta.eligibility.rules import SIDO, RuleGroup
+from noticedelta.eligibility.rules import RuleGroup
+from noticedelta.grants import SIDO
 
 
 def virtual_profiles(n: int, seed: int = 42, *, messy: float = 0.05) -> list[dict[str, Any]]:

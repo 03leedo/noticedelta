@@ -54,15 +54,25 @@ def _period(v: str | None) -> tuple[str | None, str | None]:
     return out[0], out[1]
 
 
+# 출처 지식 (source-catalog.md의 ignore·attachments). docs/research/api-responses.md
+# - 조회수(inqireCo), 일괄 수정 시각(updtPnttm)은 내용이 그대로여도 바뀐다
+IGNORE = frozenset({"id", "totCnt", "inqireCo", "updtPnttm"})
+# - 첨부 주소. 파일이 그대로여도 주소를 한꺼번에 새로 발급한다(2026-10-30, 1,491건 전부)
+URL_KEYS = frozenset({"flpthNm", "printFlpthNm"})
+# - 2026-10-30부터 첨부 주소에 붙는 내려받기 토큰(JWT, 발급 시각이 들어 있다). 호출마다 다르다
+DROP_PARAMS = ("downloadToken",)
+ATTACHMENT_HOSTS = frozenset({"www.bizinfo.go.kr", "bizinfo.go.kr"})
+
+
 def _attachments(item: dict) -> list[AttachmentRef]:
     out = []
     name, url = (item.get("printFileNm") or "").strip(), (item.get("printFlpthNm") or "").strip()
     if name and url:
-        out.append(AttachmentRef(name, url, role="notice"))
+        out.append(AttachmentRef(name, url, role="notice", drop_params=DROP_PARAMS))
     names = (item.get("fileNm") or "").split("@")
     urls = (item.get("flpthNm") or "").split("@")
     out += [
-        AttachmentRef(n.strip(), u.strip())
+        AttachmentRef(n.strip(), u.strip(), drop_params=DROP_PARAMS)
         for n, u in zip(names, urls, strict=False)
         if n.strip() and u.strip()
     ]
@@ -97,14 +107,14 @@ def _stable_urls(value):
     """'@'로 이어진 첨부 주소에서 호출마다 바뀌는 값(내려받기 토큰)을 뺀다."""
     if not isinstance(value, str) or not value:
         return value
-    return "@".join(stable_url(u) for u in value.split("@"))
+    return "@".join(stable_url(u, DROP_PARAMS) for u in value.split("@"))
 
 
 def to_record(item: dict) -> NoticeRecord:
     # 원본 항목(raw)에는 토큰을 뺀 주소를 남긴다. 토큰은 호출마다 새로 발급돼, 그대로 두면
     # 파일이 같아도 매번 "바뀐 공고"가 된다. 받을 때 쓰는 주소(attachments)에는 토큰을 둔다.
     raw = dict(item)
-    for k in ("flpthNm", "printFlpthNm"):
+    for k in URL_KEYS:
         if k in raw:
             raw[k] = _stable_urls(raw[k])
     start, end = _period(item.get("reqstBeginEndDe"))
@@ -128,6 +138,9 @@ def to_record(item: dict) -> NoticeRecord:
         apply_end=end,
         attachments=_attachments(item),
         raw=raw,
+        ignore=IGNORE,
+        url_keys=URL_KEYS,
+        attachment_hosts=ATTACHMENT_HOSTS,
     )
 
 

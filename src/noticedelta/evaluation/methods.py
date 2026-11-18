@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from noticedelta.evaluation.dataset import EvalEvent
-from noticedelta.impact import Extractor, FieldValue, run_impact
+from noticedelta.impact import Extractor, FieldValue, keyword_detector, run_impact
 from noticedelta.llm.anthropic_provider import DEFAULT_MODEL
 from noticedelta.llm.gateway import Gateway, LLMRequest, MissingCassette
 from noticedelta.segments import Segment
@@ -43,6 +43,7 @@ class Fields:
     guide: Mapping[str, str] = field(default_factory=dict)  # LLM에 보여 줄 필드 설명 (B3)
     meta: Sequence[str] = ()  # 출처 API가 구조화해 주는 필드 (B0가 비교한다)
     diff_system: str = ""  # B3의 지시문
+    keywords: Mapping[str, str] = field(default_factory=dict)  # 필드별 낱말 (엔진의 후보 찾기)
 
 
 class Method(Protocol):
@@ -135,6 +136,7 @@ class Engine(_WithState):
             change=ev.change,
             old_fields=self.fields,
             extractor=self.meter,
+            candidate_detector=keyword_detector(self.spec.keywords, self.spec.types),
             subscriptions=[],
             profiles={},
             old_judgments={},

@@ -23,7 +23,7 @@ from noticedelta.eligibility.temporal import (
     eligibility_timeline,
     near_misses,
 )
-from noticedelta.impact import RULES_FIELD
+from noticedelta.grants import ATTRIBUTES, RULES_FIELD
 
 GROUPS = ("eligible", "near", "unknown")
 GROUP_NAMES = {"eligible": "해당", "near": "거의 해당", "unknown": "확인 필요"}
@@ -122,8 +122,10 @@ def my_programs(session: Session, profile: dict[str, Any], today: date) -> MyPro
         if deadline is not None and deadline < today:
             continue  # 마감이 지난 사업은 보이지 않는다
         rules = RuleGroup.model_validate(fields[RULES_FIELD].value)
-        current = judge(rules, derive_profile(profile, today))
-        timeline = eligibility_timeline(rules, profile, start=today, until=deadline)
+        current = judge(rules, derive_profile(profile, today, ATTRIBUTES))
+        timeline = eligibility_timeline(
+            rules, profile, attributes=ATTRIBUTES, start=today, until=deadline
+        )
         lids = set(fields[RULES_FIELD].source_lineage_ids) | {
             r.source for r in current.reasons if r.source
         }
@@ -136,7 +138,7 @@ def my_programs(session: Session, profile: dict[str, Any], today: date) -> MyPro
             judgment=current,
             sources=_source_texts(session, pv, lids),
             next_change=timeline.next_change,
-            near=near_misses(rules, profile, on=today),
+            near=near_misses(rules, profile, attributes=ATTRIBUTES, on=today),
         )
         if view.group is None:
             hidden += 1

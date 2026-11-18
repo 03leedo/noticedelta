@@ -15,6 +15,8 @@ HWPX = b"PK\x03\x04" + b"\x00" * 26 + b"mimetypeapplication/hwp+zip" + b"\x00" *
 PDF = b"%PDF-1.7\n..."
 BASE = "https://www.bizinfo.go.kr/files/"
 
+HOSTS = frozenset({"www.bizinfo.go.kr"})
+
 
 @pytest.fixture
 def session():
@@ -48,6 +50,7 @@ def record(attachments, deadline="2026-11-07"):
         apply_end=deadline,
         attachments=[AttachmentRef(n, BASE + n) for n in attachments],
         raw={"pblancId": "PBLN_X", "end": deadline, "files": attachments},
+        attachment_hosts=frozenset({"www.bizinfo.go.kr"}),
     )
 
 
@@ -119,9 +122,16 @@ def test_download_rejects_html_and_oversize(tmp_path):
     store = LocalBlobStore(tmp_path)
     http = http_with({"err.hwp": b"<html>login</html>", "big.pdf": PDF + b"x" * 100})
     with pytest.raises(SourceError, match="HTML"):
-        download_attachment(http, AttachmentRef("err.hwp", BASE + "err.hwp"), store, source="t")
+        download_attachment(
+            http, AttachmentRef("err.hwp", BASE + "err.hwp"), store, source="t", allowed_hosts=HOSTS
+        )
     with pytest.raises(SourceError, match="너무 큼"):
         download_attachment(
-            http, AttachmentRef("big.pdf", BASE + "big.pdf"), store, source="t", max_bytes=50
+            http,
+            AttachmentRef("big.pdf", BASE + "big.pdf"),
+            store,
+            source="t",
+            allowed_hosts=HOSTS,
+            max_bytes=50,
         )
     assert not list(tmp_path.rglob("*"))  # 아무것도 저장하지 않았다

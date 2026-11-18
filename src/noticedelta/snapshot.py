@@ -28,7 +28,7 @@ import httpx
 
 from noticedelta.blobstore import BlobStore, LocalBlobStore
 from noticedelta.sources.attachments import download_attachment
-from noticedelta.sources.base import _VOLATILE, NoticeRecord, SourceError, TransientSourceError
+from noticedelta.sources.base import NoticeRecord, SourceError, TransientSourceError
 from noticedelta.sources.resilience import CircuitBreaker, CircuitOpen, RateLimiter
 
 PER_PAGE = 100
@@ -53,9 +53,10 @@ class RunSummary:
     ok: bool
 
 
-def canonical_item(raw: dict) -> bytes:
-    """내용과 무관한 값(조회수, 행 번호, 일괄 수정 시각)을 뺀 정규 JSON."""
-    kept = {k: v for k, v in raw.items() if k not in _VOLATILE}
+def canonical_item(raw: dict, ignore: Iterable[str] = ()) -> bytes:
+    """내용과 무관한 값(출처가 정한 ignore: 조회수, 행 번호 등)을 뺀 정규 JSON."""
+    ignore = set(ignore)
+    kept = {k: v for k, v in raw.items() if k not in ignore}
     return json.dumps(kept, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
 
@@ -105,7 +106,9 @@ def snapshot_source(
 ) -> SourceResult:
     result = SourceResult(name)
     for rec in records:
-        item_key = store.put(canonical_item(rec.raw), content_type="application/json").key
+        item_key = store.put(
+            canonical_item(rec.raw, rec.ignore), content_type="application/json"
+        ).key
         atts = []
         for ref in rec.attachments:
             hit = index.get(ref.key, rec.content_hash)
@@ -120,7 +123,13 @@ def snapshot_source(
                 }
                 try:
                     stored = download_attachment(
-                        http, ref, store, source=name, limiter=limiter, breaker=breaker
+                        http,
+                        ref,
+                        store,
+                        source=name,
+                        limiter=limiter,
+                        breaker=breaker,
+                        allowed_hosts=rec.attachment_hosts,
                     )
                     record.update(blob_key=stored.blob_key, mime=stored.mime, size=stored.size)
                     result.attachments_fetched += 1
@@ -141,7 +150,6 @@ def snapshot_source(
                 "content_hash": rec.content_hash,
                 "item_key": item_key,
                 "changed": previous.get(rec.external_id) != rec.content_hash,
-                "updated_at": rec.raw.get("updtPnttm"),
                 "attachments": atts,
             }
         )

@@ -21,7 +21,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.functions import GenericFunction
 
 from noticedelta.eligibility.judge import FALSE_WORDS, NUMBER, TRUE_WORDS
-from noticedelta.eligibility.rules import ATTRIBUTES, Rule, RuleGroup, ruleset_hash
+from noticedelta.eligibility.rules import Rule, RuleGroup, ruleset_hash
 
 Column = Callable[[str], ColumnElement]
 
@@ -160,9 +160,7 @@ def reasons_json(
                     )
                 )
         if not g.rules and not g.manual:
-            items.append(
-                obj(None, "missing", "자격 규칙이 하나도 없음 (공고 원문 확인 필요)", None)
-            )
+            items.append(obj(None, "missing", "규칙이 하나도 없음 (원문 확인 필요)", None))
         for m in g.manual:
             items.append(obj(None, "manual", f"직접 확인 필요: {m.text}", m.source))
 
@@ -177,7 +175,25 @@ def reasons_json(
     return out
 
 
-def jsonb_attribute(attributes: ColumnElement, attr: str) -> ColumnElement:
+def _walk(group: RuleGroup):
+    for node in group.rules:
+        if isinstance(node, RuleGroup):
+            yield from _walk(node)
+        else:
+            yield node
+
+
+def value_type(rule: Rule) -> type:
+    """규칙 값의 타입: 모두 참/거짓이면 bool, 모두 수면 int, 아니면 str."""
+    values = rule.value if isinstance(rule.value, list) else [rule.value]
+    if values and all(isinstance(v, bool) for v in values):
+        return bool
+    if values and all(isinstance(v, int | float) and not isinstance(v, bool) for v in values):
+        return int
+    return str
+
+
+def jsonb_attribute(attributes: ColumnElement, attr: str, expected: type) -> ColumnElement:
     """프로필 JSONB에서 속성 값을 규칙 타입으로 읽는다. 읽을 수 없으면 NULL(확인 필요).
 
     judge()의 형 변환과 같다: 숫자 속성은 숫자이거나 쉼표·앞뒤 공백을 뗀 숫자 문자열만,
@@ -186,7 +202,6 @@ def jsonb_attribute(attributes: ColumnElement, attr: str) -> ColumnElement:
     j = sa.type_coerce(attributes, JSONB)[attr]
     text = j.astext
     kind = sa.func.jsonb_typeof(j)
-    expected = ATTRIBUTES[attr]
     if expected is bool:
         word = sa.func.lower(sa.func.btrim(text, " \t\n\r\f\v"))
         return sa.case(
@@ -224,8 +239,11 @@ def bulk_judge(
     p = Profile.__table__
     attrs = p.c.attributes
 
+    # 속성 타입은 규칙 값에서 알아낸다(검사를 거친 규칙이라 속성 사전과 같다)
+    types = {r.attribute: value_type(r) for r in _walk(group)}
+
     def column(attr: str) -> ColumnElement:
-        return jsonb_attribute(attrs, attr)
+        return jsonb_attribute(attrs, attr, types.get(attr, str))
 
     def actual(attr: str) -> ColumnElement:
         return sa.type_coerce(attrs, JSONB)[attr]

@@ -23,6 +23,8 @@ LINE_SEP = chr(0x2028)
 NEL = chr(0x85)
 LONE_SURROGATE = chr(0xD83D)
 
+HOSTS = frozenset({"www.bizinfo.go.kr"})
+
 
 class Clock:
     t = 0.0
@@ -51,6 +53,7 @@ def record(deadline="2026-11-07"):
         apply_end=deadline,
         attachments=[AttachmentRef("a.pdf", f"{HOST}/f/a.pdf")],
         raw={"pblancId": "PBLN_X", "end": deadline},
+        attachment_hosts=frozenset({"www.bizinfo.go.kr"}),
     )
 
 
@@ -93,6 +96,7 @@ def test_half_open_trial_slot_is_released_on_any_failure(tmp_path, handler):
             AttachmentRef("a.pdf", f"{HOST}/a.pdf"),
             LocalBlobStore(tmp_path),
             source="t",
+            allowed_hosts=HOSTS,
             breaker=breaker,
             max_bytes=50,
         )
@@ -110,6 +114,7 @@ def test_html_response_counts_as_source_failure(tmp_path):
                 AttachmentRef("a.pdf", f"{HOST}/a.pdf"),
                 LocalBlobStore(tmp_path),
                 source="t",
+                allowed_hosts=HOSTS,
                 breaker=breaker,
             )
     assert breaker.state == "open"
@@ -146,6 +151,7 @@ def test_redirects_are_checked_each_hop(tmp_path):
             AttachmentRef("a.pdf", f"{HOST}/a.pdf"),
             LocalBlobStore(tmp_path),
             source="t",
+            allowed_hosts=HOSTS,
         )
     assert seen == [f"{HOST}/a.pdf", f"{HOST}/b.pdf"]  # 내부 주소로는 요청하지 않았다
 
