@@ -120,8 +120,30 @@ class LoadedRun(Base):
     __tablename__ = "snapshot_run"
     name: Mapped[str] = mapped_column(sa.String(64), primary_key=True)  # runs/<이름>.json
     loaded_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
-    # 출처별로 형식 변화 때문에 값을 이어 둔 키: {출처: {키: {"lost": 비게 된 수, "had": 값이 있던 수}}}
+    # 이 실행에서 형식 변화로 보인 키: {출처: {키: {"kind", "changed", "compared"}}} (drift.py)
     drift: Mapped[dict | None] = mapped_column(JSONType)
+
+
+class SourceDrift(Base):
+    """출처의 형식 변화로 붙잡은 키 하나와 그 결정 (drift.py). 같은 키가 다시 붙잡히면 새 행이다."""
+
+    __tablename__ = "source_drift"
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(sa.String(32), index=True)
+    key: Mapped[str] = mapped_column(sa.String(100))
+    kind: Mapped[str] = mapped_column(sa.String(16))  # emptied / filled / changed
+    # held / ignored / released / recovered / closed
+    status: Mapped[str] = mapped_column(sa.String(16), index=True)
+    first_run: Mapped[str] = mapped_column(sa.String(64))
+    last_run: Mapped[str] = mapped_column(sa.String(64))
+    runs: Mapped[int] = mapped_column(sa.Integer, default=0)  # 붙잡힌 실행 수
+    changed: Mapped[int] = mapped_column(
+        sa.Integer, default=0
+    )  # 마지막으로 잡힌 실행의 바뀐 항목 수
+    compared: Mapped[int] = mapped_column(sa.Integer, default=0)
+    samples: Mapped[list] = mapped_column(JSONType, default=list)  # 외부 ID 몇 개
+    decided_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(sa.Text)
 
 
 class ParseCache(Base):
