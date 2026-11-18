@@ -20,7 +20,6 @@ from noticedelta.sources.resilience import CircuitBreaker, CircuitOpen, RateLimi
 MAX_BYTES = 50 * 1024 * 1024
 MAX_REDIRECTS = 3
 # 첨부 URL은 기업마당 API가 준다(K-Startup은 첨부를 주지 않는다). 다른 출처를 붙이면 여기에 더한다.
-ALLOWED_HOSTS = frozenset({"www.bizinfo.go.kr", "bizinfo.go.kr"})
 
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # HWP 5.x, 옛 MS Office
 _HWP5_SIGNATURE = b"HWP Document File"
@@ -108,7 +107,7 @@ def download_attachment(
     breaker: CircuitBreaker | None = None,
     limiter: RateLimiter | None = None,
     max_bytes: int = MAX_BYTES,
-    allowed_hosts: frozenset[str] = ALLOWED_HOSTS,
+    allowed_hosts: frozenset[str],  # 출처가 정한다(NoticeRecord.attachment_hosts). 비면 받지 않는다
     total_timeout_s: float = 300,
 ) -> StoredAttachment:
     check_url(ref.url, allowed_hosts)

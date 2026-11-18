@@ -254,14 +254,17 @@ def test_kstartup_body_includes_contact_and_target_categories():
 FILE_URL = "https://www.bizinfo.go.kr/cmm/fms/getImageFile.do?atchFileId=FILE_{}&fileSn=0"
 
 
-def test_stable_url_drops_only_the_download_token():
+def test_stable_url_drops_only_the_given_params():
+    TOKEN = ("downloadToken",)
     from noticedelta.sources.base import stable_url
 
     base = FILE_URL.format(1)
-    assert stable_url(base + "&downloadToken=aaa.bbb.ccc") == base  # 토큰이 없던 때의 주소와 같다
-    assert stable_url(base) == base and stable_url("https://x/y") == "https://x/y"
-    assert stable_url("https://x/y?downloadToken=a") == "https://x/y"
-    assert stable_url("https://x/y?downloadToken=a&k=1#top") == "https://x/y?k=1#top"
+    assert (
+        stable_url(base + "&downloadToken=aaa.bbb.ccc", TOKEN) == base
+    )  # 토큰이 없던 때의 주소와 같다
+    assert stable_url(base, TOKEN) == base and stable_url("https://x/y") == "https://x/y"
+    assert stable_url("https://x/y?downloadToken=a", TOKEN) == "https://x/y"
+    assert stable_url("https://x/y?downloadToken=a&k=1#top", TOKEN) == "https://x/y?k=1#top"
 
 
 def test_bizinfo_reissued_download_tokens_do_not_change_the_record():
@@ -286,7 +289,6 @@ def test_bizinfo_reissued_download_tokens_do_not_change_the_record():
 
 
 def test_body_hash_ignores_notation_but_content_hash_keeps_the_raw():
-    from noticedelta.sources.base import body_hash
     from noticedelta.sources.kstartup import to_record
 
     def item(text, extra=None):
@@ -299,7 +301,13 @@ def test_body_hash_ignores_notation_but_content_hash_keeps_the_raw():
 
     a = to_record(item("&apos;예비창업자&apos; 대상\r\n세부 내용은  공고문 참조"))
     b = to_record(item("'예비창업자' 대상\n세부 내용은 공고문 참조", extra=""))
-    assert body_hash(a.raw) == body_hash(b.raw)  # 표기·공백·빈 값만 다르면 같은 내용
+    assert a.body_hash == b.body_hash  # 표기·공백·빈 값만 다르면 같은 내용
     assert a.content_hash != b.content_hash  # 원본이 다르면 게시물 버전으로는 남긴다
-    assert body_hash(a.raw) != body_hash(to_record(item("'청년' 대상")).raw)
+    assert a.body_hash != to_record(item("'청년' 대상")).body_hash
     assert "&apos;" not in a.body and "'예비창업자' 대상" in a.body  # 보여 줄 글도 풀어 둔다
+
+
+def test_stable_url_drops_nothing_unless_told():
+    from noticedelta.sources.base import stable_url
+
+    assert stable_url("https://x/y?downloadToken=a") == "https://x/y?downloadToken=a"

@@ -165,6 +165,7 @@ def ingest(session, store):
             AttachmentRef("서식묶음.zip", "https://www.bizinfo.go.kr/f/서식묶음.zip"),
         ],
         raw={"pblancId": "PBLN_X"},
+        attachment_hosts=frozenset({"www.bizinfo.go.kr"}),
     )
     http = httpx.Client(transport=httpx.MockTransport(handler))
     return ingest_record(session, rec, http=http, store=store).version

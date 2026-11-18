@@ -46,6 +46,7 @@ def record(deadline):
         apply_end=deadline,
         attachments=[AttachmentRef("공고문.pdf", f"{HOST}/f/a.pdf", role="notice")],
         raw={"pblancId": "P1", "end": deadline},
+        attachment_hosts=frozenset({"www.bizinfo.go.kr"}),
     )
 
 

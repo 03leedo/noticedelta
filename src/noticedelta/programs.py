@@ -42,9 +42,10 @@ from noticedelta.db.models import (
     SnapshotRecord,
 )
 from noticedelta.sources import NoticeRecord, bizinfo, kstartup
-from noticedelta.sources.base import body_hash, stable_url
+from noticedelta.sources.base import stable_url
 
 TO_RECORD = {"kstartup": kstartup.to_record, "bizinfo": bizinfo.to_record}
+DROP_PARAMS = {"bizinfo": bizinfo.DROP_PARAMS}  # 옛 실행 파일의 첨부 주소에서 뗄 값
 AUTO_LINK = 1.0  # 정정 표시를 뺀 제목과 기관이 같을 때만 자동으로 잇는다
 REVIEW_LINK = 0.8  # 그보다 낮지만 이 이상이면 운영자 확인으로 남긴다(같은 기관 안에서만)
 
@@ -97,7 +98,7 @@ def api_meta(source: str, raw: dict) -> dict:
 
 def composite_hash(rec: NoticeRecord, blob_keys: list[str | None]) -> str:
     """사업 버전의 내용 해시: 첨부 주소를 뺀 본문 해시 + 첨부 내용 해시(받지 못한 첨부는 missing)."""
-    parts = [body_hash(rec.raw)] + sorted(k or "missing" for k in blob_keys)
+    parts = [rec.body_hash] + sorted(k or "missing" for k in blob_keys)
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
@@ -179,7 +180,7 @@ def _link_program(
 
 
 def _attach_blobs(
-    session: Session, version: NoticeVersion, item: dict
+    session: Session, version: NoticeVersion, item: dict, drop: tuple[str, ...] = ()
 ) -> tuple[list[str | None], int]:
     """수집기가 받은 첨부 원본 키를 첨부 행에 옮긴다 (lineage 키는 repo가 버전을 만들 때 붙인다).
 
@@ -187,13 +188,13 @@ def _attach_blobs(
     내용이 그대로인 게시물도 늦게 받은 첨부를 여기서 채운다.
     """
     # 2026-10-30~11-12 실행 파일에는 토큰이 붙은 주소가 남아 있다. 양쪽 다 토큰을 떼고 맞춘다.
-    by_url = {stable_url(a["url"]): a for a in item.get("attachments", [])}
+    by_url = {stable_url(a["url"], drop): a for a in item.get("attachments", [])}
     rows = session.scalars(
         sa.select(Attachment).where(Attachment.notice_version_id == version.id)
     ).all()
     keys, filled = [], 0
     for att in rows:
-        snap = by_url.get(stable_url(att.url), {})
+        snap = by_url.get(stable_url(att.url, drop), {})
         if snap.get("blob_key") and att.blob_key is None:
             att.blob_key, att.mime = snap["blob_key"], snap.get("mime")
             filled += 1
@@ -226,11 +227,13 @@ def _program_version(
     return pv
 
 
-def _refill_attachments(session: Session, notice: Notice, item: dict, summary: LoadSummary) -> None:
+def _refill_attachments(
+    session: Session, notice: Notice, item: dict, summary: LoadSummary, source: str
+) -> None:
     version = repo.latest_version(session, notice.id)
     if version is None:
         return
-    _, filled = _attach_blobs(session, version, item)
+    _, filled = _attach_blobs(session, version, item, DROP_PARAMS.get(source, ()))
     if not filled:
         return
     pv_id = session.scalar(
@@ -325,10 +328,10 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
                 summary.new_postings += 1
                 _link_program(session, notice, rec, summary)
             if version is None:
-                _refill_attachments(session, notice, item, summary)
+                _refill_attachments(session, notice, item, summary, source)
                 continue
             summary.new_posting_versions += 1
-            keys, _ = _attach_blobs(session, version, item)
+            keys, _ = _attach_blobs(session, version, item, DROP_PARAMS.get(source, ()))
             pv = _program_version(session, notice, version, composite_hash(rec, keys), at)
             if pv is not None:
                 summary.new_program_versions += 1
