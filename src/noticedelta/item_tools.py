@@ -226,4 +226,13 @@ def item_tools(
         (list_changes, "최근에 바뀐 항목(정정)의 목록을 준다."),
         (get_change, "변경 하나에서 무엇이 어떻게 바뀌었는지 조각의 이전·이후 글로 준다."),
     ]
-    return [Tool(fn.__name__, text, fn, READS_DOCUMENTS) for fn, text in described]
+    # 사용 기록(usage.py)이 결과 개수를 세는 칸과, 남겨도 되는 인자(검색어는 새 출처의 수요 신호다)
+    extra = {
+        "search_items": {"count": "total", "logged_args": ("query",)},
+        "list_changes": {"count": "changes"},
+        "get_change": {"count": "pairs"},
+    }
+    return [
+        Tool(fn.__name__, text, fn, READS_DOCUMENTS, **extra.get(fn.__name__, {}))
+        for fn, text in described
+    ]

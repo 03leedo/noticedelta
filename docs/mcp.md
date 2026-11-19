@@ -27,7 +27,7 @@ uv run python scripts/mcp_server.py --files <폴더>         # stdio 서버. 이
 에이전트는 이 명령을 자식 프로세스로 띄워 쓴다. Claude Code에 붙이려면:
 
 ```bash
-claude mcp add noticedelta -- uv --directory <저장소 폴더> run python scripts/mcp_server.py --files <문서 폴더>
+claude mcp add noticedelta -- uv --directory <저장소 폴더> run python scripts/mcp_server.py --files <문서 폴더> --client claude-code
 ```
 
 HWP·PDF를 읽으려면 Docker와 파서 이미지(`docker build -t noticedelta-parser infra/parser`)가 있어야 한다. 글(text)만 다루는 도구는 Docker 없이 돈다.
@@ -50,6 +50,25 @@ HWP·PDF를 읽으려면 Docker와 파서 이미지(`docker build -t noticedelta
 | `get_item(item_id)` | 원문 링크, 첨부, 뽑아 둔 필드, 버전 이력, 출처 API의 구조화 값 | A |
 | `list_changes(since, item_id, limit)` | 최근 변경(정정) 목록. 읽는 글이 바뀌지 않은 버전은 뺀다 | A |
 | `get_change(event_id, max_pairs)` | 바뀐 조각의 이전·이후 글(발췌)과 위치 | A |
+
+피드백:
+
+| 도구 | 하는 일 | 속성 |
+|---|---|---|
+| `send_feedback(kind, message, tool)` | 도구가 기대와 다르게 동작했거나, 결과가 틀렸거나 부족했거나, 필요한 도구가 없을 때 남긴다. 운영자가 읽고 도구를 고친다 | 없음 |
+
+## 사용 기록과 개선 고리
+
+모든 호출은 등록부를 지나며 기록된다(`usage.py`, platform-services.md 10장). 남기는 것은 도구와 판, 세션과 순서, 인자 모양(채운 칸·타입·길이)과 해시, 상태와 오류 문구, 결과 크기와 개수, 걸린 시간, 가린 줄 수다. **인자 값과 결과 내용은 남기지 않는다.** 검색어처럼 도구가 허락한 칸만 개인정보를 가리고 100자로 잘라 남긴다.
+
+```bash
+uv run python scripts/usage_report.py              # 지난 7일의 보고
+uv run python scripts/usage_report.py --purge-days 180
+```
+
+보고서는 도구별 호출·오류·오류 뒤 재시도·결과 없음·걸린 시간, 자주 난 오류, 이어서 부른 도구, 결과가 없던 입력(새 출처 후보), 안 쓰인 도구, 피드백을 보여 준다. 피드백 글은 신뢰할 수 없는 입력이라 지시로 보이는 줄을 가려 보이고, 자동으로 적용하지 않는다. 도구를 고치면 `Tool.version`을 올려 판별로 비교한다.
+
+접속 이름은 `--client`로 준다(예: `--client claude-code`).
 
 ## 구조
 

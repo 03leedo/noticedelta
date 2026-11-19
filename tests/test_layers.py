@@ -39,6 +39,7 @@ LAYERS: dict[str, list[str]] = {
         "sources.resilience",
         "text",
         "tooling",  # 도구와 능력 속성, 등록부
+        "usage",  # 에이전트 사용 기록과 피드백
     ],
     "엔진": [
         "citation",
