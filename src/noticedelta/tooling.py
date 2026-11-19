@@ -9,14 +9,16 @@
 등록부(Registry)는 허용한 속성 안에 드는 도구만 내놓는다. 도구 게이트웨이(세션 상태, 승인,
 보류 후 확정)가 생기기 전까지는 A만 가진 읽기 도구만 내놓고, B·C가 붙은 도구는 받아 두기만 한다.
 도구가 돌려주는 글은 인젝션 탐지를 거쳐, 지시로 보이는 줄을 가린다.
+관찰자(observer)를 주면 호출마다 알려 준다. 사용 기록(usage.py)이 이것으로 남긴다.
 """
 
 from __future__ import annotations
 
 import functools
+import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from noticedelta.llm.harness import NEUTRALIZED, scan
 
@@ -35,6 +37,9 @@ class Tool:
         ..., dict
     ]  # 인자는 타입을 적은 키워드 인자, 결과는 JSON으로 바꿀 수 있는 사전
     capabilities: frozenset[str] = frozenset()
+    version: str = "1"  # 설명·입력·기본값을 바꾸면 올린다. 사용 기록을 판별로 비교한다
+    count: str | None = None  # 결과 개수를 담은 칸(수 또는 목록). "결과 없음"을 셀 때 쓴다
+    logged_args: tuple[str, ...] = ()  # 사용 기록에 남겨도 되는 인자(개인정보는 가리고 자른다)
 
     def __post_init__(self) -> None:
         unknown = set(self.capabilities) - set(CAPABILITIES)
@@ -59,9 +64,23 @@ def guard(value: Any) -> tuple[Any, int]:
     return value, 0
 
 
+class Observer(Protocol):
+    def record(
+        self,
+        tool: Tool,
+        arguments: dict[str, Any],
+        *,
+        result: dict | None,
+        error: BaseException | None,
+        duration_ms: int,
+        hidden_lines: int,
+    ) -> None: ...
+
+
 class Registry:
-    def __init__(self, allowed: Collection[str] = ("A",)):
+    def __init__(self, allowed: Collection[str] = ("A",), observer: Observer | None = None):
         self.allowed = frozenset(allowed)
+        self.observer = observer
         self.tools: dict[str, Tool] = {}
         self.withheld: dict[str, Tool] = {}  # 허용하지 않은 속성이 붙어 내놓지 않는 도구
         self.hidden_lines = 0  # 지금까지 가린 줄 수
@@ -75,11 +94,26 @@ class Registry:
         if name not in self.tools:
             reason = "게이트웨이 없이는 내놓지 않는 도구" if name in self.withheld else "없는 도구"
             raise KeyError(f"{reason}: {name}")
-        result, hidden = guard(self.tools[name].handler(**arguments))
+        tool = self.tools[name]
+        started = time.perf_counter()
+        try:
+            result, hidden = guard(tool.handler(**arguments))
+        except Exception as e:
+            self._observe(tool, arguments, None, e, started, 0)
+            raise
         if hidden:
             self.hidden_lines += hidden
             result["guard"] = {"hidden_lines": hidden, "why": "지시로 보이는 줄을 가렸습니다"}
+        self._observe(tool, arguments, result, None, started, hidden)
         return result
+
+    def _observe(self, tool, arguments, result, error, started, hidden) -> None:
+        if self.observer is None:
+            return
+        ms = int((time.perf_counter() - started) * 1000)
+        self.observer.record(
+            tool, arguments, result=result, error=error, duration_ms=ms, hidden_lines=hidden
+        )
 
     def bound(self, name: str) -> Callable[..., dict]:
         """등록부를 거쳐 부르는 함수. 인자 모양(서명)은 원래 도구와 같다."""

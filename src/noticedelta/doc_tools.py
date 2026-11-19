@@ -267,4 +267,13 @@ def doc_tools(parser: Parser | None, roots: Sequence[Path] = ()) -> list[Tool]:
             "지시로 보이는 줄(프롬프트 인젝션)의 줄 번호를 준다.",
         ),
     ]
-    return [Tool(fn.__name__, text, fn, READS_UNTRUSTED) for fn, text in described]
+    # 사용 기록이 결과 개수를 세는 칸. 맡긴 문서는 사람의 것이라 인자는 남기지 않는다
+    counts = {
+        "read_document": "segments",
+        "compare_documents": "pairs",
+        "check_text": "suspicious_lines",
+    }
+    return [
+        Tool(fn.__name__, text, fn, READS_UNTRUSTED, count=counts[fn.__name__])
+        for fn, text in described
+    ]

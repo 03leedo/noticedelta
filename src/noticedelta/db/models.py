@@ -146,6 +146,52 @@ class SourceDrift(Base):
     note: Mapped[str | None] = mapped_column(sa.Text)
 
 
+class ToolCallRow(Base):
+    """에이전트의 도구 호출 하나 (usage.py). 값은 남기지 않는다: 인자는 모양과 해시, 결과는 크기와 개수."""
+
+    __tablename__ = "tool_call"
+    __table_args__ = (
+        sa.Index("ix_tool_call_tool_at", "tool", "at"),
+        sa.Index("ix_tool_call_session_seq", "session", "seq"),
+    )
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    session: Mapped[str] = mapped_column(sa.String(32))  # 접속 하나 (MCP 서버 프로세스 하나)
+    client: Mapped[str] = mapped_column(sa.String(64))
+    seq: Mapped[int] = mapped_column(sa.Integer)  # 세션 안의 순서
+    tool: Mapped[str] = mapped_column(sa.String(64))
+    tool_version: Mapped[str] = mapped_column(sa.String(16))
+    arg_shape: Mapped[dict] = mapped_column(JSONType, default=dict)  # {칸: "str:120"}
+    arg_digest: Mapped[str] = mapped_column(sa.String(16))
+    logged: Mapped[dict | None] = mapped_column(JSONType)  # 도구가 허락한 인자만, 가리고 자른 것
+    status: Mapped[str] = mapped_column(sa.String(16))  # ok / error / exception
+    error: Mapped[str | None] = mapped_column(sa.String(200))
+    result_bytes: Mapped[int] = mapped_column(sa.Integer, default=0)
+    result_count: Mapped[int | None] = mapped_column(sa.Integer)
+    duration_ms: Mapped[int] = mapped_column(sa.Integer, default=0)
+    hidden_lines: Mapped[int] = mapped_column(sa.Integer, default=0)
+
+
+class AgentFeedback(Base):
+    """에이전트가 남긴 피드백 (usage.py). 신뢰할 수 없는 글이다: 자동으로 적용하지 않고 사람이 본다."""
+
+    __tablename__ = "agent_feedback"
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    session: Mapped[str] = mapped_column(sa.String(32))
+    client: Mapped[str] = mapped_column(sa.String(64))
+    tool: Mapped[str | None] = mapped_column(sa.String(64))
+    kind: Mapped[str] = mapped_column(
+        sa.String(16)
+    )  # wrong / lacking / confusing / slow / missing_tool / other
+    message: Mapped[str] = mapped_column(sa.Text)  # 개인정보를 가리고 자른 것
+    flagged_lines: Mapped[int] = mapped_column(sa.Integer, default=0)  # 지시로 보이는 줄 수
+    status: Mapped[str] = mapped_column(
+        sa.String(16), default="new"
+    )  # new / reviewed / acted / dismissed
+    note: Mapped[str | None] = mapped_column(sa.Text)
+
+
 class ParseCache(Base):
     """첨부 파싱 결과. 같은 파일(내용 해시)은 한 번만 파싱한다. 파서를 바꾸면 이 표를 비운다."""
 
