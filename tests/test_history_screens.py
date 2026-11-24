@@ -26,14 +26,14 @@ def flow(tmp_path):
     env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
     env.work()
     with env.factory() as s:
-        program_id = s.scalar(sa.select(models.Program.id))
+        item_id = s.scalar(sa.select(models.Item.id))
         alert_id = s.scalar(sa.select(models.OutboxAlert.id))
-    return TestClient(create_app(env.factory)), env, program_id, alert_id
+    return TestClient(create_app(env.factory)), env, item_id, alert_id
 
 
 def test_program_page_replays_the_correction(flow):
-    client, _, program_id, _ = flow
-    page = client.get(f"/programs/{program_id}").text
+    client, _, item_id, _ = flow
+    page = client.get(f"/programs/{item_id}").text
     assert "v1 → v2" in page and "수정 · 공고문.pdf" in page
     assert "창업 7년 이내" in page and "창업 5년 이내" in page  # 이전과 이후 문장
     assert "최종 확인은 반드시 공고 원문" in page

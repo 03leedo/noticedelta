@@ -27,17 +27,17 @@ from noticedelta.db import repo
 from noticedelta.db.models import (
     Attachment,
     FieldValueRow,
+    ItemVersion,
     Job,
     JudgmentRow,
     LoadedRun,
     OutboxAlert,
     Profile,
-    ProgramVersion,
     SubscriptionRow,
 )
 from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
 from noticedelta.grants import APP, MASS_IMPACT, MIN_CONFIDENCE, RULES_FIELD, candidates
-from noticedelta.history import MATCHER_VERSION, record_program, replay
+from noticedelta.history import MATCHER_VERSION, record_item, replay
 from noticedelta.impact import (
     Extractor,
     FieldValue,
@@ -98,7 +98,7 @@ def enqueue_load(session: Session, root: Path) -> Job | None:
 
 
 def _enqueue_parse(session: Session, pv_id: str) -> None:
-    pv = session.get(ProgramVersion, pv_id)
+    pv = session.get(ItemVersion, pv_id)
     blobs = session.scalar(
         sa.select(sa.func.count()).where(
             Attachment.notice_version_id == pv.notice_version_id, Attachment.blob_key.is_not(None)
@@ -108,9 +108,9 @@ def _enqueue_parse(session: Session, pv_id: str) -> None:
     enqueue(
         session,
         PARSE,
-        {"program_version_id": pv_id},
+        {"item_version_id": pv_id},
         dedupe_key=f"{PARSE}:{pv_id}:{blobs}",
-        concurrency_key=f"program:{pv.program_id}",
+        concurrency_key=f"item:{pv.item_id}",
         priority=50,
     )
 
@@ -121,9 +121,9 @@ def enqueue_backfill(session: Session) -> int:
 
     recorded = sa.select(ChangeEvent.to_version_id)
     ids = session.scalars(
-        sa.select(ProgramVersion.id)
-        .where(ProgramVersion.id.not_in(recorded))
-        .order_by(ProgramVersion.program_id, ProgramVersion.version_no)
+        sa.select(ItemVersion.id)
+        .where(ItemVersion.id.not_in(recorded))
+        .order_by(ItemVersion.item_id, ItemVersion.version_no)
     ).all()
     for pv_id in ids:
         _enqueue_parse(session, pv_id)
@@ -152,7 +152,7 @@ def handle_load(ctx: Context) -> Handler:
 
 def handle_parse(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
-        pv = session.get(ProgramVersion, job.payload["program_version_id"])
+        pv = session.get(ItemVersion, job.payload["item_version_id"])
         if pv is None:
             raise PermanentError("사업 버전이 없음")
         try:
@@ -163,9 +163,9 @@ def handle_parse(ctx: Context) -> Handler:
         enqueue(
             session,
             DIFF,
-            {"program_id": pv.program_id},
+            {"item_id": pv.item_id},
             dedupe_key=f"{DIFF}:{job.dedupe_key}:{MATCHER_VERSION}",
-            concurrency_key=f"program:{pv.program_id}",
+            concurrency_key=f"item:{pv.item_id}",
             priority=60,
         )
 
@@ -174,12 +174,12 @@ def handle_parse(ctx: Context) -> Handler:
 
 def handle_diff(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
-        program_id = job.payload["program_id"]
-        results = record_program(session, program_id, ctx.store)
+        item_id = job.payload["item_id"]
+        results = record_item(session, item_id, ctx.store)
         if ctx.extractor is not None:
             for r in results:
                 if r.status == "recorded":
-                    _enqueue_impact(session, program_id, r.event.to_version_id)
+                    _enqueue_impact(session, item_id, r.event.to_version_id)
         waiting = next((r for r in results if r.status == "waiting"), None)
         if waiting is None:
             return
@@ -192,7 +192,7 @@ def handle_diff(ctx: Context) -> Handler:
         enqueue(
             session,
             DIFF,
-            {"program_id": program_id, "wait": n + 1, "reason": reason},
+            {"item_id": item_id, "wait": n + 1, "reason": reason},
             dedupe_key=f"{job.dedupe_key}|w{n + 1}",
             concurrency_key=job.concurrency_key,
             priority=job.priority,
@@ -209,13 +209,13 @@ def _impact_key(pv_id: str) -> str:
     return f"{IMPACT}:{pv_id}:{TEMPLATE_VERSION}"
 
 
-def _enqueue_impact(session: Session, program_id: str, pv_id: str) -> None:
+def _enqueue_impact(session: Session, item_id: str, pv_id: str) -> None:
     enqueue(
         session,
         IMPACT,
-        {"program_version_id": pv_id},
+        {"item_version_id": pv_id},
         dedupe_key=_impact_key(pv_id),
-        concurrency_key=f"program:{program_id}",
+        concurrency_key=f"item:{item_id}",
         priority=70,
     )
 
@@ -223,7 +223,7 @@ def _enqueue_impact(session: Session, program_id: str, pv_id: str) -> None:
 def _load_fields(session: Session, pv_id: str, app_id: str) -> dict[str, FieldValue]:
     rows = session.scalars(
         sa.select(FieldValueRow).where(
-            FieldValueRow.program_version_id == pv_id, FieldValueRow.app_id == app_id
+            FieldValueRow.item_version_id == pv_id, FieldValueRow.app_id == app_id
         )
     ).all()
     return {
@@ -235,7 +235,7 @@ def _load_fields(session: Session, pv_id: str, app_id: str) -> dict[str, FieldVa
 def _save_fields(
     ctx: Context,
     session: Session,
-    pv: ProgramVersion,
+    pv: ItemVersion,
     fields: dict[str, FieldValue],
     stale: set[str],
 ) -> None:
@@ -248,8 +248,8 @@ def _save_fields(
             status = "verified"
         session.add(
             FieldValueRow(
-                program_id=pv.program_id,
-                program_version_id=pv.id,
+                item_id=pv.item_id,
+                item_version_id=pv.id,
                 name=name,
                 value=fv.value,
                 value_type=fv.value_type,
@@ -264,10 +264,10 @@ def _save_fields(
         )
 
 
-def _latest_judgments(session: Session, program_id: str, app_id: str) -> dict[str, Judgment]:
+def _latest_judgments(session: Session, item_id: str, app_id: str) -> dict[str, Judgment]:
     rows = session.scalars(
         sa.select(JudgmentRow)
-        .where(JudgmentRow.program_id == program_id, JudgmentRow.app_id == app_id)
+        .where(JudgmentRow.item_id == item_id, JudgmentRow.app_id == app_id)
         .order_by(JudgmentRow.created_at)
     ).all()
     return {r.person_id: Judgment(r.result) for r in rows}  # 뒤의 것이 앞의 것을 덮는다
@@ -277,8 +277,8 @@ def handle_impact(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         if ctx.extractor is None:
             raise TransientError("추출기가 설정되지 않음")
-        pv = session.get(ProgramVersion, job.payload["program_version_id"])
-        step = next((s for s in replay(session, pv.program_id) if s.to_version.id == pv.id), None)
+        pv = session.get(ItemVersion, job.payload["item_version_id"])
+        step = next((s for s in replay(session, pv.item_id) if s.to_version.id == pv.id), None)
         if step is None:
             raise PermanentError("변경 이벤트가 없음")
         app_registry.seed(session, ctx.app, at=ctx.now())  # 결과가 가리킬 앱 정의가 DB에 있게
@@ -295,16 +295,16 @@ def handle_impact(ctx: Context) -> Handler:
         if prev != "done":
             raise TransientError(f"v{step.from_version.version_no} 영향 계산이 아직 안 끝남")
 
-        program_id = pv.program_id
+        item_id = pv.item_id
         subs = [
             Subscription(r.person_id, set(r.fields))
             for r in session.scalars(
                 sa.select(SubscriptionRow).where(
-                    SubscriptionRow.program_id == program_id, SubscriptionRow.app_id == ctx.app.id
+                    SubscriptionRow.item_id == item_id, SubscriptionRow.app_id == ctx.app.id
                 )
             )
         ]
-        old_judgments = _latest_judgments(session, program_id, ctx.app.id)
+        old_judgments = _latest_judgments(session, item_id, ctx.app.id)
         users = {s.person_id for s in subs} | set(old_judgments)
         profiles = {
             p.person_id: dict(p.attributes)
@@ -312,7 +312,7 @@ def handle_impact(ctx: Context) -> Handler:
         }
         res = run_impact(
             candidate_detector=candidates,
-            program_id=program_id,
+            item_id=item_id,
             to_version_id=pv.id,
             change=step.change,
             old_fields=_load_fields(session, step.from_version.id, ctx.app.id),
@@ -335,8 +335,8 @@ def handle_impact(ctx: Context) -> Handler:
                 session.add(
                     JudgmentRow(
                         person_id=person_id,
-                        program_id=program_id,
-                        program_version_id=pv.id,
+                        item_id=item_id,
+                        item_version_id=pv.id,
                         ruleset_hash=h,
                         result=j.result,
                         reasons=[vars(r) for r in j.reasons],
@@ -359,9 +359,9 @@ def handle_impact(ctx: Context) -> Handler:
             enqueue(
                 session,
                 NOTIFY,
-                {"program_id": program_id},
+                {"item_id": item_id},
                 dedupe_key=f"{NOTIFY}:{pv.id}",
-                concurrency_key=f"program:{program_id}",
+                concurrency_key=f"item:{item_id}",
                 priority=80,
             )
 
@@ -370,9 +370,9 @@ def handle_impact(ctx: Context) -> Handler:
 
 def handle_notify(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
-        program_id = job.payload["program_id"]
-        prepare(session, program_id, mass_impact=MASS_IMPACT)
-        deliver(session, ctx.channel, program_id=program_id, now=ctx.now, labels=ctx.labels)
+        item_id = job.payload["item_id"]
+        prepare(session, item_id, mass_impact=MASS_IMPACT)
+        deliver(session, ctx.channel, item_id=item_id, now=ctx.now, labels=ctx.labels)
 
     return handle
 

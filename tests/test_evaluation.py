@@ -201,13 +201,11 @@ def test_chains_and_labels_load_from_recorded_events():
 
     with Session(engine) as s:
         s.add(models.Source(id="bizinfo", name="기업마당"))
-        s.add(
-            models.Program(id="P1", title="(가상) 사업", title_key="가상사업", current_version_no=2)
-        )
+        s.add(models.Item(id="P1", title="(가상) 사업", title_key="가상사업", current_version_no=2))
         s.flush()
         s.add(
             models.Notice(
-                id="N1", source_id="bizinfo", external_id="X1", title="(가상)", program_id="P1"
+                id="N1", source_id="bizinfo", external_id="X1", title="(가상)", item_id="P1"
             )
         )
         s.flush()
@@ -225,9 +223,9 @@ def test_chains_and_labels_load_from_recorded_events():
             )
             s.flush()
             s.add(
-                models.ProgramVersion(
+                models.ItemVersion(
                     id=f"PV{no}",
-                    program_id="P1",
+                    item_id="P1",
                     version_no=no,
                     notice_version_id=nv,
                     content_hash=f"c{no}",
@@ -249,7 +247,7 @@ def test_chains_and_labels_load_from_recorded_events():
         empty = {"added": [], "removed": [], "modified": [], "unknown": [], "unchanged": 0}
         s.add(
             models.ChangeEvent(
-                program_id="P1",
+                item_id="P1",
                 from_version_id=None,
                 to_version_id="PV1",
                 changed_lineages={**empty, "added": ["s1", "s2", "s3"]},
@@ -257,7 +255,7 @@ def test_chains_and_labels_load_from_recorded_events():
         )
         s.add(
             models.ChangeEvent(
-                program_id="P1",
+                item_id="P1",
                 from_version_id="PV1",
                 to_version_id="PV2",
                 changed_lineages={**empty, "modified": ["s1"]},
@@ -267,7 +265,7 @@ def test_chains_and_labels_load_from_recorded_events():
             models.LabelRow(
                 app_id="grant-alerts",
                 app_version=1,
-                program_id="P1",
+                item_id="P1",
                 to_version_id="PV2",
                 field="deadline",
                 status="changed",

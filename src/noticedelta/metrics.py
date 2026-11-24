@@ -15,7 +15,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta.db.models import Attachment, ChangeEvent, Job, OutboxAlert, ProgramVersion
+from noticedelta.db.models import Attachment, ChangeEvent, ItemVersion, Job, OutboxAlert
 
 
 def _utc(t: datetime | None) -> datetime | None:
@@ -91,9 +91,7 @@ def collect(
         )
     ):
         seen = session.scalar(
-            sa.select(ProgramVersion.source_time).where(
-                ProgramVersion.id == payload.get("to_version_id")
-            )
+            sa.select(ItemVersion.source_time).where(ItemVersion.id == payload.get("to_version_id"))
         )
         if seen is not None:
             latency.append((_utc(sent_at) - _utc(seen)).total_seconds())

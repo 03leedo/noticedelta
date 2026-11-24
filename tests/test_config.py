@@ -22,4 +22,4 @@ def test_open_db_migrates_to_head(tmp_path):
     engine, factory = config.open_db(f"sqlite:///{tmp_path / 'c.db'}")
     assert migrate.current(engine) == migrate.head()
     with factory() as s:
-        assert s.execute(sa.text("SELECT count(*) FROM program")).scalar() == 0
+        assert s.execute(sa.text("SELECT count(*) FROM item")).scalar() == 0

@@ -131,11 +131,11 @@ def seed_demo(session: Session, today: date) -> int:
     added = 0
     for d in DEMO:
         pid = f"demo-{d['key']}"
-        if session.get(models.Program, pid) is not None:
+        if session.get(models.Item, pid) is not None:
             continue
         h = hashlib.sha256(pid.encode()).hexdigest()
         for row in [
-            models.Program(
+            models.Item(
                 id=pid, title=d["title"], title_key=pid, org=d["org"], current_version_no=1
             ),
             models.Notice(
@@ -143,7 +143,7 @@ def seed_demo(session: Session, today: date) -> int:
                 source_id="demo",
                 external_id=pid,
                 title=d["title"],
-                program_id=pid,
+                item_id=pid,
             ),
             models.NoticeVersion(
                 id=f"nv-{d['key']}",
@@ -152,9 +152,9 @@ def seed_demo(session: Session, today: date) -> int:
                 kind="original",
                 content_hash=h,
             ),
-            models.ProgramVersion(
+            models.ItemVersion(
                 id=f"pv-{d['key']}",
-                program_id=pid,
+                item_id=pid,
                 version_no=1,
                 notice_version_id=f"nv-{d['key']}",
                 content_hash=h,
@@ -181,8 +181,8 @@ def seed_demo(session: Session, today: date) -> int:
         ]:
             session.add(
                 models.FieldValueRow(
-                    program_id=pid,
-                    program_version_id=f"pv-{d['key']}",
+                    item_id=pid,
+                    item_version_id=f"pv-{d['key']}",
                     name=name,
                     value=value,
                     value_type=vtype,

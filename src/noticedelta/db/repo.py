@@ -166,7 +166,7 @@ def enqueue_alert(session: Session, alert: Alert) -> bool:
                 OutboxAlert(
                     idempotency_key=alert.idempotency_key,
                     person_id=alert.person_id,
-                    program_id=alert.program_id,
+                    item_id=alert.item_id,
                     payload=asdict(alert),
                     app_id=alert.app_id,
                     app_version=alert.app_version,

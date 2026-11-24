@@ -19,7 +19,7 @@ from typing import Protocol
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta.db.models import OutboxAlert, Program, ProgramVersion
+from noticedelta.db.models import Item, ItemVersion, OutboxAlert
 
 UNSENT = ("pending", "held", "ready")
 MASS_IMPACT = 20  # 한 버전의 같은 필드 변경이 이만큼 넘는 사람을 비해당으로 바꾸면 붙잡는다
@@ -30,9 +30,7 @@ def _now() -> datetime:
 
 
 def _version_no(session: Session, pv_id: str) -> int:
-    return (
-        session.scalar(sa.select(ProgramVersion.version_no).where(ProgramVersion.id == pv_id)) or 0
-    )
+    return session.scalar(sa.select(ItemVersion.version_no).where(ItemVersion.id == pv_id)) or 0
 
 
 def _show(value, labels: Mapping[str, str]) -> str:
@@ -70,16 +68,14 @@ class Prepared:
 
 
 def _key(a: OutboxAlert) -> tuple[str, str, str, str]:
-    return (a.app_id, a.person_id, a.program_id, a.payload["field"])
+    return (a.app_id, a.person_id, a.item_id, a.payload["field"])
 
 
-def prepare(session: Session, program_id: str, *, mass_impact: int = MASS_IMPACT) -> Prepared:
+def prepare(session: Session, item_id: str, *, mass_impact: int = MASS_IMPACT) -> Prepared:
     """사업 하나의 pending 알림에 정책을 적용한다."""
     out = Prepared()
     unsent = session.scalars(
-        sa.select(OutboxAlert).where(
-            OutboxAlert.program_id == program_id, OutboxAlert.status.in_(UNSENT)
-        )
+        sa.select(OutboxAlert).where(OutboxAlert.item_id == item_id, OutboxAlert.status.in_(UNSENT))
     ).all()
     if not any(a.status == "pending" for a in unsent):
         return out
@@ -115,7 +111,7 @@ def prepare(session: Session, program_id: str, *, mass_impact: int = MASS_IMPACT
             .where(
                 OutboxAlert.app_id == a.app_id,
                 OutboxAlert.person_id == a.person_id,
-                OutboxAlert.program_id == a.program_id,
+                OutboxAlert.item_id == a.item_id,
                 OutboxAlert.status == "sent",
                 OutboxAlert.payload["field"].as_string() == p["field"],
             )
@@ -171,18 +167,18 @@ def deliver(
     session: Session,
     channel: Channel,
     *,
-    program_id: str | None = None,
+    item_id: str | None = None,
     now: Callable[[], datetime] = _now,
     labels: Mapping[str, str] | None = None,
 ) -> int:
     """ready 알림을 보낸다. 본문을 payload에 남기고 sent로 바꾼다. 보낸 수를 준다."""
     q = sa.select(OutboxAlert).where(OutboxAlert.status == "ready")
-    if program_id is not None:
-        q = q.where(OutboxAlert.program_id == program_id)
+    if item_id is not None:
+        q = q.where(OutboxAlert.item_id == item_id)
     sent = 0
     for a in session.scalars(q.order_by(OutboxAlert.created_at)).all():
-        program = session.get(Program, a.program_id)
-        message = render(a, program.title if program else a.program_id, labels)
+        item = session.get(Item, a.item_id)
+        message = render(a, item.title if item else a.item_id, labels)
         a.status = "sending"
         session.flush()
         channel.send(a, message)  # 채널 쪽은 idempotency_key로 중복을 거른다

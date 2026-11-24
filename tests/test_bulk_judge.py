@@ -97,13 +97,13 @@ def pg_session():
 def seed_program(s):
     for row in [
         models.Source(id="bizinfo", name="기업마당"),
-        models.Program(id="PG1", title="(가상) 사업", title_key="가상사업"),
+        models.Item(id="PG1", title="(가상) 사업", title_key="가상사업"),
         models.Notice(id="N1", source_id="bizinfo", external_id="X", title="(가상)"),
         models.NoticeVersion(
             id="NV1", notice_id="N1", version_no=1, kind="original", content_hash="h"
         ),
-        models.ProgramVersion(
-            id="PV1", program_id="PG1", version_no=1, notice_version_id="NV1", content_hash="h"
+        models.ItemVersion(
+            id="PV1", item_id="PG1", version_no=1, notice_version_id="NV1", content_hash="h"
         ),
     ]:
         s.add(row)
@@ -123,9 +123,7 @@ def test_bulk_judge_matches_judge_with_messy_profiles(pg_session):
     )
     s.flush()
     for name, g in GROUPS.items():
-        n = bulk_judge(
-            s, program_id="PG1", program_version_id="PV1", group=g, app_id="t", app_version=1
-        )
+        n = bulk_judge(s, item_id="PG1", item_version_id="PV1", group=g, app_id="t", app_version=1)
         assert n == len(profiles), name
         rows = s.execute(
             sa.select(
@@ -140,8 +138,6 @@ def test_bulk_judge_matches_judge_with_messy_profiles(pg_session):
             assert [r["rule_id"] for r in reasons] == [r.rule_id for r in want.reasons], name
         # 다시 돌려도 쌓이지 않는다
         assert (
-            bulk_judge(
-                s, program_id="PG1", program_version_id="PV1", group=g, app_id="t", app_version=1
-            )
+            bulk_judge(s, item_id="PG1", item_version_id="PV1", group=g, app_id="t", app_version=1)
             == 0
         )

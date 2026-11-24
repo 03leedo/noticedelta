@@ -50,7 +50,7 @@ def calendar(mine: MyPrograms) -> str:
     for p in mine.items:
         if p.deadline is not None:
             lines += _event(
-                f"deadline-{p.program_id}",
+                f"deadline-{p.item_id}",
                 p.deadline,
                 f"[마감] {p.title}",
                 f"판정: {GROUP_NAMES[p.group]}",
@@ -59,7 +59,7 @@ def calendar(mine: MyPrograms) -> str:
         if p.next_change is not None:
             c = p.next_change
             lines += _event(
-                f"change-{p.program_id}-{c.on:%Y%m%d}",
+                f"change-{p.item_id}-{c.on:%Y%m%d}",
                 c.on,
                 f"[자격 변경] {p.title}",
                 f"{RESULT_NAMES[c.before]} → {RESULT_NAMES[c.after]}",

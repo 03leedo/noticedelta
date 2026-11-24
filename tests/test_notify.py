@@ -31,7 +31,7 @@ def s():
     with Session(engine) as session:
         for row in [
             models.Source(id="bizinfo", name="기업마당"),
-            models.Program(id="PG", title="(가상) 창업 지원", title_key="k"),
+            models.Item(id="PG", title="(가상) 창업 지원", title_key="k"),
             models.Notice(id="N", source_id="bizinfo", external_id="X", title="t"),
         ]:
             session.add(row)
@@ -44,9 +44,9 @@ def s():
             )
             session.flush()
             session.add(
-                models.ProgramVersion(
+                models.ItemVersion(
                     id=f"PV{v}",
-                    program_id="PG",
+                    item_id="PG",
                     version_no=v,
                     notice_version_id=f"NV{v}",
                     content_hash=f"h{v}",

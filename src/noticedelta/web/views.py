@@ -13,7 +13,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta.db.models import FieldValueRow, Program, ProgramVersion, SegmentRow
+from noticedelta.db.models import FieldValueRow, Item, ItemVersion, SegmentRow
 from noticedelta.eligibility import RuleGroup, judge
 from noticedelta.eligibility.judge import Judgment
 from noticedelta.eligibility.temporal import (
@@ -38,7 +38,7 @@ OUTCOME_NAMES = {
 
 @dataclass
 class ProgramView:
-    program_id: str
+    item_id: str
     title: str
     org: str | None
     deadline: date | None
@@ -78,34 +78,33 @@ def _as_date(value: Any) -> date | None:
         return None
 
 
-def _current_fields(session: Session) -> dict[str, tuple[ProgramVersion, dict[str, FieldValueRow]]]:
+def _current_fields(session: Session) -> dict[str, tuple[ItemVersion, dict[str, FieldValueRow]]]:
     """사업마다 자격 규칙이 있는 가장 최근 버전과 그 버전의 필드들."""
     latest = (
-        sa.select(ProgramVersion.program_id, sa.func.max(ProgramVersion.version_no).label("no"))
-        .join(FieldValueRow, FieldValueRow.program_version_id == ProgramVersion.id)
+        sa.select(ItemVersion.item_id, sa.func.max(ItemVersion.version_no).label("no"))
+        .join(FieldValueRow, FieldValueRow.item_version_id == ItemVersion.id)
         .where(FieldValueRow.name == RULES_FIELD, FieldValueRow.app_id == APP.id)
-        .group_by(ProgramVersion.program_id)
+        .group_by(ItemVersion.item_id)
         .subquery()
     )
     pvs = session.scalars(
-        sa.select(ProgramVersion).join(
+        sa.select(ItemVersion).join(
             latest,
-            (ProgramVersion.program_id == latest.c.program_id)
-            & (ProgramVersion.version_no == latest.c.no),
+            (ItemVersion.item_id == latest.c.item_id) & (ItemVersion.version_no == latest.c.no),
         )
     ).all()
     out = {}
     for pv in pvs:
         rows = session.scalars(
             sa.select(FieldValueRow).where(
-                FieldValueRow.program_version_id == pv.id, FieldValueRow.app_id == APP.id
+                FieldValueRow.item_version_id == pv.id, FieldValueRow.app_id == APP.id
             )
         ).all()
-        out[pv.program_id] = (pv, {r.name: r for r in rows})
+        out[pv.item_id] = (pv, {r.name: r for r in rows})
     return out
 
 
-def _source_texts(session: Session, pv: ProgramVersion, lids: set[str]) -> dict[str, str]:
+def _source_texts(session: Session, pv: ItemVersion, lids: set[str]) -> dict[str, str]:
     if not lids:
         return {}
     rows = session.execute(
@@ -119,7 +118,7 @@ def _source_texts(session: Session, pv: ProgramVersion, lids: set[str]) -> dict[
 
 def my_programs(session: Session, profile: dict[str, Any], today: date) -> MyPrograms:
     items, hidden = [], 0
-    for program_id, (pv, fields) in _current_fields(session).items():
+    for item_id, (pv, fields) in _current_fields(session).items():
         deadline = _as_date(fields["deadline"].value) if "deadline" in fields else None
         if deadline is not None and deadline < today:
             continue  # 마감이 지난 사업은 보이지 않는다
@@ -131,9 +130,9 @@ def my_programs(session: Session, profile: dict[str, Any], today: date) -> MyPro
         lids = set(fields[RULES_FIELD].source_lineage_ids) | {
             r.source for r in current.reasons if r.source
         }
-        program = session.get(Program, program_id)
+        program = session.get(Item, item_id)
         view = ProgramView(
-            program_id=program_id,
+            item_id=item_id,
             title=program.title,
             org=program.org,
             deadline=deadline,

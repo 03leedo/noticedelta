@@ -32,7 +32,7 @@ def env(tmp_path):
         s.add(models.Source(id="bizinfo", name="기업마당"))
         s.flush()
         for i in range(10):
-            s.add(models.Program(id=f"PG{i}", title=f"(가상) 사업 {i}", title_key=f"k{i}"))
+            s.add(models.Item(id=f"PG{i}", title=f"(가상) 사업 {i}", title_key=f"k{i}"))
             s.add(models.Notice(id=f"N{i}", source_id="bizinfo", external_id=f"X{i}", title="t"))
             s.flush()
             for v, (deadline, body, blob) in enumerate(
@@ -59,7 +59,7 @@ def env(tmp_path):
                         blob_key=blob,
                     )
                 )
-                s.add(models.ProgramVersion(id=f"PV{i}{v}", program_id=f"PG{i}", version_no=v, notice_version_id=f"NV{i}{v}", content_hash=f"h{i}{v}"))  # fmt: skip
+                s.add(models.ItemVersion(id=f"PV{i}{v}", item_id=f"PG{i}", version_no=v, notice_version_id=f"NV{i}{v}", content_hash=f"h{i}{v}"))  # fmt: skip
                 s.flush()
         s.commit()
     return factory, store

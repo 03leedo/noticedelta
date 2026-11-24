@@ -35,14 +35,14 @@ class Source(Base):
     rate_limit_per_sec: Mapped[float | None] = mapped_column(sa.Float)
 
 
-class Program(Base):
+class Item(Base):
     """사업. 포털 게시물(notice) 여럿이 하나의 사업이 된다 (설계 6.1).
 
     기업마당은 정정할 때마다 새 번호로 다시 올리고 원공고를 닫는다. 구독·판정·알림은 게시물이 아니라
     사업에 걸어야 정정이 나와도 이어진다.
     """
 
-    __tablename__ = "program"
+    __tablename__ = "item"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(sa.Text)
     title_key: Mapped[str] = mapped_column(sa.String(300), index=True)  # 정정 표시를 뺀 정규화 제목
@@ -65,19 +65,19 @@ class Notice(Base):
     status: Mapped[str] = mapped_column(sa.String(16), default="open")  # open / closed
     current_version_id: Mapped[str | None] = mapped_column(sa.String(32))
     current_version_no: Mapped[int | None] = mapped_column(sa.Integer)  # 순서 보장용 (설계 8장)
-    program_id: Mapped[str | None] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str | None] = mapped_column(sa.ForeignKey("item.id"), index=True)
     first_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
-class ProgramLink(Base):
+class ItemLink(Base):
     """게시물 → 사업 연결의 근거. 점수가 낮으면 합치지 않고 운영자 확인으로 남긴다."""
 
-    __tablename__ = "program_link"
+    __tablename__ = "item_link"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     notice_id: Mapped[str] = mapped_column(sa.ForeignKey("notice.id"), index=True)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
     method: Mapped[str] = mapped_column(sa.String(32))  # new / repost_title
     score: Mapped[float] = mapped_column(sa.Float, default=1.0)
     decision: Mapped[str] = mapped_column(sa.String(16))  # linked / needs_review
@@ -85,16 +85,16 @@ class ProgramLink(Base):
     decided_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
 
 
-class ProgramVersion(Base):
+class ItemVersion(Base):
     """엔진의 입력이 되는 사업 내용 버전. 게시물 버전의 본문 해시 + 첨부 내용 해시로 정한다."""
 
-    __tablename__ = "program_version"
+    __tablename__ = "item_version"
     __table_args__ = (
-        sa.UniqueConstraint("program_id", "version_no"),
-        sa.UniqueConstraint("program_id", "content_hash"),
+        sa.UniqueConstraint("item_id", "version_no"),
+        sa.UniqueConstraint("item_id", "content_hash"),
     )
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
     version_no: Mapped[int] = mapped_column(sa.Integer)
     notice_version_id: Mapped[str] = mapped_column(sa.ForeignKey("notice_version.id"))
     content_hash: Mapped[str] = mapped_column(sa.String(64))
@@ -249,7 +249,7 @@ class SegmentRow(Base):
     locator: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
-# 아래 테이블은 모두 사업(program)과 사업 버전에 건다 (DESIGN 6.1). 기업마당이 정정 때 새 번호로
+# 아래 테이블은 모두 항목(item, 지원사업 앱에서는 사업)과 항목 버전에 건다 (DESIGN 6.1). 기업마당이 정정 때 새 번호로
 # 다시 올려도 구독·판정·알림이 끊기지 않게 하기 위해서다.
 
 
@@ -271,8 +271,8 @@ class AppDefinitionRow(Base):
 class FieldValueRow(Base):
     __tablename__ = "field_value"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
-    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
+    item_version_id: Mapped[str] = mapped_column(sa.ForeignKey("item_version.id"))
     name: Mapped[str] = mapped_column(sa.String(64))
     value: Mapped[object] = mapped_column(JSONType)
     value_type: Mapped[str] = mapped_column(sa.String(16))
@@ -292,8 +292,8 @@ class FieldValueRow(Base):
 class EligibilityRuleRow(Base):
     __tablename__ = "eligibility_rule"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
-    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
+    item_version_id: Mapped[str] = mapped_column(sa.ForeignKey("item_version.id"))
     group_id: Mapped[str] = mapped_column(sa.String(32))
     attribute: Mapped[str] = mapped_column(sa.String(64))
     op: Mapped[str] = mapped_column(sa.String(8))
@@ -342,10 +342,10 @@ class Profile(Base):
 
 class SubscriptionRow(Base):
     __tablename__ = "subscription"
-    __table_args__ = (sa.UniqueConstraint("person_id", "program_id"),)
+    __table_args__ = (sa.UniqueConstraint("person_id", "item_id"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     person_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.person_id"), index=True)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
     fields: Mapped[list] = mapped_column(JSONType, default=list)
     # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
     app_id: Mapped[str] = mapped_column(sa.String(64))
@@ -357,12 +357,12 @@ class JudgmentRow(Base):
 
     __tablename__ = "judgment"
     __table_args__ = (
-        sa.UniqueConstraint("person_id", "program_id", "program_version_id", "ruleset_hash"),
+        sa.UniqueConstraint("person_id", "item_id", "item_version_id", "ruleset_hash"),
     )
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     person_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.person_id"), index=True)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
-    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
+    item_version_id: Mapped[str] = mapped_column(sa.ForeignKey("item_version.id"))
     ruleset_hash: Mapped[str] = mapped_column(sa.String(64))
     result: Mapped[str] = mapped_column(sa.String(16))  # eligible / ineligible / unknown
     reasons: Mapped[list] = mapped_column(JSONType, default=list)
@@ -374,9 +374,9 @@ class JudgmentRow(Base):
 
 class ChangeEvent(Base):
     __tablename__ = "change_event"
-    __table_args__ = (sa.UniqueConstraint("program_id", "to_version_id"),)
+    __table_args__ = (sa.UniqueConstraint("item_id", "to_version_id"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
     from_version_id: Mapped[str | None] = mapped_column(sa.String(32))
     to_version_id: Mapped[str] = mapped_column(sa.String(32))
     changed_lineages: Mapped[dict] = mapped_column(JSONType, default=dict)
@@ -393,8 +393,8 @@ class LabelRow(Base):
     __tablename__ = "label"
     __table_args__ = (sa.UniqueConstraint("to_version_id", "field", "round", "labeler"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
-    to_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
+    to_version_id: Mapped[str] = mapped_column(sa.ForeignKey("item_version.id"), index=True)
     field: Mapped[str] = mapped_column(sa.String(64))
     round: Mapped[int] = mapped_column(sa.Integer, default=1)  # 1: 처음, 2: 7일 뒤 다시
     labeler: Mapped[str] = mapped_column(sa.String(64), default="me")
@@ -416,7 +416,7 @@ class OutboxAlert(Base):
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     idempotency_key: Mapped[str] = mapped_column(sa.String(200), unique=True)
     person_id: Mapped[str] = mapped_column(sa.String(32), index=True)
-    program_id: Mapped[str] = mapped_column(sa.String(32), index=True)
+    item_id: Mapped[str] = mapped_column(sa.String(32), index=True)
     payload: Mapped[dict] = mapped_column(JSONType, default=dict)
     # pending → held | ready → sending → sent, 그리고 superseded / discarded / corrected (DESIGN 7.8)
     status: Mapped[str] = mapped_column(sa.String(16), default="pending")

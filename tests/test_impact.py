@@ -76,7 +76,7 @@ def run(new_doc, results, **kw):
     ex = FakeExtractor(results)
     res = run_impact(
         candidate_detector=grants.candidates,
-        program_id="N1",
+        item_id="N1",
         to_version_id="V2",
         change=change,
         old_fields=old_fields,
@@ -184,7 +184,7 @@ def test_equal_value_reextraction_updates_sources():
     )
     res = run_impact(
         candidate_detector=grants.candidates,
-        program_id="N1",
+        item_id="N1",
         to_version_id="V2",
         change=change,
         old_fields=old_fields,

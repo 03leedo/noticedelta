@@ -175,7 +175,7 @@ def test_deleted_uncited_clause_is_detected():
     ex = Extractor({})
     run_impact(
         candidate_detector=grants.candidates,
-        program_id="N",
+        item_id="N",
         to_version_id="v2",
         change=change,
         old_fields=fields,
@@ -200,7 +200,7 @@ def test_field_not_found_again_becomes_stale():
     }
     res = run_impact(
         candidate_detector=grants.candidates,
-        program_id="N",
+        item_id="N",
         to_version_id="v2",
         change=change,
         old_fields=fields,
@@ -231,7 +231,7 @@ def test_newly_eligible_user_without_prior_judgment_is_alerted():
     )
     res = run_impact(
         candidate_detector=grants.candidates,
-        program_id="N",
+        item_id="N",
         to_version_id="v2",
         change=change,
         old_fields=fields,

@@ -135,7 +135,7 @@ def run_demo(
 
     res = run_impact(
         candidate_detector=candidates,
-        program_id=sc["notice_id"],
+        item_id=sc["notice_id"],
         to_version_id=v2["version_id"],
         change=change,
         old_fields=fields,

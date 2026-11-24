@@ -108,7 +108,7 @@ def test_unknown_link_is_404_and_edit_saves(env):
 def test_titles_are_escaped(env):
     client, factory = env
     with factory() as s:
-        s.execute(sa.update(models.Program).values(title="<script>alert(1)</script>"))
+        s.execute(sa.update(models.Item).values(title="<script>alert(1)</script>"))
         s.commit()
     page = client.get(make_profile(client, **BUSAN_FOUNDER)).text
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;" in page
@@ -145,7 +145,7 @@ def test_inbox_shows_sent_alerts(env):
                 app_version=1,
                 idempotency_key=f"{pid}:demo-youth:eligibility_rules:pv-youth",
                 person_id=pid,
-                program_id="demo-youth",
+                item_id="demo-youth",
                 payload={
                     "message": "(가상) 사업: 신청 자격 판정이 해당에서 비해당(으)로 바뀌었습니다."
                 },
@@ -201,7 +201,7 @@ def test_delete_removes_everything_and_the_link_stops_working(env):
                 app_id="grant-alerts",
                 app_version=1,
                 person_id=pid,
-                program_id="demo-youth",
+                item_id="demo-youth",
                 fields=[],
             )
         )
@@ -211,7 +211,7 @@ def test_delete_removes_everything_and_the_link_stops_working(env):
                 app_version=1,
                 idempotency_key=f"{pid}:k",
                 person_id=pid,
-                program_id="demo-youth",
+                item_id="demo-youth",
                 payload={},
                 status="sent",
             )

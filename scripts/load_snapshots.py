@@ -29,7 +29,7 @@ def main() -> None:
         s = load_snapshots(session, root, LocalBlobStore(root / "blobs"))
     print(f"실행 {s.runs}개, 항목 {s.items}개")
     print(f"새 게시물 {s.new_postings}, 게시물 버전 {s.new_posting_versions}, 닫힘 {s.closed}")
-    print(f"새 사업 {s.new_programs}, 사업 버전 {s.new_program_versions}, 연결 {dict(s.links)}")
+    print(f"새 사업 {s.new_items}, 사업 버전 {s.new_item_versions}, 연결 {dict(s.links)}")
 
 
 if __name__ == "__main__":

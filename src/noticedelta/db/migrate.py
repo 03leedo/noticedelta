@@ -45,7 +45,7 @@ def upgrade(engine: sa.Engine) -> str:
         cfg.attributes["connection"] = conn
         tables = set(sa.inspect(conn).get_table_names())
         version = MigrationContext.configure(conn).get_current_revision()
-        if version is None and "program" in tables:
+        if version is None and "source" in tables:  # 첫 스키마부터 이름이 그대로인 표
             # create_all로 만든 DB. 지금 모델의 표가 다 있으면 최신, 아니면 첫 마이그레이션 상태다.
             from noticedelta.db.models import Base
 
