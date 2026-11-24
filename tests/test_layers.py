@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1] / "src" / "noticedelta"
 LAYERS: dict[str, list[str]] = {
     "공통": [
         "blobstore",
+        "catalog",  # 출처 한 장 규격(source-catalog.md)
         "config",
         "db",
         "document",

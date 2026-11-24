@@ -8,7 +8,7 @@ import pytest
 from noticedelta import grants
 from noticedelta.appspec import AppDefinition, AppSpecError, check_app, load_app
 from noticedelta.eligibility.rules import Attribute, Derive
-from noticedelta.sources import bizinfo, kstartup
+from noticedelta.sources import CATALOG
 
 BASE = json.loads(grants.DEFINITION.read_text(encoding="utf-8"))
 
@@ -85,20 +85,14 @@ def test_moving_to_data_changed_nothing_the_engine_sees():
 
 
 def adapter_keys():
-    """어댑터가 본문으로 읽는 키(출처 카탈로그가 생기기 전의 대신)."""
-    biz = {"pblancNm", "bsnsSumryCn", "trgetNm", "reqstBeginEndDe", "reqstMthPapersCn", "refrncNm"}
-    ks = {k for _, k in kstartup._BODY_FIELDS} | {
-        "biz_pbanc_nm",
-        "pbanc_rcpt_bgng_dt",
-        "pbanc_rcpt_end_dt",
-    }
-    return {"bizinfo": biz, "kstartup": ks}
+    """출처 카탈로그가 앱에 읽게 해 주는 키."""
+    return {sid: sheet.readable_keys() for sid, sheet in CATALOG.items()}
 
 
-def test_sources_read_what_the_adapters_read():
-    assert bizinfo.to_record and kstartup.to_record
+def test_sources_read_only_catalog_keys():
     app = load_app(grants.DEFINITION, sources=adapter_keys())
-    assert {s.id: set(s.read) for s in app.sources} == adapter_keys()
+    for s in app.sources:
+        assert set(s.read) <= adapter_keys()[s.id]
 
 
 @pytest.mark.parametrize(

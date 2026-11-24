@@ -385,7 +385,7 @@ web/                 앱 화면
 
 | 층 | 모듈 |
 |---|---|
-| 공통 | `blobstore` `config` `db`(모델·마이그레이션) `document` `jobs` `llm`(게이트웨이·녹화본·하네스) `metrics` `notify` `parsing` `snapshot` `sources.base·http·resilience·attachments` `text` `tooling` `mcp_adapter` |
+| 공통 | `blobstore` `catalog`(출처 한 장 규격) `config` `db`(모델·마이그레이션) `document` `jobs` `llm`(게이트웨이·녹화본·하네스) `metrics` `notify` `parsing` `people`(사람 ID와 개인 링크) `snapshot` `sources.base·http·resilience·attachments` `text` `tooling` `mcp_adapter` |
 | 엔진 | `appspec`(앱 정의 규격·검증) `app_registry`(앱 정의의 원본, 판 넣기·켜기) `segments` `matching` `values` `citation` `impact` `history` `ingest` `eligibility`(규칙·판정·대량 판정) `evaluation` `doc_tools` `item_tools` `db.repo` |
 | 팩 (지원사업) | `grants`(앱 정의 `apps/grant-alerts.json`을 읽어 필드 정의·낱말·자격 속성 사전으로) `sources.bizinfo·kstartup`(출처 지식) `llm.extract`(프롬프트) `programs`(사업 묶기) `names` `labeling` `eligibility.synthetic` |
 | 앱 | `web` `demo` `pipeline`(조립) |

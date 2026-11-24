@@ -1,0 +1,123 @@
+{
+  "kind": "source",
+  "id": "bizinfo",
+  "title": "기업마당 지원사업 공고",
+  "status": "verified",
+  "owner": "platform",
+  "connector": {
+    "kind": "code",
+    "adapter": "bizinfo"
+  },
+  "fetch": {
+    "every_hours": 6,
+    "rate_per_second": 1
+  },
+  "item": {
+    "id": "pblancId",
+    "title": "pblancNm",
+    "url": "pblancUrl"
+  },
+  "keys": {
+    "pblancId": {
+      "about": "공고 ID"
+    },
+    "pblancNm": {
+      "about": "공고 제목"
+    },
+    "pblancUrl": {
+      "about": "공고 상세 페이지 주소"
+    },
+    "bsnsSumryCn": {
+      "about": "사업 개요",
+      "html": true
+    },
+    "trgetNm": {
+      "about": "지원 대상"
+    },
+    "reqstBeginEndDe": {
+      "about": "신청 기간(시작 ~ 끝)"
+    },
+    "reqstMthPapersCn": {
+      "about": "신청 방법과 제출 서류",
+      "html": true
+    },
+    "refrncNm": {
+      "about": "문의처"
+    },
+    "excInsttNm": {
+      "about": "수행 기관"
+    },
+    "jrsdInsttNm": {
+      "about": "소관 기관"
+    },
+    "pldirSportRealmLclasCodeNm": {
+      "about": "지원 분야(대분류)"
+    },
+    "hashtags": {
+      "about": "해시태그(쉼표로 이음)"
+    },
+    "creatPnttm": {
+      "about": "등록 일시"
+    },
+    "rceptEngnHmpgUrl": {
+      "about": "접수 기관 누리집 주소"
+    },
+    "fileNm": {
+      "about": "붙임 서식 파일 이름들(@로 이음)"
+    },
+    "flpthNm": {
+      "about": "붙임 서식 파일 주소들(@로 이음, fileNm과 같은 순서)"
+    },
+    "printFileNm": {
+      "about": "공고문 본 파일 이름"
+    },
+    "printFlpthNm": {
+      "about": "공고문 본 파일 주소"
+    }
+  },
+  "meta": {
+    "apply_start": {
+      "key": "reqstBeginEndDe",
+      "about": "신청 시작일(앞 날짜)"
+    },
+    "apply_end": {
+      "key": "reqstBeginEndDe",
+      "about": "신청 마감일(뒤 날짜)"
+    }
+  },
+  "ignore": {
+    "keys": [
+      "id",
+      "totCnt",
+      "inqireCo",
+      "updtPnttm"
+    ],
+    "url_params": [
+      "downloadToken"
+    ],
+    "url_keys": [
+      "flpthNm",
+      "printFlpthNm"
+    ]
+  },
+  "group": "repost_title",
+  "attachments": {
+    "names": [
+      "printFileNm",
+      "fileNm"
+    ],
+    "urls": [
+      "printFlpthNm",
+      "flpthNm"
+    ],
+    "hosts": [
+      "www.bizinfo.go.kr",
+      "bizinfo.go.kr"
+    ]
+  },
+  "terms": {
+    "license": "공공누리 제3유형(출처표시+변경금지), data.go.kr 15157820",
+    "quote_limit": 300,
+    "note": "조회수(inqireCo)·일괄 수정 시각(updtPnttm)은 내용이 그대로여도 바뀐다. 첨부 주소는 2026-10-30부터 내려받기 토큰이 붙고 한꺼번에 새로 발급된다"
+  }
+}

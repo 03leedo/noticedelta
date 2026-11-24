@@ -13,9 +13,15 @@ from pathlib import Path
 
 from noticedelta.appspec import AppDefinition, load_app
 from noticedelta.impact import keyword_detector
+from noticedelta.sources import CATALOG
 
 DEFINITION = Path(__file__).parent / "apps" / "grant-alerts.json"
-APP: AppDefinition = load_app(DEFINITION)
+# 출처와 키, 구조화 값은 출처 카탈로그(sources/catalog/*.json)에 있는 것만 쓸 수 있다
+APP: AppDefinition = load_app(
+    DEFINITION,
+    sources={sid: s.readable_keys() for sid, s in CATALOG.items()},
+    meta={sid: set(s.meta) for sid, s in CATALOG.items()},
+)
 
 FIELD_TYPES: dict[str, str] = APP.value_types()
 FIELD_GUIDE: dict[str, str] = APP.guides()  # LLM에 주는 안내. 바꾸면 녹화본 키가 바뀐다
