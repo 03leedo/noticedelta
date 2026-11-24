@@ -86,7 +86,7 @@ def test_extraction_through_the_mask_still_passes_citation_check(tmp_path):
     answer = {
         "name": "contact",
         "value_json": json.dumps("사업운영팀 [[PHONE_1]]"),
-        "sources": ["s1"],
+        "sources": ["1"],  # 기본 틀(v2)은 요청 안의 줄 번호로 답한다
     }
     provider = Echo(output={"fields": [answer]})
     extract = LLMExtractor(gateway(tmp_path, provider, [PIIMask()]))

@@ -20,13 +20,21 @@ from typing import Protocol
 from noticedelta.evaluation.dataset import EvalEvent
 from noticedelta.impact import Extractor, FieldValue, keyword_detector, run_impact
 from noticedelta.llm.anthropic_provider import DEFAULT_MODEL
-from noticedelta.llm.gateway import Gateway, LLMRequest, MissingCassette
+from noticedelta.llm.gateway import BudgetExceeded, Gateway, LLMRequest, MissingCassette
 from noticedelta.llm.openai_compat import ProviderError
 from noticedelta.segments import Segment
 from noticedelta.values import coerce_shape, values_equal
 
 NO_CASSETTE = "녹화본 없음"
 CALL_FAILED = "호출 실패"  # 공급자가 끝내 답하지 못함(시간 초과, 한도). 그 사업은 거기까지만 잰다
+OVER_BUDGET = "예산 초과"  # 이번 실행의 토큰 예산을 넘어 보내지 않았다
+_STOPS = (MissingCassette, ProviderError, BudgetExceeded)
+
+
+def _note(e: Exception) -> str:
+    if isinstance(e, MissingCassette):
+        return NO_CASSETTE
+    return OVER_BUDGET if isinstance(e, BudgetExceeded) else CALL_FAILED
 
 
 @dataclass
@@ -35,6 +43,10 @@ class Outcome:
     calls: int = 0  # LLM 호출 수
     input_chars: int = 0  # LLM에 넘긴 조각 글자 수
     note: str = ""
+    input_tokens: int = 0  # 공급자가 센 토큰(녹화본이면 녹화 때 값)
+    output_tokens: int = 0
+    planned_calls: int = 0  # 미리 세기(PLAN): 녹화본이 없어 보냈어야 할 호출
+    planned_tokens: int = 0  # 그 호출들의 입력 토큰 어림
 
 
 @dataclass(frozen=True)
@@ -74,21 +86,38 @@ class B0Meta:
         return Outcome({f for f in self.spec.meta if ev.meta_before.get(f) != ev.meta_after.get(f)})
 
 
+_TOKEN_KEYS = ("input_tokens", "output_tokens", "planned_calls", "planned_tokens")
+
+
 class _Meter:
-    """추출기를 감싸 호출 수와 넘긴 글자 수를 센다."""
+    """추출기를 감싸 호출 수와 넘긴 글자 수를 세고, 게이트웨이의 토큰 합계에서 이번 몫을 뗀다."""
 
     def __init__(self, extractor: Extractor):
         self.extractor = extractor
         self.calls = self.chars = 0
+        self.gateways: list[Gateway] = []
+        if isinstance(gw := getattr(extractor, "gateway", None), Gateway):
+            self.watch(gw)
+
+    def watch(self, gateway: Gateway) -> None:
+        if all(g is not gateway for g in self.gateways):
+            self.gateways.append(gateway)
+            self._mark = self._totals()
+
+    def _totals(self) -> dict[str, int]:
+        return {k: sum(getattr(g.usage, k) for g in self.gateways) for k in _TOKEN_KEYS}
 
     def __call__(self, fields: set[str], segments: Sequence[Segment]) -> dict[str, FieldValue]:
         self.calls += 1
         self.chars += sum(len(s.text) for s in segments)
         return self.extractor(fields, segments)
 
-    def take(self) -> tuple[int, int]:
-        out = (self.calls, self.chars)
+    def take(self) -> Outcome:
+        now = self._totals() if self.gateways else dict.fromkeys(_TOKEN_KEYS, 0)
+        mark = getattr(self, "_mark", now)
+        out = Outcome(None, self.calls, self.chars, **{k: now[k] - mark[k] for k in _TOKEN_KEYS})
         self.calls = self.chars = 0
+        self._mark = now
         return out
 
 
@@ -101,24 +130,25 @@ class _WithState:
     def start(self, segments: Sequence[Segment]) -> None:
         try:
             self.fields = self.meter(set(self.spec.types), segments) if segments else {}
-        except (MissingCassette, ProviderError):
+        except _STOPS:
             self.fields = None
-        self.meter.take()  # 처음 추출은 이벤트 비용이 아니다
+        self.start_cost = (
+            self.meter.take()
+        )  # 처음 추출은 이벤트 비용이 아니다(미리 세기에는 넣는다)
 
     def step(self, ev: EvalEvent) -> Outcome:
         if self.fields is None:
             return Outcome(None, note=NO_CASSETTE)
         try:
             changed = self._step(ev)
-        except (MissingCassette, ProviderError) as e:
+        except _STOPS as e:
             # 여기서 끊기면 뒤 이벤트의 이전 값도 믿을 수 없다. 이 사업은 여기까지만 잰다.
             self.fields = None
             self.meter.take()
-            return Outcome(
-                None, note=NO_CASSETTE if isinstance(e, MissingCassette) else CALL_FAILED
-            )
-        calls, chars = self.meter.take()
-        return Outcome(changed, calls, chars)
+            return Outcome(None, note=_note(e))
+        out = self.meter.take()
+        out.changed = changed
+        return out
 
     def _step(self, ev: EvalEvent) -> set[str]:
         raise NotImplementedError
@@ -152,6 +182,7 @@ class Engine(_WithState):
 
 
 DIFF_TEMPLATE = "diff-v1"
+DIFF_TEMPLATE_V2 = "diff-v2"  # 추출 v2와 같은 절약: 조각 ID 대신 요청 안의 짧은 번호
 
 
 def _diff_schema(names: Sequence[str]) -> dict:
@@ -178,25 +209,37 @@ def _diff_schema(names: Sequence[str]) -> dict:
 
 
 def build_diff_request(
-    fields: Mapping[str, FieldValue], ev: EvalEvent, spec: Fields, *, model: str = DEFAULT_MODEL
+    fields: Mapping[str, FieldValue],
+    ev: EvalEvent,
+    spec: Fields,
+    *,
+    model: str = DEFAULT_MODEL,
+    template: str = DIFF_TEMPLATE,
 ) -> LLMRequest:
     old = {s.lineage_id: s for s in ev.old_segments}
     new = {s.lineage_id: s for s in ev.change.segments}
+    shown: dict[str, str] = {}  # lineage_id → 줄 표시. v1은 ID 그대로, v2는 1부터 센 번호
+
+    def tag(lid: str) -> str:
+        if template == DIFF_TEMPLATE:
+            return lid
+        return shown.setdefault(lid, str(len(shown) + 1))
+
     lines = []
     for lid in ev.change.modified:
         lines += [
-            f"[{lid}] 이전: {old[lid].text if lid in old else ''}",
-            f"[{lid}] 이후: {new[lid].text}",
+            f"[{tag(lid)}] 이전: {old[lid].text if lid in old else ''}",
+            f"[{tag(lid)}] 이후: {new[lid].text}",
         ]
-    lines += [f"[{lid}] 추가: {new[lid].text}" for lid in ev.change.added]
-    lines += [f"[{lid}] 삭제: {old[lid].text}" for lid in ev.change.removed if lid in old]
+    lines += [f"[{tag(lid)}] 추가: {new[lid].text}" for lid in ev.change.added]
+    lines += [f"[{tag(lid)}] 삭제: {old[lid].text}" for lid in ev.change.removed if lid in old]
     before = "\n".join(
         f"- {name} ({spec.guide.get(name, name)}): {json.dumps(fv.value, ensure_ascii=False)}"
         for name, fv in sorted(fields.items())
     )
     return LLMRequest(
         model=model,
-        template_version=DIFF_TEMPLATE,
+        template_version=template,
         system=spec.diff_system,
         input=f"정정 전 필드 값:\n{before}\n\n바뀐 조각:\n" + "\n".join(lines),
         output_schema=_diff_schema(sorted(spec.types)),
@@ -207,13 +250,22 @@ class B3Diff(_WithState):
     """바뀌었는지는 LLM의 답을 그대로 믿는다(타입별 비교를 하지 않는 것이 엔진과의 차이다)."""
 
     def __init__(
-        self, extractor: Extractor, gateway: Gateway, spec: Fields, *, model: str = DEFAULT_MODEL
+        self,
+        extractor: Extractor,
+        gateway: Gateway,
+        spec: Fields,
+        *,
+        model: str = DEFAULT_MODEL,
+        template: str = DIFF_TEMPLATE,
     ):
         super().__init__(extractor, spec)
-        self.gateway, self.model = gateway, model
+        self.gateway, self.model, self.template = gateway, model, template
+        self.meter.watch(gateway)
 
     def _step(self, ev: EvalEvent) -> set[str]:
-        req = build_diff_request(self.fields, ev, self.spec, model=self.model)
+        req = build_diff_request(
+            self.fields, ev, self.spec, model=self.model, template=self.template
+        )
         self.meter.calls += 1
         self.meter.chars += len(req.input)
         resp = self.gateway.complete(req)

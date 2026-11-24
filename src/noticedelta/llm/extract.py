@@ -1,7 +1,12 @@
 """LLM 필드 추출기 (설계 7.5). impact.Extractor 구현.
 
-조각을 `[lineage_id] 텍스트` 줄로 넘기고, 값마다 근거 조각을 함께 받는다.
+조각을 한 줄씩 넘기고, 값마다 근거 조각을 함께 받는다.
 받은 값은 인용 검증을 통과해야 신뢰도 1.0을 유지한다.
+
+틀(template)은 둘이다. 녹화본 키에 틀 이름이 들어가므로 v1의 요청은 한 글자도 바꾸지 않는다.
+- extract-v1: `[lineage_id] 텍스트`. 12자리 ID가 입력 토큰의 절반 가까이를 먹었다(녹화본 60개 분석).
+- extract-v2(기본): 요청 안에서만 쓰는 짧은 번호 `[1] 텍스트`, 빈 조각은 뺀다. 답의 번호를
+  lineage_id로 되돌리므로 바깥(엔진·인용 검증·저장)은 달라지는 것이 없다.
 """
 
 from __future__ import annotations
@@ -20,7 +25,9 @@ from noticedelta.llm.gateway import Gateway, LLMRequest
 from noticedelta.segments import Segment
 from noticedelta.values import coerce_shape
 
-TEMPLATE_VERSION = "extract-v1"
+TEMPLATE_V1 = "extract-v1"
+TEMPLATE_V2 = "extract-v2"
+TEMPLATE_VERSION = TEMPLATE_V2  # 새로 부르는 추출의 기본 틀
 LOW_CONFIDENCE = 0.3
 
 SYSTEM_PROMPT = f"""너는 한국 정부 지원사업 공고에서 정해진 필드만 뽑는 추출기다.
@@ -35,6 +42,14 @@ value_json에는 값을 JSON으로 직렬화한 문자열을 넣는다.
 - business_age_months는 개월 수(7년 이내 → <= 84), ceo_age는 만 나이, revenue_krw는 원 단위.
 연산자: == != < <= > >= in not_in between
 사전에 없는 조건은 억지로 바꾸지 말고 manual에 원문 그대로 둔다."""
+
+# v2는 첫 두 줄만 다르다: 조각ID 대신 줄 번호를 적게 한다.
+SYSTEM_PROMPT_V2 = SYSTEM_PROMPT.replace(
+    "입력의 각 줄은 `[조각ID] 원문`이다. 요청된 필드만 뽑고, 값마다 근거가 된 조각ID를 sources에 적는다.",
+    "입력의 각 줄은 `[번호] 원문`이다. 요청된 필드만 뽑고, 값마다 근거가 된 줄의 번호를 sources에 적는다.",
+)
+assert SYSTEM_PROMPT_V2 != SYSTEM_PROMPT
+_SYSTEM = {TEMPLATE_V1: SYSTEM_PROMPT, TEMPLATE_V2: SYSTEM_PROMPT_V2}
 
 
 # 평가의 B3(바뀐 조각만 주고 무엇이 바뀌었는지 묻는 방식)에 쓰는 지시문
@@ -67,19 +82,41 @@ def _schema(fields: list[str]) -> dict:
     }
 
 
+def labeled(segments: Sequence[Segment], template: str = TEMPLATE_VERSION) -> dict[str, Segment]:
+    """프롬프트의 줄 표시 → 조각. v1은 lineage_id, v2는 1부터 센 번호(빈 조각은 뺀다)."""
+    if template == TEMPLATE_V1:
+        return {s.lineage_id: s for s in segments}
+    if template != TEMPLATE_V2:
+        raise ValueError(f"모르는 추출 틀: {template}")
+    kept = [s for s in segments if s.text.strip()]
+    return {str(i): s for i, s in enumerate(kept, 1)}
+
+
 def build_request(
-    fields: set[str], segments: Sequence[Segment], *, model: str = DEFAULT_MODEL
+    fields: set[str],
+    segments: Sequence[Segment],
+    *,
+    model: str = DEFAULT_MODEL,
+    template: str = TEMPLATE_VERSION,
 ) -> LLMRequest:
     names = sorted(f for f in fields if f in FIELD_TYPES)
     guide = "\n".join(f"- {n}: {FIELD_GUIDE[n]}" for n in names)
-    lines = "\n".join(f"[{s.lineage_id}] {s.text}" for s in segments)
+    if template == TEMPLATE_V1:  # 녹화본 키가 그대로이도록 예전 그대로 만든다
+        lines = "\n".join(f"[{s.lineage_id}] {s.text}" for s in segments)
+    else:
+        lines = "\n".join(f"[{k}] {s.text}" for k, s in labeled(segments, template).items())
     return LLMRequest(
         model=model,
-        template_version=TEMPLATE_VERSION,
-        system=SYSTEM_PROMPT,
+        template_version=template,
+        system=_SYSTEM[template],
         input=f"추출할 필드:\n{guide}\n\n공고 조각:\n{lines}",
         output_schema=_schema(names),
     )
+
+
+def _label(source) -> str:
+    """답의 근거 표시를 줄 표시로. 모델이 "[3]"이나 숫자 3으로 주기도 한다."""
+    return str(source).strip().strip("[]").strip()
 
 
 def _iter_rules(group: RuleGroup):
@@ -92,18 +129,25 @@ def _iter_rules(group: RuleGroup):
 
 class LLMExtractor:
     def __init__(
-        self, gateway: Gateway, *, model: str = DEFAULT_MODEL, default_year: int | None = None
+        self,
+        gateway: Gateway,
+        *,
+        model: str = DEFAULT_MODEL,
+        default_year: int | None = None,
+        template: str = TEMPLATE_VERSION,
     ):
         self.gateway = gateway
         self.model = model
         self.default_year = default_year
+        self.template = template
 
     def __call__(self, fields: set[str], segments: Sequence[Segment]) -> dict[str, FieldValue]:
         wanted = {f for f in fields if f in FIELD_TYPES}
-        if not wanted or not segments:
+        by_label = labeled(segments, self.template)
+        if not wanted or not by_label:
             return {}
-        resp = self.gateway.complete(build_request(wanted, segments, model=self.model))
-        text_by_id = {s.lineage_id: s.text for s in segments}
+        req = build_request(wanted, segments, model=self.model, template=self.template)
+        resp = self.gateway.complete(req)
 
         out: dict[str, FieldValue] = {}
         for item in resp.output.get("fields", []):
@@ -114,8 +158,12 @@ class LLMExtractor:
                 value = json.loads(item["value_json"])
             except (KeyError, json.JSONDecodeError):
                 continue
-            sources = [s for s in item.get("sources", []) if s in text_by_id]
-            cited = [text_by_id[s] for s in sources]
+            keys = item.get("sources", [])
+            if self.template != TEMPLATE_V1:  # v1의 재생 결과가 바뀌지 않게 v1은 예전 그대로 맞춘다
+                keys = map(_label, keys)
+            hits = [by_label[k] for k in keys if k in by_label]
+            sources = [h.lineage_id for h in hits]
+            cited = [h.text for h in hits]
             fv = self._to_field(name, value, sources, cited)
             if fv is not None:
                 out[name] = fv

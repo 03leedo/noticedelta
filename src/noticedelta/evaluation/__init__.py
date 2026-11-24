@@ -16,11 +16,22 @@ from noticedelta.evaluation.dataset import (
     load_labels,
     split_of,
 )
-from noticedelta.evaluation.methods import B0Meta, B2Full, B3Diff, Engine, Fields, Outcome
+from noticedelta.evaluation.methods import (
+    DIFF_TEMPLATE,
+    DIFF_TEMPLATE_V2,
+    B0Meta,
+    B2Full,
+    B3Diff,
+    Engine,
+    Fields,
+    Outcome,
+)
 from noticedelta.evaluation.metrics import Label, Score, score, wilson
 from noticedelta.evaluation.run import Row, disagreements, evaluate, input_sizes, render
 
 __all__ = [
+    "DIFF_TEMPLATE",
+    "DIFF_TEMPLATE_V2",
     "B0Meta",
     "B2Full",
     "B3Diff",

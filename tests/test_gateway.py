@@ -4,14 +4,19 @@ import pytest
 
 from noticedelta.llm import (
     AnthropicProvider,
+    Budget,
+    BudgetExceeded,
     FileCassetteStore,
     Gateway,
     LLMRequest,
     LLMResponse,
     MissingCassette,
     Mode,
+    calibrate,
+    estimate_tokens,
     request_key,
 )
+from noticedelta.llm.gateway import request_chars
 
 SCHEMA = {
     "type": "object",
@@ -136,3 +141,38 @@ def test_anthropic_provider_uses_structured_output_and_prices():
 def test_anthropic_provider_raises_on_refusal():
     with pytest.raises(RuntimeError):
         AnthropicProvider(fake_client(stop="refusal")).complete(req())
+
+
+def test_plan_counts_missing_calls_once_without_sending(tmp_path):
+    store = FileCassetteStore(tmp_path)
+    p = CountingProvider()
+    Gateway(p, store, Mode.RECORD).complete(req("a"))  # 녹화본이 있는 요청
+    gw = Gateway(p, store, Mode.PLAN, tokens_per_char=1.0)
+    assert gw.complete(req("a")).output == {"x": 1}  # 녹화본은 그대로 쓴다
+    assert gw.complete(req("bb")).output == {}  # 없는 것은 보내지 않고 빈 응답
+    gw.complete(req("bb"))  # 실제로 돌리면 두 번째는 방금 녹화한 것을 쓴다
+    assert p.calls == 1
+    assert gw.usage.planned_calls == 1
+    assert gw.usage.planned_tokens == estimate_tokens(req("bb"), 1.0)
+    assert gw.usage.live_calls == 0
+
+
+def test_budget_blocks_a_call_before_sending_and_is_shared(tmp_path):
+    p = CountingProvider()  # 호출마다 입력 100 + 출력 10 토큰
+    budget = Budget(limit=250)
+    a = Gateway(p, FileCassetteStore(tmp_path / "a"), Mode.LIVE, budget=budget)
+    b = Gateway(p, FileCassetteStore(tmp_path / "b"), Mode.LIVE, budget=budget)
+    a.complete(req("x"))
+    b.complete(req("y"))
+    assert budget.spent == 220 and a.usage.live_tokens == 110
+    with pytest.raises(BudgetExceeded):
+        a.complete(req("z" * 100))  # 어림 70토큰이면 250을 넘는다
+    assert p.calls == 2
+
+
+def test_calibrate_reads_the_token_per_char_ratio_from_cassettes(tmp_path):
+    store = FileCassetteStore(tmp_path)
+    Gateway(CountingProvider(), store, Mode.RECORD).complete(req("a"))
+    ratio = calibrate(store.records(), "claude-haiku-5-5", "t1")
+    assert ratio == pytest.approx(100 / request_chars(req("a")))
+    assert calibrate(store.records(), "other-model", "t1") is None

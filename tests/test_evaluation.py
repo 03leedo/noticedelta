@@ -299,3 +299,38 @@ def test_a_failed_call_stops_only_that_program(tmp_path):
     m.fields = {}
     out = m.step(SimpleNamespace(change=SimpleNamespace(segments=[SimpleNamespace(text="x")])))
     assert out.changed is None and out.note == CALL_FAILED
+
+
+def test_rows_carry_tokens_and_the_plan_of_missing_calls(tmp_path, chain):
+    """토큰은 게이트웨이가 센 값에서 방식마다 이번 몫만 뗀다. 미리 세기는 보내지 않고 크기만 센다."""
+    from noticedelta.llm.extract import LLMExtractor
+
+    class Tokens:
+        def complete(self, req):
+            return LLMResponse({"fields": []}, 100, 7, 0.0)
+
+    store = FileCassetteStore(tmp_path)
+    live = LLMExtractor(Gateway(Tokens(), store, Mode.RECORD))
+    (row,) = evaluate([chain], {"B2": lambda: B2Full(live, SPEC)}, LABELS)
+    # 처음 추출은 이벤트 비용이 아니다: 정정 세 건의 재추출만 센다
+    assert (row.calls, row.input_tokens, row.output_tokens) == (3, 300, 21)
+    assert row.planned_calls == 0
+
+    planned = LLMExtractor(Gateway(None, FileCassetteStore(tmp_path / "empty"), Mode.PLAN))
+    (row,) = evaluate([chain], {"B2": lambda: B2Full(planned, SPEC)}, LABELS)
+    # 처음 추출 1 + 정정 3. 빈 응답이라 값이 없어 보이지만 보낸 것은 없다
+    assert row.planned_calls == 4 and row.planned_tokens > 0 and row.input_tokens == 0
+    assert "미리 세기" in render([row])
+
+
+def test_over_budget_stops_only_that_program():
+    from noticedelta.evaluation.methods import OVER_BUDGET
+    from noticedelta.llm import BudgetExceeded
+
+    def over(fields, segments):
+        raise BudgetExceeded("토큰 예산")
+
+    m = B2Full(over, Fields({"deadline": "datetime"}))
+    m.fields = {}
+    out = m.step(SimpleNamespace(change=SimpleNamespace(segments=[SimpleNamespace(text="x")])))
+    assert out.changed is None and out.note == OVER_BUDGET

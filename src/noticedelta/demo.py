@@ -21,7 +21,7 @@ from noticedelta.eligibility import RuleGroup, judge
 from noticedelta.grants import candidates
 from noticedelta.impact import Alert, Subscription, run_impact
 from noticedelta.llm import FileCassetteStore, Gateway, LLMRequest, LLMResponse, Mode
-from noticedelta.llm.extract import FIELD_TYPES, LLMExtractor
+from noticedelta.llm.extract import FIELD_TYPES, TEMPLATE_V1, LLMExtractor
 from noticedelta.matching import match_segments
 from noticedelta.segments import Segment, Table, segment_document
 
@@ -101,7 +101,7 @@ def run_demo(
     sc = json.loads((demo_dir / "scenario.json").read_text(encoding="utf-8"))
     provider = FakeAnswerProvider(sc["fake_llm_answers"]) if mode is Mode.RECORD else None
     gateway = Gateway(provider, FileCassetteStore(demo_dir / "cassettes"), mode)
-    extractor = LLMExtractor(gateway)
+    extractor = LLMExtractor(gateway, template=TEMPLATE_V1)  # 데모 녹화본은 v1 틀로 받았다
     counter = itertools.count(1)
     new_id = lambda: f"L{next(counter)}"  # noqa: E731
 
