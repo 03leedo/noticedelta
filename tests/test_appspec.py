@@ -193,3 +193,15 @@ def test_published_schema_file_is_current():
     fresh = AppDefinition.model_json_schema(by_alias=True)
     # 규격을 고치면 다시 쓴다: uv run python -c "...model_json_schema..." (docs/app-spec.md 3장)
     assert json.loads(path.read_text(encoding="utf-8")) == fresh
+
+
+def test_reads_change_only_for_keys_or_attachments_the_app_reads():
+    from noticedelta.grants import APP
+
+    assert APP.reads_change("kstartup", ["pbanc_ctnt"])
+    assert not APP.reads_change("kstartup", ["eval_method", "support_ctnt"])  # 읽지 않는 새 키
+    assert not APP.reads_change("bizinfo", ["hashtags"])
+    assert APP.reads_change("bizinfo", [], attachments=True)  # 첨부를 읽는 출처
+    assert not APP.reads_change("kstartup", [], attachments=True)  # 첨부를 읽지 않는 출처
+    assert APP.reads_change("kstartup", None)  # 무엇이 바뀌었는지 모르면 받는다
+    assert not APP.reads_change("other", None)  # 읽지 않는 출처
