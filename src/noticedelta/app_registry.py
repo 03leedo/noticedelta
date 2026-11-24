@@ -1,0 +1,77 @@
+"""앱 정의의 원본은 DB다 (app-spec 15장 "정의의 원본").
+
+    register(session, app, at=)   판 하나를 넣는다. 같은 판이 다른 내용으로 이미 있으면 막는다
+    enable(session, app_id, version, at=)   그 판을 켠다(켠 판 = 가장 늦게 켠 판)
+    current(session, app_id)      켠 판의 정의
+
+우리 앱과 운영자 출처는 저장소에 파일로 써 두고 시작할 때 넣는다(씨앗). 사용자가 만드는 앱도 같은
+길(register → 미리 돌려 보기 → 사람의 확인 → enable)을 간다. 켜는 일은 사람의 확인이 필요한
+순간이다(app-spec 3장). 씨앗은 운영자가 저장소에서 확인한 것이라 바로 켠다.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+import sqlalchemy as sa
+from sqlalchemy.orm import Session
+
+from noticedelta.appspec import AppDefinition
+from noticedelta.db.models import AppDefinitionRow
+
+
+class VersionConflict(ValueError):
+    """같은 판 번호에 다른 내용. 켠 판은 바꾸지 않는다(app-spec 9장)."""
+
+
+def register(session: Session, app: AppDefinition, *, at: datetime) -> AppDefinitionRow:
+    digest = app.content_hash()
+    row = session.get(AppDefinitionRow, (app.id, app.version))
+    if row is not None:
+        if row.content_hash != digest:
+            raise VersionConflict(
+                f"{app.id} 판 {app.version}은 이미 다른 내용으로 있다. "
+                f"정의를 고쳤으면 version을 {app.version + 1}로 올린다"
+            )
+        return row
+    row = AppDefinitionRow(
+        app_id=app.id,
+        version=app.version,
+        content_hash=digest,
+        body=app.model_dump(mode="json", by_alias=True, exclude_defaults=True),
+        created_at=at,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def enable(session: Session, app_id: str, version: int, *, at: datetime) -> None:
+    row = session.get(AppDefinitionRow, (app_id, version))
+    if row is None:
+        raise KeyError(f"{app_id} 판 {version}이 없다. 먼저 register한다")
+    if row.enabled_at is None or row != _current_row(session, app_id):
+        row.enabled_at = at
+
+
+def seed(session: Session, app: AppDefinition, *, at: datetime) -> AppDefinitionRow:
+    """저장소의 정의 파일을 넣고, 켠 판이 없거나 더 낮으면 켠다."""
+    row = register(session, app, at=at)
+    cur = _current_row(session, app.id)
+    if cur is None or cur.version < app.version:
+        enable(session, app.id, app.version, at=at)
+    return row
+
+
+def _current_row(session: Session, app_id: str) -> AppDefinitionRow | None:
+    return session.scalars(
+        sa.select(AppDefinitionRow)
+        .where(AppDefinitionRow.app_id == app_id, AppDefinitionRow.enabled_at.is_not(None))
+        .order_by(AppDefinitionRow.enabled_at.desc(), AppDefinitionRow.version.desc())
+        .limit(1)
+    ).first()
+
+
+def current(session: Session, app_id: str) -> AppDefinition | None:
+    row = _current_row(session, app_id)
+    return AppDefinition.model_validate(row.body) if row is not None else None

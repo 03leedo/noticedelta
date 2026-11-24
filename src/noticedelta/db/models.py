@@ -253,6 +253,21 @@ class SegmentRow(Base):
 # 다시 올려도 구독·판정·알림이 끊기지 않게 하기 위해서다.
 
 
+class AppDefinitionRow(Base):
+    """앱 정의의 원본 (app-spec 9·15장). 판마다 한 줄이고, 켠 판은 내용을 바꾸지 않는다.
+
+    우리 앱은 저장소의 파일(apps/*.json)을 씨앗으로 넣는다(app_registry.register).
+    """
+
+    __tablename__ = "app_definition"
+    app_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    content_hash: Mapped[str] = mapped_column(sa.String(64))
+    body: Mapped[dict] = mapped_column(JSONType)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    enabled_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
 class FieldValueRow(Base):
     __tablename__ = "field_value"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
@@ -269,6 +284,9 @@ class FieldValueRow(Base):
     extractor: Mapped[str] = mapped_column(sa.String(64), default="")
     template_version: Mapped[str | None] = mapped_column(sa.String(32))  # 추출 프롬프트 버전
     llm_call_key: Mapped[str | None] = mapped_column(sa.String(64))  # 녹화본 키
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class EligibilityRuleRow(Base):
@@ -329,6 +347,9 @@ class SubscriptionRow(Base):
     person_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.person_id"), index=True)
     program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
     fields: Mapped[list] = mapped_column(JSONType, default=list)
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class JudgmentRow(Base):
@@ -346,6 +367,9 @@ class JudgmentRow(Base):
     result: Mapped[str] = mapped_column(sa.String(16))  # eligible / ineligible / unknown
     reasons: Mapped[list] = mapped_column(JSONType, default=list)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class ChangeEvent(Base):
@@ -382,6 +406,9 @@ class LabelRow(Base):
     evidence: Mapped[str | None] = mapped_column(sa.Text)  # 위치만: "공고문.hwp 2쪽 표1 신청자격"
     note: Mapped[str | None] = mapped_column(sa.Text)
     labeled_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class OutboxAlert(Base):
@@ -396,6 +423,9 @@ class OutboxAlert(Base):
     held_reason: Mapped[str | None] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
     sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class Job(Base):

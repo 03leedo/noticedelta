@@ -23,7 +23,7 @@ from noticedelta.eligibility.temporal import (
     eligibility_timeline,
     near_misses,
 )
-from noticedelta.grants import ATTRIBUTE_LABELS, ATTRIBUTES, RULES_FIELD
+from noticedelta.grants import APP, ATTRIBUTE_LABELS, ATTRIBUTES, RULES_FIELD
 
 GROUPS = ("eligible", "near", "unknown")
 GROUP_NAMES = {"eligible": "해당", "near": "거의 해당", "unknown": "확인 필요"}
@@ -83,7 +83,7 @@ def _current_fields(session: Session) -> dict[str, tuple[ProgramVersion, dict[st
     latest = (
         sa.select(ProgramVersion.program_id, sa.func.max(ProgramVersion.version_no).label("no"))
         .join(FieldValueRow, FieldValueRow.program_version_id == ProgramVersion.id)
-        .where(FieldValueRow.name == RULES_FIELD)
+        .where(FieldValueRow.name == RULES_FIELD, FieldValueRow.app_id == APP.id)
         .group_by(ProgramVersion.program_id)
         .subquery()
     )
@@ -97,7 +97,9 @@ def _current_fields(session: Session) -> dict[str, tuple[ProgramVersion, dict[st
     out = {}
     for pv in pvs:
         rows = session.scalars(
-            sa.select(FieldValueRow).where(FieldValueRow.program_version_id == pv.id)
+            sa.select(FieldValueRow).where(
+                FieldValueRow.program_version_id == pv.id, FieldValueRow.app_id == APP.id
+            )
         ).all()
         out[pv.program_id] = (pv, {r.name: r for r in rows})
     return out

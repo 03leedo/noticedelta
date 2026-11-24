@@ -265,6 +265,8 @@ def test_chains_and_labels_load_from_recorded_events():
         )
         s.add(
             models.LabelRow(
+                app_id="grant-alerts",
+                app_version=1,
                 program_id="P1",
                 to_version_id="PV2",
                 field="deadline",

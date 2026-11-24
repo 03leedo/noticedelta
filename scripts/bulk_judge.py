@@ -80,7 +80,14 @@ def main() -> None:
     with Session(engine) as s:
         for i, (name, group) in enumerate(SAMPLE_RULESETS.items()):
             t0 = time.perf_counter()
-            n = bulk_judge(s, program_id=f"PG{i}", program_version_id=f"PV{i}", group=group)
+            n = bulk_judge(
+                s,
+                program_id=f"PG{i}",
+                program_version_id=f"PV{i}",
+                group=group,
+                app_id="bench",
+                app_version=1,
+            )
             s.commit()
             sql_s = time.perf_counter() - t0
 
@@ -99,6 +106,8 @@ def main() -> None:
                         "ruleset_hash": h,
                         "result": j.result,
                         "reasons": [vars(r) for r in j.reasons],
+                        "app_id": "bench",
+                        "app_version": 1,
                     }
                     for u, j in want.items()
                 ],

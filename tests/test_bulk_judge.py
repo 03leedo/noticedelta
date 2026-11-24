@@ -123,7 +123,9 @@ def test_bulk_judge_matches_judge_with_messy_profiles(pg_session):
     )
     s.flush()
     for name, g in GROUPS.items():
-        n = bulk_judge(s, program_id="PG1", program_version_id="PV1", group=g)
+        n = bulk_judge(
+            s, program_id="PG1", program_version_id="PV1", group=g, app_id="t", app_version=1
+        )
         assert n == len(profiles), name
         rows = s.execute(
             sa.select(
@@ -137,4 +139,9 @@ def test_bulk_judge_matches_judge_with_messy_profiles(pg_session):
             assert [r["outcome"] for r in reasons] == [r.outcome for r in want.reasons], name
             assert [r["rule_id"] for r in reasons] == [r.rule_id for r in want.reasons], name
         # 다시 돌려도 쌓이지 않는다
-        assert bulk_judge(s, program_id="PG1", program_version_id="PV1", group=g) == 0
+        assert (
+            bulk_judge(
+                s, program_id="PG1", program_version_id="PV1", group=g, app_id="t", app_version=1
+            )
+            == 0
+        )

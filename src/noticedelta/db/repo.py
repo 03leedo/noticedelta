@@ -168,6 +168,8 @@ def enqueue_alert(session: Session, alert: Alert) -> bool:
                     person_id=alert.person_id,
                     program_id=alert.program_id,
                     payload=asdict(alert),
+                    app_id=alert.app_id,
+                    app_version=alert.app_version,
                 )
             )
     except IntegrityError:

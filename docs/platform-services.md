@@ -356,6 +356,7 @@ app-spec 3장의 "사람의 확인이 꼭 필요한 순간"(앱 켜기, 판 바�
 | `trace`, `record` | 기록기 | 녹화본, 실행 파일, 원문 저장소는 그대로. 기록기가 색인을 단다 |
 | `person`, `access_link`, `vault_value`, `vault_document`, `consent`, `vault_grant` | 금고 | `profile`을 옮긴다. `subscription`·`judgment`·`outbox_alert`의 `user_id`는 `person_id`로 |
 | `agent_session`, `action`, `approval` | 게이트웨이 | 없음. 도구 선언은 코드(`tooling`) |
+| `app_definition` | 앱 정의(app-spec) | 2026-11-24 생김. 결과 테이블(필드 값·판정·구독·라벨·알림)에 `app_id`·`app_version` |
 | `tool_call`, `agent_feedback` | 사용 기록(10장) | 1차로 먼저 만든다. 기록기가 생기면 `tool_call`은 `record(kind=tool_call)`로 옮긴다 |
 
 ---

@@ -141,6 +141,8 @@ def test_inbox_shows_sent_alerts(env):
         pid = people.resolve(s, token)
         s.add(
             models.OutboxAlert(
+                app_id="grant-alerts",
+                app_version=1,
                 idempotency_key=f"{pid}:demo-youth:eligibility_rules:pv-youth",
                 person_id=pid,
                 program_id="demo-youth",
@@ -194,9 +196,19 @@ def test_delete_removes_everything_and_the_link_stops_working(env):
     token = path.rsplit("/", 1)[-1]
     with factory() as s:
         pid = people.resolve(s, token)
-        s.add(models.SubscriptionRow(person_id=pid, program_id="demo-youth", fields=[]))
+        s.add(
+            models.SubscriptionRow(
+                app_id="grant-alerts",
+                app_version=1,
+                person_id=pid,
+                program_id="demo-youth",
+                fields=[],
+            )
+        )
         s.add(
             models.OutboxAlert(
+                app_id="grant-alerts",
+                app_version=1,
                 idempotency_key=f"{pid}:k",
                 person_id=pid,
                 program_id="demo-youth",

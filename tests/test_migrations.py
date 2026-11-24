@@ -1,5 +1,6 @@
 """마이그레이션이 모델과 같은 스키마를 만드는지, 예전 개발 DB를 이어받는지."""
 
+import json
 import os
 
 import pytest
@@ -105,19 +106,29 @@ def test_link_tokens_leave_the_database_when_people_get_ids(tmp_path):
                 "p": f'{{"user_id": "{token}", "field": "deadline"}}',
             },
         )
-    assert migrate.upgrade(engine) == migrate.head()
-    assert diffs(engine) == []
+    command.upgrade(migrate.config(url), "0009")
 
     with engine.connect() as conn:
         dump = "\n".join(conn.connection.driver_connection.iterdump())
+        sub = conn.execute(sa.text("SELECT person_id FROM subscription")).one()
+        alert = conn.execute(
+            sa.text("SELECT person_id, idempotency_key, payload FROM outbox_alert")
+        ).one()
     assert token not in dump
     with Session(engine) as s:
         pid = people.resolve(s, token)
         assert pid is not None and len(pid) == 32
-        assert s.get(models.Profile, pid) is not None
-        sub = s.scalars(sa.select(models.SubscriptionRow)).one()
-        alert = s.scalars(sa.select(models.OutboxAlert)).one()
+        assert s.scalar(sa.text("SELECT count(*) FROM profile WHERE person_id = :p"), {"p": pid})
     assert sub.person_id == pid
     assert alert.person_id == pid
     assert alert.idempotency_key == f"{pid}:p1:deadline:v2"
-    assert alert.payload == {"person_id": pid, "field": "deadline"}
+    assert json.loads(alert.payload) == {"person_id": pid, "field": "deadline"}
+
+    # 0010: 결과에 앱과 판이 붙고 멱등 키 앞에 앱 ID가 붙는다
+    assert migrate.upgrade(engine) == migrate.head()
+    assert diffs(engine) == []
+    with Session(engine) as s:
+        row = s.scalars(sa.select(models.OutboxAlert)).one()
+        sub_app = s.scalars(sa.select(models.SubscriptionRow)).one().app_id
+    assert row.idempotency_key == f"grant-alerts:{pid}:p1:deadline:v2"
+    assert (row.app_id, row.app_version, sub_app) == ("grant-alerts", 1, "grant-alerts")
