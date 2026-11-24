@@ -21,7 +21,9 @@ from noticedelta.llm.gateway import LLMRequest, LLMResponse
 
 PICKLE_BASE_URL = "https://llm.pcl.kr/v1"
 PICKLE_FREE_MODEL = "pickle-general"
-RETRY_STATUS = {429, 502, 503}
+RETRY_STATUS = {429, 502, 503, 504}  # 504 upstream_timeout: 학교 모델 서버가 붐빌 때
+# 기다려도 풀리지 않는 거절. 다시 보내지 않는다(2026-11-24: 하루 토큰 한도 약 100만에서 막혔다)
+NO_RETRY_CODES = {"quota_exhausted", "credit_exhausted", "credit_unavailable"}
 
 
 class ProviderError(RuntimeError):
@@ -81,14 +83,18 @@ class OpenAICompatProvider:
             resp = self.client.post(url, json=body, headers=self.headers)
             if resp.status_code == 200:
                 return resp.json()
-            if resp.status_code in RETRY_STATUS and attempt < self.retries:
-                self.sleep(_retry_after(resp, attempt))
-                continue
             try:
-                err = resp.json().get("error", {})
+                err = resp.json().get("error", {}) or {}
             except ValueError:
                 err = {}
             code = err.get("code") or resp.status_code
+            if (
+                resp.status_code in RETRY_STATUS
+                and code not in NO_RETRY_CODES
+                and attempt < self.retries
+            ):
+                self.sleep(_retry_after(resp, attempt))
+                continue
             raise ProviderError(f"{resp.status_code} {code}: {err.get('message', '')[:200]}")
         raise AssertionError("unreachable")
 

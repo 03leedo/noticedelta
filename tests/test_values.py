@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from noticedelta.values import (
+    coerce_shape,
     find_amounts,
     find_datetimes,
     parse_krw,
@@ -190,3 +191,26 @@ def test_hyphenated_time_range_is_not_a_timezone():
     assert parse_kst_datetime("2026. 10. 31. 10:00-12:00") == datetime(
         2026, 10, 31, 10, 0, tzinfo=KST
     )
+
+
+@pytest.mark.parametrize(
+    ("vtype", "given", "expected"),
+    [
+        ("list", None, None),
+        ("list", [], None),
+        ("list", "사업계획서", ["사업계획서"]),
+        ("list", ["사업계획서", "", None, 3], ["사업계획서", "3"]),
+        ("list", {"a": 1}, None),
+        ("text", None, None),
+        ("text", "  02-123-4567 ", "02-123-4567"),
+        ("text", ["a"], None),
+        ("amount", 50000000, 50000000),
+        ("amount", "5천만원", "5천만원"),
+        ("amount", True, None),
+        ("datetime", {"y": 2026}, None),
+        ("rules", "all_of", None),
+        ("rules", {"group": "all_of", "rules": []}, {"group": "all_of", "rules": []}),
+    ],
+)
+def test_coerce_shape(vtype, given, expected):
+    assert coerce_shape(vtype, given) == expected

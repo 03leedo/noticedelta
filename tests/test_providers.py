@@ -149,3 +149,17 @@ def test_make_pickle_provider_reads_env(monkeypatch):
     p = make_provider(choose("pickle"))
     assert isinstance(p, OpenAICompatProvider)
     assert p.base_url == "https://example.test/v1"
+
+
+def test_quota_exhausted_is_not_retried():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(
+            429, headers={"retry-after": "60"}, json={"error": {"code": "quota_exhausted"}}
+        )
+
+    with pytest.raises(ProviderError, match="quota_exhausted"):
+        provider(handler).complete(req())
+    assert len(calls) == 1  # 기다려도 풀리지 않으므로 바로 멈춘다
