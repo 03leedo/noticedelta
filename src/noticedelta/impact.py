@@ -47,6 +47,8 @@ class Alert:
     sources: list[str]
     idempotency_key: str
     confidence: float = 1.0
+    app_id: str = ""  # 어느 앱의 알림인가(멱등 키 앞에 붙는다)
+    app_version: int = 0
 
     @property
     def needs_review(self) -> bool:
@@ -108,8 +110,11 @@ def build_field_source_index(fields: Mapping[str, FieldValue]) -> dict[str, set[
     return dict(index)
 
 
-def _key(person_id: str, program_id: str, field_name: str, to_version_id: str) -> str:
-    return f"{person_id}:{program_id}:{field_name}:{to_version_id}"
+def _key(
+    person_id: str, program_id: str, field_name: str, to_version_id: str, app_id: str = ""
+) -> str:
+    key = f"{person_id}:{program_id}:{field_name}:{to_version_id}"
+    return f"{app_id}:{key}" if app_id else key
 
 
 def run_impact(
@@ -126,6 +131,8 @@ def run_impact(
     default_year: int | None = None,
     old_segments: Sequence[Segment] = (),
     unknown_lineages: frozenset[str] | set[str] = frozenset(),
+    app_id: str = "",
+    app_version: int = 0,
 ) -> ImpactResult:
     # ⓪ 새 버전에서 읽지 못한 첨부에 걸린 필드: 바뀌었는지 모른다. 재추출하지 않고 stale로 둔다.
     unknown_fields = {
@@ -201,7 +208,7 @@ def run_impact(
             before = old_judgments.get(person_id, _NOT_ELIGIBLE)
             after = judge(new_rules, profiles.get(person_id, {}))
             if after.result != before.result:
-                k = _key(person_id, program_id, rules_field, to_version_id)
+                k = _key(person_id, program_id, rules_field, to_version_id, app_id)
                 alerts[k] = Alert(
                     person_id,
                     program_id,
@@ -213,11 +220,13 @@ def run_impact(
                     fields[rules_field].sources,
                     k,
                     fields[rules_field].confidence,
+                    app_id,
+                    app_version,
                 )
     for name in sorted(real - rules_fields):
         for sub in subscriptions:
             if name in sub.fields:
-                k = _key(sub.person_id, program_id, name, to_version_id)
+                k = _key(sub.person_id, program_id, name, to_version_id, app_id)
                 old = old_fields.get(name)
                 alerts[k] = Alert(
                     sub.person_id,
@@ -230,6 +239,8 @@ def run_impact(
                     fields[name].sources,
                     k,
                     fields[name].confidence,
+                    app_id,
+                    app_version,
                 )
 
     return ImpactResult(

@@ -194,11 +194,17 @@ def subscribe_eligible_user(env):
         people.add_link(s, "u1", at=datetime(2026, 10, 1, tzinfo=UTC), token="u1")
         s.add(
             models.SubscriptionRow(
-                person_id="u1", program_id=pv.program_id, fields=["eligibility_rules"]
+                app_id="grant-alerts",
+                app_version=1,
+                person_id="u1",
+                program_id=pv.program_id,
+                fields=["eligibility_rules"],
             )
         )
         s.add(
             models.JudgmentRow(
+                app_id="grant-alerts",
+                app_version=1,
                 person_id="u1",
                 program_id=pv.program_id,
                 program_version_id=pv.id,
@@ -221,6 +227,11 @@ def test_correction_reaches_outbox_with_rejudgment(env):
     with env.factory() as s:
         alert = s.scalars(sa.select(models.OutboxAlert)).one()
         assert alert.person_id == "u1" and alert.status == "sent"  # 알림 작업까지 돌았다
+        # 결과에 앱과 판이 붙고, 그 판의 정의가 DB에 있다
+        assert (alert.app_id, alert.app_version) == ("grant-alerts", 1)
+        assert alert.idempotency_key.startswith("grant-alerts:u1:")
+        assert s.get(models.AppDefinitionRow, ("grant-alerts", 1)) is not None
+        assert {r.app_id for r in s.scalars(sa.select(models.FieldValueRow))} == {"grant-alerts"}
         assert "신청 자격 판정이 해당에서 비해당" in alert.payload["message"]
         assert (alert.payload["before"], alert.payload["after"]) == ("eligible", "ineligible")
         latest = s.scalars(

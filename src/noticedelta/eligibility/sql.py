@@ -228,6 +228,8 @@ def bulk_judge(
     program_id: str,
     program_version_id: str,
     group: RuleGroup,
+    app_id: str,
+    app_version: int,
     min_confidence: float = 0.7,
 ) -> int:
     """profile 전체를 SQL 한 문장으로 판정해 judgment에 쌓는다 (PostgreSQL). 넣은 행 수를 준다.
@@ -260,6 +262,8 @@ def bulk_judge(
         _t(result_label(tri)),
         reasons_json(group, column, actual, min_confidence=min_confidence),
         sa.func.now(),
+        _t(app_id),
+        sa.literal(app_version, sa.Integer),
     )
     j = JudgmentRow.__table__
     stmt = (
@@ -274,6 +278,8 @@ def bulk_judge(
                 "result",
                 "reasons",
                 "created_at",
+                "app_id",
+                "app_version",
             ],
             select,
         )  # fmt: skip

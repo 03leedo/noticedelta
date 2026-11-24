@@ -19,6 +19,7 @@ from noticedelta.db.models import (
     ProgramVersion,
     SegmentRow,
 )
+from noticedelta.grants import APP
 from noticedelta.history import ReplayStep, replay
 
 MAX_PAIRS = 30  # 한 정정에서 보여 줄 바뀐 조각 수 (공고문이 통째로 바뀌면 수백 개다)
@@ -110,7 +111,7 @@ def program_detail(session: Session, program_id: str) -> ProgramDetail | None:
     latest = session.scalar(
         sa.select(ProgramVersion.id)
         .join(FieldValueRow, FieldValueRow.program_version_id == ProgramVersion.id)
-        .where(ProgramVersion.program_id == program_id)
+        .where(ProgramVersion.program_id == program_id, FieldValueRow.app_id == APP.id)
         .order_by(ProgramVersion.version_no.desc())
     )
     fields = {}
@@ -118,7 +119,9 @@ def program_detail(session: Session, program_id: str) -> ProgramDetail | None:
         fields = {
             r.name: r
             for r in session.scalars(
-                sa.select(FieldValueRow).where(FieldValueRow.program_version_id == latest)
+                sa.select(FieldValueRow).where(
+                    FieldValueRow.program_version_id == latest, FieldValueRow.app_id == APP.id
+                )
             )
         }
     corrections = [_correction(s) for s in replay(session, program_id) if s.from_version]

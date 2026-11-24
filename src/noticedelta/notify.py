@@ -69,8 +69,8 @@ class Prepared:
     discarded: int = 0
 
 
-def _key(a: OutboxAlert) -> tuple[str, str, str]:
-    return (a.person_id, a.program_id, a.payload["field"])
+def _key(a: OutboxAlert) -> tuple[str, str, str, str]:
+    return (a.app_id, a.person_id, a.program_id, a.payload["field"])
 
 
 def prepare(session: Session, program_id: str, *, mass_impact: int = MASS_IMPACT) -> Prepared:
@@ -113,6 +113,7 @@ def prepare(session: Session, program_id: str, *, mass_impact: int = MASS_IMPACT
         sent = session.scalar(
             sa.select(OutboxAlert)
             .where(
+                OutboxAlert.app_id == a.app_id,
                 OutboxAlert.person_id == a.person_id,
                 OutboxAlert.program_id == a.program_id,
                 OutboxAlert.status == "sent",

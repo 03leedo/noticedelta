@@ -20,6 +20,8 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from noticedelta import app_registry
+from noticedelta.appspec import AppDefinition
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
 from noticedelta.db.models import (
@@ -34,7 +36,7 @@ from noticedelta.db.models import (
     SubscriptionRow,
 )
 from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
-from noticedelta.grants import MASS_IMPACT, MIN_CONFIDENCE, RULES_FIELD, candidates
+from noticedelta.grants import APP, MASS_IMPACT, MIN_CONFIDENCE, RULES_FIELD, candidates
 from noticedelta.history import MATCHER_VERSION, record_program, replay
 from noticedelta.impact import (
     Extractor,
@@ -70,6 +72,9 @@ class Context:
     now: Callable[[], datetime] = field(default=_utcnow)
     channel: Channel = field(default_factory=InboxChannel)
     labels: Mapping[str, str] = field(default_factory=lambda: dict(ALERT_LABELS))  # 알림 표시 이름
+    app: AppDefinition = field(
+        default_factory=lambda: APP
+    )  # 결과(필드 값, 판정, 알림)에 이 앱의 id와 판을 단다
 
 
 def _unloaded_runs(session: Session, root: Path) -> list[str]:
@@ -215,9 +220,11 @@ def _enqueue_impact(session: Session, program_id: str, pv_id: str) -> None:
     )
 
 
-def _load_fields(session: Session, pv_id: str) -> dict[str, FieldValue]:
+def _load_fields(session: Session, pv_id: str, app_id: str) -> dict[str, FieldValue]:
     rows = session.scalars(
-        sa.select(FieldValueRow).where(FieldValueRow.program_version_id == pv_id)
+        sa.select(FieldValueRow).where(
+            FieldValueRow.program_version_id == pv_id, FieldValueRow.app_id == app_id
+        )
     ).all()
     return {
         r.name: FieldValue(r.name, r.value_type, r.value, list(r.source_lineage_ids), r.confidence)
@@ -251,14 +258,16 @@ def _save_fields(
                 status=status,
                 extractor=ctx.extractor_name,
                 template_version=TEMPLATE_VERSION,
+                app_id=ctx.app.id,
+                app_version=ctx.app.version,
             )
         )
 
 
-def _latest_judgments(session: Session, program_id: str) -> dict[str, Judgment]:
+def _latest_judgments(session: Session, program_id: str, app_id: str) -> dict[str, Judgment]:
     rows = session.scalars(
         sa.select(JudgmentRow)
-        .where(JudgmentRow.program_id == program_id)
+        .where(JudgmentRow.program_id == program_id, JudgmentRow.app_id == app_id)
         .order_by(JudgmentRow.created_at)
     ).all()
     return {r.person_id: Judgment(r.result) for r in rows}  # 뒤의 것이 앞의 것을 덮는다
@@ -272,6 +281,7 @@ def handle_impact(ctx: Context) -> Handler:
         step = next((s for s in replay(session, pv.program_id) if s.to_version.id == pv.id), None)
         if step is None:
             raise PermanentError("변경 이벤트가 없음")
+        app_registry.seed(session, ctx.app, at=ctx.now())  # 결과가 가리킬 앱 정의가 DB에 있게
 
         if step.from_version is None:
             # 첫 버전: 모든 필드를 뽑는다. 새 사업이므로 알림은 없다.
@@ -289,10 +299,12 @@ def handle_impact(ctx: Context) -> Handler:
         subs = [
             Subscription(r.person_id, set(r.fields))
             for r in session.scalars(
-                sa.select(SubscriptionRow).where(SubscriptionRow.program_id == program_id)
+                sa.select(SubscriptionRow).where(
+                    SubscriptionRow.program_id == program_id, SubscriptionRow.app_id == ctx.app.id
+                )
             )
         ]
-        old_judgments = _latest_judgments(session, program_id)
+        old_judgments = _latest_judgments(session, program_id, ctx.app.id)
         users = {s.person_id for s in subs} | set(old_judgments)
         profiles = {
             p.person_id: dict(p.attributes)
@@ -303,13 +315,15 @@ def handle_impact(ctx: Context) -> Handler:
             program_id=program_id,
             to_version_id=pv.id,
             change=step.change,
-            old_fields=_load_fields(session, step.from_version.id),
+            old_fields=_load_fields(session, step.from_version.id, ctx.app.id),
             extractor=ctx.extractor,
             subscriptions=subs,
             profiles=profiles,
             old_judgments=old_judgments,
             old_segments=step.old_segments,
             unknown_lineages=step.unknown,
+            app_id=ctx.app.id,
+            app_version=ctx.app.version,
         )
         _save_fields(ctx, session, pv, res.fields, res.stale)
 
@@ -326,6 +340,8 @@ def handle_impact(ctx: Context) -> Handler:
                         ruleset_hash=h,
                         result=j.result,
                         reasons=[vars(r) for r in j.reasons],
+                        app_id=ctx.app.id,
+                        app_version=ctx.app.version,
                     )
                 )
         session.flush()

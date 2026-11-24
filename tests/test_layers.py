@@ -43,6 +43,7 @@ LAYERS: dict[str, list[str]] = {
         "usage",  # 에이전트 사용 기록과 피드백
     ],
     "엔진": [
+        "app_registry",  # 앱 정의의 원본(DB): 판 넣기, 켜기
         "appspec",  # 앱 정의 규격과 검증, 엔진이 쓰는 모양으로 바꾸기
         "citation",
         "doc_tools",  # 문서 읽기·두 판 비교·글 검사 도구
