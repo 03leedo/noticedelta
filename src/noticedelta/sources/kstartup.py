@@ -10,15 +10,19 @@
 from __future__ import annotations
 
 import html
+from pathlib import Path
 
 import httpx
 
+from noticedelta.catalog import load_sheet
 from noticedelta.sources.base import NoticeRecord, normalize_service_key
 from noticedelta.sources.http import get_json
 from noticedelta.sources.resilience import CircuitBreaker, RateLimiter
 
+# 출처 지식은 출처 한 장(catalog/kstartup.json)에 있다.
+SHEET = load_sheet(Path(__file__).parent / "catalog" / "kstartup.json")
 # 바뀌어도 변경이 아닌 키: 행 번호(id) 등. 기업마당과 같은 묶음을 쓴다(지금까지의 해시와 같게)
-IGNORE = frozenset({"id", "totCnt", "inqireCo", "updtPnttm"})
+IGNORE = frozenset(SHEET.ignore.keys)
 ENDPOINT = "https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
 
 _BODY_FIELDS = [

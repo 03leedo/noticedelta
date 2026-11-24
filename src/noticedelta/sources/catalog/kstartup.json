@@ -1,0 +1,139 @@
+{
+  "kind": "source",
+  "id": "kstartup",
+  "title": "K-Startup 사업공고",
+  "status": "verified",
+  "owner": "platform",
+  "connector": {
+    "kind": "code",
+    "adapter": "kstartup"
+  },
+  "fetch": {
+    "every_hours": 6,
+    "rate_per_second": 1
+  },
+  "item": {
+    "id": "pbanc_sn",
+    "title": "biz_pbanc_nm",
+    "url": "detl_pg_url"
+  },
+  "keys": {
+    "pbanc_sn": {
+      "about": "공고 일련번호"
+    },
+    "biz_pbanc_nm": {
+      "about": "공고 제목"
+    },
+    "intg_pbanc_biz_nm": {
+      "about": "통합 공고 사업명"
+    },
+    "intg_pbanc_yn": {
+      "about": "통합 공고 여부"
+    },
+    "detl_pg_url": {
+      "about": "공고 상세 페이지 주소"
+    },
+    "biz_gdnc_url": {
+      "about": "사업 안내 주소"
+    },
+    "biz_aply_url": {
+      "about": "신청 주소"
+    },
+    "pbanc_ctnt": {
+      "about": "사업 개요"
+    },
+    "aply_trgt_ctnt": {
+      "about": "신청 대상"
+    },
+    "aply_excl_trgt_ctnt": {
+      "about": "신청 제외 대상"
+    },
+    "biz_enyy": {
+      "about": "업력(쉼표로 이은 분류)"
+    },
+    "biz_trgt_age": {
+      "about": "대상 연령(쉼표로 이은 분류)"
+    },
+    "supt_regin": {
+      "about": "지원 지역"
+    },
+    "prfn_matr": {
+      "about": "우대 사항"
+    },
+    "aply_trgt": {
+      "about": "신청 대상 구분(쉼표로 이은 분류)"
+    },
+    "supt_biz_clsfc": {
+      "about": "지원 분야"
+    },
+    "biz_prch_dprt_nm": {
+      "about": "담당 부서"
+    },
+    "prch_cnpl_no": {
+      "about": "문의처 전화번호"
+    },
+    "pbanc_ntrp_nm": {
+      "about": "공고 기관"
+    },
+    "sprv_inst": {
+      "about": "주관 기관 구분"
+    },
+    "pbanc_rcpt_bgng_dt": {
+      "about": "접수 시작일(yyyyMMdd)"
+    },
+    "pbanc_rcpt_end_dt": {
+      "about": "접수 마감일(yyyyMMdd)"
+    },
+    "rcrt_prgs_yn": {
+      "about": "모집 진행 여부"
+    },
+    "aply_mthd_onli_rcpt_istc": {
+      "about": "온라인 접수 방법"
+    },
+    "aply_mthd_eml_rcpt_istc": {
+      "about": "이메일 접수 방법"
+    },
+    "aply_mthd_fax_rcpt_istc": {
+      "about": "팩스 접수 방법"
+    },
+    "aply_mthd_pssr_rcpt_istc": {
+      "about": "우편 접수 방법"
+    },
+    "aply_mthd_vst_rcpt_istc": {
+      "about": "방문 접수 방법"
+    },
+    "aply_mthd_etc_istc": {
+      "about": "그 밖의 접수 방법"
+    },
+    "eval_method": {
+      "about": "평가 방법 (2026-11-17부터 옴)"
+    },
+    "support_ctnt": {
+      "about": "지원 내용 (2026-11-17부터 옴)"
+    }
+  },
+  "meta": {
+    "apply_start": {
+      "key": "pbanc_rcpt_bgng_dt",
+      "about": "접수 시작일"
+    },
+    "apply_end": {
+      "key": "pbanc_rcpt_end_dt",
+      "about": "접수 마감일"
+    }
+  },
+  "ignore": {
+    "keys": [
+      "id",
+      "totCnt",
+      "inqireCo",
+      "updtPnttm"
+    ]
+  },
+  "group": "repost_title",
+  "terms": {
+    "license": "data.go.kr 15125364 이용허락범위 제한 없음. 상세 페이지는 공공누리 제1유형",
+    "quote_limit": 300,
+    "note": "K-Startup 이용약관 제14조②(사전 승낙 없는 복제·제공 금지)와 부딪혀 원문 노출은 짧게 한다(docs/research/terms.md). 첨부 주소 필드가 없다"
+  }
+}

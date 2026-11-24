@@ -161,6 +161,14 @@ history: {since: 2026-11-17, gaps: 0}
 | `sources.attachments.check_url` | 안전(6장) |
 | 실행 기록(`runs/`), 수집 공백 | `history` |
 
+**2026-11-24 코드로 옮김**: 규격은 `catalog.py`(공개 스키마 `docs/source-schema.json`), 운영자 출처 두 장은 `src/noticedelta/sources/catalog/bizinfo.json`, `kstartup.json`이다. 어댑터는 무시할 키, 첨부 주소 키, 떼는 주소 값, 받아도 되는 호스트를 이 장에서 읽는다(옮기기 전과 값이 같은지 시험이 본다). 앱 정의의 검증은 카탈로그에서 출처, 읽을 수 있는 키(무시하는 키는 뺀다), 구조화 값(`meta`)을 받는다. 위 예시와 다른 점:
+
+- `fetch`는 `every_hours`, `rate_per_second` 숫자로 적는다(문자열 "6h"를 풀지 않으려고).
+- 주소를 새로 발급하는 키는 `ignore.url_keys`에 적는다(위 예시의 `attachments.urls`와 겹치지만 뜻이 다르다. 첨부 주소라도 새로 발급하지 않는 출처가 있다).
+- `connector.kind`는 지금 `code`만 받는다. 사용자 출처는 4장의 등록 흐름과 함께 연다.
+- 키마다 `about`(설명)을 적고, 출처가 보내는 키가 모두 설명되어 있는지 시험이 본다(받은 응답 견본 기준). 예시 값은 원문 인용이 되므로 넣지 않았다.
+- `history`(수집 기록)는 장에 적지 않고 실행 기록에서 계산한다.
+
 ## 8. 열린 질문
 
 | 질문 | 초안의 선택 |
