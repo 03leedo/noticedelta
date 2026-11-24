@@ -428,6 +428,28 @@ class OutboxAlert(Base):
     app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
+class EventRow(Base):
+    """이벤트 봉투 (platform-services 2장, events.py). 추가만 한다."""
+
+    __tablename__ = "event"
+    __table_args__ = (sa.UniqueConstraint("type", "idempotency_key"),)
+    id: Mapped[str] = mapped_column(sa.String(26), primary_key=True)  # ULID: 시간 순으로 정렬된다
+    type: Mapped[str] = mapped_column(sa.String(64), index=True)
+    v: Mapped[int] = mapped_column(sa.Integer)
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    recorded_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    producer: Mapped[str] = mapped_column(sa.String(64))
+    app: Mapped[str | None] = mapped_column(sa.String(80))
+    subject: Mapped[str | None] = mapped_column(sa.String(64))
+    item: Mapped[str | None] = mapped_column(sa.String(40), index=True)
+    item_version: Mapped[int | None] = mapped_column(sa.Integer)
+    trace_id: Mapped[str | None] = mapped_column(sa.String(26), index=True)
+    causation_id: Mapped[str | None] = mapped_column(sa.String(26))
+    idempotency_key: Mapped[str] = mapped_column(sa.String(300))
+    labels: Mapped[dict] = mapped_column(JSONType, default=dict)
+    payload: Mapped[dict] = mapped_column(JSONType, default=dict)
+
+
 class Job(Base):
     """PostgreSQL 작업 큐 (설계 8장). 단계 결과 기록과 다음 작업 등록을 한 트랜잭션으로 묶는다."""
 

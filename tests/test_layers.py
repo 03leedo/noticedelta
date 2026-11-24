@@ -27,6 +27,7 @@ LAYERS: dict[str, list[str]] = {
         "db",
         "document",
         "drift",  # 출처 형식 변화 감시
+        "events",  # 이벤트 봉투, 타입 등록부, 구독 → 작업 큐
         "jobs",
         "llm",  # gateway, cassette, harness, anthropic_provider
         "mcp_adapter",  # 등록부의 도구를 MCP로 내놓는다

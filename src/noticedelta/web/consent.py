@@ -12,6 +12,8 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.db.models import JudgmentRow, OutboxAlert, Profile, SubscriptionRow
+from noticedelta.events import Ref, app_ref, emit
+from noticedelta.grants import APP
 
 VERSION = "beta-2026-11"
 KEEP_UNTIL = "2027-03-31"  # 베타가 끝나면 모두 지운다. 일정이 바뀌면 여기만 고친다
@@ -21,9 +23,30 @@ ITEMS = (
 )
 
 
-def record(profile: Profile, *, research_ok: bool, at: datetime) -> None:
+PURPOSES = ("judge", "notify")  # 필수 동의의 용도(platform-services 4.3). 선택 동의는 research
+
+
+def _who(profile: Profile) -> Ref:
+    return Ref(app=app_ref(APP.id, APP.version), subject=f"person:{profile.person_id}")
+
+
+def record(session: Session, profile: Profile, *, research_ok: bool, at: datetime) -> None:
+    """처음 동의를 프로필에 남기고 봉투(consent.granted)를 낸다."""
     profile.consent_version, profile.consented_at = VERSION, at
     profile.research_ok = research_ok
+    purposes = [*PURPOSES, "research"] if research_ok else list(PURPOSES)
+    emit(session, "consent.granted", {"purpose": purposes, "text_version": VERSION},
+         producer="svc:web", key=f"{profile.person_id}:{at.isoformat()}", ref=_who(profile), now=at)  # fmt: skip
+
+
+def set_research(session: Session, profile: Profile, ok: bool, *, at: datetime) -> None:
+    """선택 동의(연구)를 바꾼다. 바뀌었을 때만 봉투를 낸다."""
+    if bool(profile.research_ok) == ok:
+        return
+    profile.research_ok = ok
+    kind = "consent.granted" if ok else "consent.withdrawn"
+    emit(session, kind, {"purpose": ["research"], "text_version": VERSION},
+         producer="svc:web", key=f"{profile.person_id}:research:{at.isoformat()}", ref=_who(profile), now=at)  # fmt: skip
 
 
 def delete_user(session: Session, person_id: str) -> bool:
@@ -33,6 +56,14 @@ def delete_user(session: Session, person_id: str) -> bool:
     """
     if session.get(Profile, person_id) is None:
         return False
+    emit(
+        session,
+        "consent.withdrawn",
+        {"purpose": [*PURPOSES, "research"], "text_version": VERSION},
+        producer="svc:web",
+        key=f"{person_id}:all",
+        ref=Ref(app=app_ref(APP.id, APP.version), subject=f"person:{person_id}"),
+    )
     for model in (SubscriptionRow, JudgmentRow, OutboxAlert):
         session.execute(sa.delete(model).where(model.person_id == person_id))
     session.execute(sa.delete(Profile).where(Profile.person_id == person_id))

@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.db.models import Item, ItemVersion, OutboxAlert
+from noticedelta.events import Ref, Trace, app_ref, emit
 
 UNSENT = ("pending", "held", "ready")
 MASS_IMPACT = 20  # 한 버전의 같은 필드 변경이 이만큼 넘는 사람을 비해당으로 바꾸면 붙잡는다
@@ -27,6 +28,40 @@ MASS_IMPACT = 20  # 한 버전의 같은 필드 변경이 이만큼 넘는 사�
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def note(
+    session: Session,
+    a: OutboxAlert,
+    status: str,
+    *,
+    reason: str | None = None,
+    trace: Trace | None = None,
+    producer: str = "svc:notify",
+) -> None:
+    """알림의 상태가 바뀔 때 봉투를 남긴다(alert.<상태>). 상태마다 한 번."""
+    p = a.payload or {}
+    emit(
+        session,
+        f"alert.{status}",
+        {
+            "alert_id": a.id,
+            "field": p.get("field", ""),
+            "to_version_id": p.get("to_version_id", ""),
+            "reason": reason,
+        },
+        producer=producer,
+        key=f"{a.id}:{status}",
+        ref=Ref(
+            app=app_ref(a.app_id, a.app_version),
+            subject=f"person:{a.person_id}",
+            item=f"item:{a.item_id}",
+            item_version=_version_no(session, p["to_version_id"])
+            if p.get("to_version_id")
+            else None,
+        ),
+        trace=trace,
+    )
 
 
 def _version_no(session: Session, pv_id: str) -> int:
@@ -71,7 +106,9 @@ def _key(a: OutboxAlert) -> tuple[str, str, str, str]:
     return (a.app_id, a.person_id, a.item_id, a.payload["field"])
 
 
-def prepare(session: Session, item_id: str, *, mass_impact: int = MASS_IMPACT) -> Prepared:
+def prepare(
+    session: Session, item_id: str, *, mass_impact: int = MASS_IMPACT, trace: Trace | None = None
+) -> Prepared:
     """사업 하나의 pending 알림에 정책을 적용한다."""
     out = Prepared()
     unsent = session.scalars(
@@ -89,11 +126,13 @@ def prepare(session: Session, item_id: str, *, mass_impact: int = MASS_IMPACT) -
         newest = chain[-1]
         for old in chain[:-1]:  # 더 새 알림이 있으니 옛것은 보내지 않는다
             old.status, out.superseded = "superseded", out.superseded + 1
+            note(session, old, "superseded", trace=trace)
         if len(chain) > 1:
             # 안 나간 변경을 하나로 합친다: 처음 상태 → 마지막 상태
             newest.payload = {**newest.payload, "before": chain[0].payload["before"]}
         if newest.payload["before"] == newest.payload["after"]:
             newest.status, out.discarded = "discarded", out.discarded + 1
+            note(session, newest, "discarded", trace=trace)
             continue
         survivors.append(newest)
 
@@ -135,19 +174,21 @@ def prepare(session: Session, item_id: str, *, mass_impact: int = MASS_IMPACT) -
                 f"한 번의 변경으로 {losses[(p['to_version_id'], p['field'])]}명이 비해당이 됨"
             )
             out.held += 1
+            note(session, a, "held", reason=a.held_reason, trace=trace)
         elif a.status == "pending":
             a.status, out.ready = "ready", out.ready + 1
     session.flush()
     return out
 
 
-def release(session: Session, alert_ids: Sequence[str]) -> int:
+def release(session: Session, alert_ids: Sequence[str], *, by: str = "operator") -> int:
     """운영자가 확인한 붙잡힌 알림을 보낼 수 있게 한다."""
     rows = session.scalars(
         sa.select(OutboxAlert).where(OutboxAlert.id.in_(alert_ids), OutboxAlert.status == "held")
     ).all()
     for a in rows:
         a.status, a.held_reason = "ready", None
+        note(session, a, "released", reason=f"풀어 준 쪽: {by}")
     session.flush()
     return len(rows)
 
@@ -170,6 +211,7 @@ def deliver(
     item_id: str | None = None,
     now: Callable[[], datetime] = _now,
     labels: Mapping[str, str] | None = None,
+    trace: Trace | None = None,
 ) -> int:
     """ready 알림을 보낸다. 본문을 payload에 남기고 sent로 바꾼다. 보낸 수를 준다."""
     q = sa.select(OutboxAlert).where(OutboxAlert.status == "ready")
@@ -184,11 +226,13 @@ def deliver(
         channel.send(a, message)  # 채널 쪽은 idempotency_key로 중복을 거른다
         a.payload = {**a.payload, "message": message}
         a.status, a.sent_at = "sent", now()
+        note(session, a, "sent", trace=trace)
         corrects = a.payload.get("corrects")
         if corrects:
             old = session.get(OutboxAlert, corrects)
             if old is not None and old.status == "sent":
                 old.status = "corrected"
+                note(session, old, "corrected", reason=f"바로잡은 알림: {a.id}", trace=trace)
         sent += 1
     session.flush()
     return sent

@@ -128,7 +128,7 @@ def create_app(
         with session_factory() as s:
             person, token = people.create(s, at=now())
             profile = Profile(person_id=person.id, attributes=attrs)
-            consent.record(profile, research_ok=research_ok, at=now())
+            consent.record(s, profile, research_ok=research_ok, at=now())
             s.add(profile)
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
@@ -165,7 +165,7 @@ def create_app(
         with session_factory() as s:
             profile = load(s, token)
             profile.attributes = attributes_from_form(form)
-            profile.research_ok = form.get("research_ok") == "on"
+            consent.set_research(s, profile, form.get("research_ok") == "on", at=now())
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
 

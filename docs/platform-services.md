@@ -134,6 +134,27 @@ ARCHITECTURE 7장 그대로다. A는 신뢰할 수 없는 입력(외부 문서, 
 - **처음에는 같이 쓴다.** 지금 테이블은 그대로 두고 봉투를 함께 쓴다. 받는 쪽을 하나씩 봉투로 옮기고, 지금 테이블은 화면이 읽는 모델(projection)로 남긴다.
 - **크기**: `payload`는 64KB 이하. 조각 목록처럼 큰 것은 원문 저장소의 키만 넣는다.
 
+### 2.6 만든 것 (2026-11-25)
+
+`events.py`, 표 `event`(마이그레이션 0012). 위 1차 타입 가운데 `action.*`(게이트웨이)을 뺀 것을 모두 낸다.
+
+| 봉투 | 내는 곳 |
+|---|---|
+| `source.run_finished`, `document.version_created` | 적재 작업 (`pipeline.handle_load`) |
+| `document.parsed` | 파싱 작업 |
+| `change.detected` | 비교 작업 |
+| `field.changed`, `verdict.changed`, `alert.created`, 근거 부족 `alert.held` | 영향 계산 작업 |
+| `alert.superseded` · `discarded` · 대량 영향 `held` · `released` · `sent` · `corrected` | 알림 발송(`notify`) |
+| `source.drift_held`, `source.drift_decided` | 형식 변화 감시(`drift`) |
+| `app.version_enabled` | 앱 정의(`app_registry.enable`) |
+| `consent.granted`, `consent.withdrawn` | 동의(`web/consent`) |
+
+- **추적**: 작업 본문에 `trace`(묶음)와 `cause`(원인 봉투)를 실어 다음 작업으로 넘긴다. 수집 실행 하나가 묶음이 되고, 보낸 알림에서 원인을 거꾸로 따라가면 `alert.sent ← alert.created ← verdict.changed ← change.detected ← document.parsed ← document.version_created ← source.run_finished`로 끊기지 않는다(`tests/test_events.py`).
+- **구독**: 코드에 둔다(`events.subscribe`). 9장의 "작업 큐로 할까"를 작업 큐로 정했다. 첫 구독은 알림 발송이다. 영향 계산이 알림 발송 작업을 직접 넣던 것을 `alert.created` 구독으로 바꿨다(항목 판 하나에 한 번).
+- **같이 쓰기**: 지금 표(`change_event`, `field_value`, `judgment`, `outbox_alert`, `source_drift`)는 그대로 쓰고 봉투를 함께 쓴다(2.5).
+- **ULID**는 같은 밀리초 안에서도 순서를 지키도록 1씩 올린다(같은 작업 안에서 낸 봉투의 순서).
+- **아직 안 한 것**: 판이 바뀐 타입의 두 판 읽기(2.3의 7번), DB에 둔 구독 표(`event_subscription`), `action.*`.
+
 ---
 
 ## 3. 비행 기록기
@@ -369,7 +390,7 @@ app-spec 3장의 "사람의 확인이 꼭 필요한 순간"(앱 켜기, 판 바�
 |---|---|---|
 | 0 | **사용 기록 1차**(10장): 호출 기록, 피드백 도구, 주간 보고 | MCP 호출이 모두 남고 주간 보고가 나온다. 기록은 일찍 시작할수록 쌓인다 |
 | 1 | **앱 정의 2단계 + 사람 ID**: 정의 규격과 검증, 지원사업을 데이터로, 이름을 항목(item)으로, 결과에 앱·판, `person`과 `access_link`(토큰 해시). 사람 ID, 정의 규격·검증, 지원사업을 데이터로, 정의의 원본(DB), 결과에 앱·판, 출처 한 장, 이름을 항목으로: 2026-11-24 모두 완료 | 동작이 그대로이고, 비밀 토큰이 DB에 평문으로 없다 |
-| 2 | **이벤트 봉투**: `event` 테이블, 타입 등록부, 같이 쓰기, 구독 → 작업 큐 | 지금 일어나는 일이 모두 봉투로 남고, 알림 발송이 봉투를 받아 돈다 |
+| 2 | **이벤트 봉투**: `event` 테이블, 타입 등록부, 같이 쓰기, 구독 → 작업 큐. 2026-11-25 완료(2.6) | 지금 일어나는 일이 모두 봉투로 남고, 알림 발송이 봉투를 받아 돈다 |
 | 3 | 앱이 읽는 키 기준으로 변경 거르기 (app-spec 3) | 앱이 읽지 않는 키만 바뀐 버전이 변경 목록에 없다 |
 | 4 | **비행 기록기**: `trace`·`record`, 녹화본 색인, 같게 재생 | 수집 실행 하나를 처음부터 다시 돌려 출력이 같다 |
 | 5 | 미리 돌려 보기, 비교, 앱 시험, 플랫폼 회귀 시험, 검증 화면 (app-spec 4·5) | 판 두 개의 알림 차이, 플랫폼을 고칠 때 모든 앱의 결과 차이가 나온다 |
@@ -392,7 +413,7 @@ app-spec 3장의 "사람의 확인이 꼭 필요한 순간"(앱 켜기, 판 바�
 
 | 질문 | 초안의 선택 | 정할 때 |
 |---|---|---|
-| 봉투 전달을 작업 큐로 할까, PostgreSQL LISTEN/NOTIFY로 할까 | 작업 큐(재시도·임대가 이미 있다) | 2번 |
+| 봉투 전달을 작업 큐로 할까, PostgreSQL LISTEN/NOTIFY로 할까 | **작업 큐로 정함(2026-11-25)**. 재시도·임대가 이미 있다 | 2번 |
 | 금고 암호화 키 관리 | 환경 변수 → 서버가 생기면 KMS 검토 | 6번 |
 | 원격 MCP 인증 | OAuth. 그 전에는 로컬 stdio만 | 7번 |
 | 게이트웨이 정책을 코드로 둘까 설정으로 둘까 | 코드. 앱 정의는 고르기만 | 7번 |
