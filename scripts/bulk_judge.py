@@ -59,7 +59,10 @@ def setup(url: str, n: int) -> sa.Engine:
         s.flush()
         s.execute(
             sa.insert(models.Profile),
-            [{"person_id": p.pop("person_id"), "attributes": p} for p in virtual_profiles(n, seed=42)],
+            [
+                {"person_id": p.pop("person_id"), "attributes": p}
+                for p in virtual_profiles(n, seed=42)
+            ],
         )
         s.commit()
     return engine
