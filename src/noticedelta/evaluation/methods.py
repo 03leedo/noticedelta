@@ -23,7 +23,7 @@ from noticedelta.llm.anthropic_provider import DEFAULT_MODEL
 from noticedelta.llm.gateway import BudgetExceeded, Gateway, LLMRequest, MissingCassette
 from noticedelta.llm.openai_compat import ProviderError
 from noticedelta.segments import Segment
-from noticedelta.values import coerce_shape, values_equal
+from noticedelta.values import coerce_shape, loads_lenient, values_equal
 
 NO_CASSETTE = "녹화본 없음"
 CALL_FAILED = "호출 실패"  # 공급자가 끝내 답하지 못함(시간 초과, 한도). 그 사업은 거기까지만 잰다
@@ -275,11 +275,7 @@ class B3Diff(_WithState):
             if name not in self.spec.types or not item.get("changed"):
                 continue
             changed.add(name)
-            try:
-                value = json.loads(item["value_json"])
-            except (KeyError, json.JSONDecodeError):
-                continue
-            value = coerce_shape(self.spec.types[name], value)
+            value = coerce_shape(self.spec.types[name], loads_lenient(item.get("value_json")))
             if value is None:
                 self.fields.pop(name, None)  # 바뀌었는데 값이 없다 = 사라졌다
                 continue

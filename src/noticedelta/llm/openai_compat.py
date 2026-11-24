@@ -27,7 +27,15 @@ NO_RETRY_CODES = {"quota_exhausted", "credit_exhausted", "credit_unavailable"}
 
 
 class ProviderError(RuntimeError):
-    """공급자가 요청을 거절했거나 응답을 쓸 수 없다."""
+    """공급자가 요청을 거절했거나 응답을 쓸 수 없다.
+
+    spent: 실패했어도 공급자가 센 토큰(입력+출력). 출력 한도에 걸려 끝난 응답도 한도를 깎는다.
+    게이트웨이가 예산에 넣는다(2026-11-25: 실패한 호출이 예산 밖에서 토큰을 쓴 일이 있었다).
+    """
+
+    def __init__(self, message: str, *, spent: int = 0):
+        super().__init__(message)
+        self.spent = spent
 
 
 def _retry_after(resp: httpx.Response, attempt: int) -> float:
@@ -44,7 +52,9 @@ class OpenAICompatProvider:
         *,
         base_url: str = PICKLE_BASE_URL,
         client: httpx.Client | None = None,
-        max_tokens: int = 16000,
+        # 성공한 추출의 출력은 최대 3,534토큰(녹화본 99개, 95%는 1,486 이하). 모델이 형식 안에서
+        # 같은 것을 끝없이 쓰는 고장이 나도 이만큼만 잃는다. 녹화본 키에는 들어가지 않는다.
+        max_tokens: int = 4096,
         timeout: float = 300.0,
         retries: int = 4,
         temperature: float | None = 0.0,
@@ -101,16 +111,18 @@ class OpenAICompatProvider:
     def complete(self, req: LLMRequest) -> LLMResponse:
         data = self._post(self.body(req))
         choice = data["choices"][0]
+        usage = data.get("usage") or {}
+        spent = int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0))
         if choice.get("finish_reason") != "stop":
             raise ProviderError(
-                f"LLM 응답이 정상 종료되지 않았다: finish_reason={choice.get('finish_reason')}"
+                f"LLM 응답이 정상 종료되지 않았다: finish_reason={choice.get('finish_reason')}",
+                spent=spent,
             )
         text = choice["message"].get("content") or ""
         try:
             output = json.loads(text)
         except json.JSONDecodeError as e:
-            raise ProviderError(f"JSON이 아닌 응답: {text[:120]!r}") from e
-        usage = data.get("usage") or {}
+            raise ProviderError(f"JSON이 아닌 응답: {text[:120]!r}", spent=spent) from e
         cost = float(usage.get("cost") or 0.0)
         return LLMResponse(
             output, int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0)), cost

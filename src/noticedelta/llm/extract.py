@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 
 from pydantic import ValidationError
@@ -23,7 +22,7 @@ from noticedelta.impact import FieldValue
 from noticedelta.llm.anthropic_provider import DEFAULT_MODEL
 from noticedelta.llm.gateway import Gateway, LLMRequest
 from noticedelta.segments import Segment
-from noticedelta.values import coerce_shape
+from noticedelta.values import coerce_shape, loads_lenient
 
 TEMPLATE_V1 = "extract-v1"
 TEMPLATE_V2 = "extract-v2"
@@ -59,7 +58,10 @@ DIFF_SYSTEM = """너는 한국 정부 지원사업 정정공고에서 무엇이 
 문구만 바뀌고 값이 같으면 changed는 false다. 조각에 근거가 없는 필드는 출력하지 않는다."""
 
 
-def _schema(fields: list[str]) -> dict:
+def _schema(fields: list[str], template: str = TEMPLATE_V1) -> dict:
+    # v2의 근거는 정수 줄 번호. 문자열로 두면 학교 모델이 따옴표 없는 숫자를 쓰려다 형식에 막혀
+    # 공백만 끝없이 내다 출력 한도에 걸렸다(2026-11-25, 작은 공고 하나로 재현).
+    source = {"type": "integer"} if template == TEMPLATE_V2 else {"type": "string"}
     return {
         "type": "object",
         "properties": {
@@ -70,7 +72,7 @@ def _schema(fields: list[str]) -> dict:
                     "properties": {
                         "name": {"type": "string", "enum": fields},
                         "value_json": {"type": "string"},
-                        "sources": {"type": "array", "items": {"type": "string"}},
+                        "sources": {"type": "array", "items": source},
                     },
                     "required": ["name", "value_json", "sources"],
                     "additionalProperties": False,
@@ -110,7 +112,7 @@ def build_request(
         template_version=template,
         system=_SYSTEM[template],
         input=f"추출할 필드:\n{guide}\n\n공고 조각:\n{lines}",
-        output_schema=_schema(names),
+        output_schema=_schema(names, template),
     )
 
 
@@ -154,10 +156,7 @@ class LLMExtractor:
             name = item.get("name")
             if name not in wanted or name in out:
                 continue
-            try:
-                value = json.loads(item["value_json"])
-            except (KeyError, json.JSONDecodeError):
-                continue
+            value = loads_lenient(item.get("value_json"))
             keys = item.get("sources", [])
             if self.template != TEMPLATE_V1:  # v1의 재생 결과가 바뀌지 않게 v1은 예전 그대로 맞춘다
                 keys = map(_label, keys)

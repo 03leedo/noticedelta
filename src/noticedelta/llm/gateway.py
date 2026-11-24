@@ -110,7 +110,8 @@ class UsageTotals:
     output_tokens: int = 0
     cost_usd: float = 0.0  # 녹화본 포함, 실제로 호출했다면 들었을 비용
     live_cost_usd: float = 0.0  # 이번 실행에서 실제로 쓴 비용
-    live_tokens: int = 0  # 이번 실행에서 실제로 보낸 호출의 입력+출력 토큰
+    live_tokens: int = 0  # 이번 실행에서 실제로 보낸 호출의 입력+출력 토큰(실패한 호출 포함)
+    failed_calls: int = 0  # 보냈지만 쓸 수 있는 답을 받지 못한 호출
     planned_calls: int = 0  # PLAN 모드에서 녹화본이 없어 보냈어야 할 호출 수
     planned_tokens: int = 0  # 그 호출들의 입력 토큰 어림
 
@@ -158,7 +159,16 @@ class Gateway:
             raise RuntimeError(f"{self.mode} 모드에서 실제 호출이 필요한데 provider가 없다")
         if self.budget is not None:
             self.budget.check(estimate_tokens(req, self.tokens_per_char))
-        resp = self.provider.complete(req)
+        try:
+            resp = self.provider.complete(req)
+        except Exception as e:
+            # 실패해도 공급자가 센 토큰은 한도에서 빠졌다. 예산과 합계에 넣고 다시 올린다
+            lost = getattr(e, "spent", 0)
+            if self.budget is not None:
+                self.budget.spent += lost
+            self.usage.failed_calls += 1
+            self.usage.live_tokens += lost
+            raise
         resp.from_cassette = False
         spent = resp.input_tokens + resp.output_tokens
         if self.budget is not None:

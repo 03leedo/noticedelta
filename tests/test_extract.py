@@ -157,3 +157,17 @@ def test_only_blank_segments_make_no_call(tmp_path):
     blank = Segment("table_cell", "", "h", {}, 0, lineage_id="L1")
     assert ex({"deadline"}, [blank]) == {}
     assert p.requests == []
+
+
+def test_bare_string_values_are_read_as_text(tmp_path):
+    # JSON 문자열로 감싸라고 해도 맨 글자를 넣는 모델이 있다. 버리면 있는 마감일을 놓친다
+    ex, _ = extractor(
+        [
+            {"name": "deadline", "value_json": "2026-10-31 18:00", "sources": [2]},
+            {"name": "eligibility_rules", "value_json": "창업 7년 이내", "sources": [1]},
+        ],
+        tmp_path,
+    )
+    out = ex({"deadline", "eligibility_rules"}, segments())
+    assert out["deadline"].value == "2026-10-31 18:00" and out["deadline"].confidence == 1.0
+    assert "eligibility_rules" not in out  # 규칙은 객체여야 한다
