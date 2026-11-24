@@ -1,0 +1,499 @@
+{
+  "$defs": {
+    "AlertRule": {
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "enum": [
+            "verdict_changed",
+            "field_changed"
+          ],
+          "title": "On",
+          "type": "string"
+        },
+        "fields": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "enum": [
+                "subscribers",
+                "matched",
+                "affected"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To"
+        },
+        "urgent": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Urgent",
+          "type": "array"
+        }
+      },
+      "required": [
+        "on"
+      ],
+      "title": "AlertRule",
+      "type": "object"
+    },
+    "Alerts": {
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/AlertRule"
+          },
+          "minItems": 1,
+          "title": "Rules",
+          "type": "array"
+        },
+        "channels": {
+          "items": {
+            "enum": [
+              "inbox",
+              "email",
+              "calendar",
+              "webhook"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Channels",
+          "type": "array"
+        },
+        "hold": {
+          "$ref": "#/$defs/Hold"
+        }
+      },
+      "required": [
+        "rules",
+        "channels",
+        "hold"
+      ],
+      "title": "Alerts",
+      "type": "object"
+    },
+    "AttributeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "bool",
+            "int",
+            "text",
+            "enum",
+            "date"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "values": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "derive": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derive"
+        },
+        "units": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Units",
+          "type": "array"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scale"
+        },
+        "money": {
+          "default": false,
+          "title": "Money",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "label"
+      ],
+      "title": "AttributeSpec",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "llm_usd_per_month": {
+          "minimum": 0,
+          "title": "Llm Usd Per Month",
+          "type": "number"
+        },
+        "on_exceed": {
+          "const": "pause_extraction",
+          "title": "On Exceed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "llm_usd_per_month",
+        "on_exceed"
+      ],
+      "title": "Budget",
+      "type": "object"
+    },
+    "Engine": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "change_impact@1",
+          "title": "Kind",
+          "type": "string"
+        },
+        "fields": {
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "$ref": "#/$defs/FieldSpec"
+            }
+          },
+          "title": "Fields",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "fields"
+      ],
+      "title": "Engine",
+      "type": "object"
+    },
+    "FieldSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "datetime",
+            "amount",
+            "ruleset",
+            "list",
+            "text"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "const": "extract",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/MetaRef"
+            }
+          ],
+          "title": "From"
+        },
+        "else": {
+          "anyOf": [
+            {
+              "const": "extract",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Else"
+        },
+        "guide": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guide"
+        },
+        "keywords": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "type",
+        "from"
+      ],
+      "title": "FieldSpec",
+      "type": "object"
+    },
+    "Hold": {
+      "additionalProperties": false,
+      "properties": {
+        "mass_impact": {
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Mass Impact",
+          "type": "integer"
+        },
+        "min_confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "mass_impact",
+        "min_confidence"
+      ],
+      "title": "Hold",
+      "type": "object"
+    },
+    "Labels": {
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Fields",
+          "type": "object"
+        },
+        "results": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Results",
+          "type": "object"
+        }
+      },
+      "title": "Labels",
+      "type": "object"
+    },
+    "MetaRef": {
+      "additionalProperties": false,
+      "properties": {
+        "meta": {
+          "title": "Meta",
+          "type": "string"
+        }
+      },
+      "required": [
+        "meta"
+      ],
+      "title": "MetaRef",
+      "type": "object"
+    },
+    "SourceUse": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "read": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Read",
+          "type": "array"
+        },
+        "attachments": {
+          "default": false,
+          "title": "Attachments",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "read"
+      ],
+      "title": "SourceUse",
+      "type": "object"
+    },
+    "Subjects": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "enum": [
+            "rules",
+            "watchlist",
+            "everyone"
+          ],
+          "title": "Model",
+          "type": "string"
+        },
+        "rules_field": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rules Field"
+        },
+        "attributes": {
+          "default": {},
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "$ref": "#/$defs/AttributeSpec"
+            }
+          },
+          "title": "Attributes",
+          "type": "object"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "Subjects",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "const": "app",
+      "title": "Kind",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[a-z][a-z0-9-]{1,62}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "title": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "owner": {
+      "title": "Owner",
+      "type": "string"
+    },
+    "sensitivity": {
+      "enum": [
+        "public",
+        "personal",
+        "sensitive"
+      ],
+      "title": "Sensitivity",
+      "type": "string"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/SourceUse"
+      },
+      "minItems": 1,
+      "title": "Sources",
+      "type": "array"
+    },
+    "engine": {
+      "$ref": "#/$defs/Engine"
+    },
+    "subjects": {
+      "$ref": "#/$defs/Subjects"
+    },
+    "alerts": {
+      "$ref": "#/$defs/Alerts"
+    },
+    "budget": {
+      "$ref": "#/$defs/Budget"
+    },
+    "labels": {
+      "$ref": "#/$defs/Labels",
+      "default": {
+        "fields": {},
+        "results": {}
+      }
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "version",
+    "title",
+    "owner",
+    "sensitivity",
+    "sources",
+    "engine",
+    "subjects",
+    "alerts",
+    "budget"
+  ],
+  "title": "AppDefinition",
+  "type": "object"
+}
