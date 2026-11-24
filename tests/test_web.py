@@ -10,6 +10,7 @@ import sqlalchemy as sa  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
+from noticedelta import people  # noqa: E402
 from noticedelta.db import make_engine, models  # noqa: E402
 from noticedelta.web import consent  # noqa: E402
 from noticedelta.web.app import attributes_from_form, create_app  # noqa: E402
@@ -58,7 +59,7 @@ def test_profile_gets_an_unguessable_personal_link(env):
     token = path.rsplit("/", 1)[-1]
     assert path.startswith("/p/") and len(token) >= 24
     with factory() as s:
-        attrs = s.get(models.Profile, token).attributes
+        attrs = s.get(models.Profile, people.resolve(s, token)).attributes
     assert attrs["revenue_krw"] == 300_000_000 and attrs["founded_on"] == "2021-01-01"
 
 
@@ -137,10 +138,11 @@ def test_inbox_shows_sent_alerts(env):
     token = path.rsplit("/", 1)[-1]
     assert "아직 받은 알림이 없습니다" in client.get(f"{path}/alerts").text
     with factory() as s:
+        pid = people.resolve(s, token)
         s.add(
             models.OutboxAlert(
-                idempotency_key=f"{token}:demo-youth:eligibility_rules:pv-youth",
-                user_id=token,
+                idempotency_key=f"{pid}:demo-youth:eligibility_rules:pv-youth",
+                person_id=pid,
                 program_id="demo-youth",
                 payload={
                     "message": "(가상) 사업: 신청 자격 판정이 해당에서 비해당(으)로 바뀌었습니다."
@@ -178,12 +180,12 @@ def test_consent_is_recorded_and_research_can_be_turned_off(env):
     path = make_profile(client, research_ok="on", **BUSAN_FOUNDER)
     token = path.rsplit("/", 1)[-1]
     with factory() as s:
-        p = s.get(models.Profile, token)
+        p = s.get(models.Profile, people.resolve(s, token))
         assert p.consent_version == consent.VERSION and p.consented_at and p.research_ok
     assert "checked" in client.get(f"{path}/edit").text
     client.post(f"{path}/edit", data=BUSAN_FOUNDER)  # 선택 동의 칸을 끄고 저장
     with factory() as s:
-        assert s.get(models.Profile, token).research_ok is False
+        assert s.get(models.Profile, people.resolve(s, token)).research_ok is False
 
 
 def test_delete_removes_everything_and_the_link_stops_working(env):
@@ -191,11 +193,12 @@ def test_delete_removes_everything_and_the_link_stops_working(env):
     path = make_profile(client, **BUSAN_FOUNDER)
     token = path.rsplit("/", 1)[-1]
     with factory() as s:
-        s.add(models.SubscriptionRow(user_id=token, program_id="demo-youth", fields=[]))
+        pid = people.resolve(s, token)
+        s.add(models.SubscriptionRow(person_id=pid, program_id="demo-youth", fields=[]))
         s.add(
             models.OutboxAlert(
-                idempotency_key=f"{token}:k",
-                user_id=token,
+                idempotency_key=f"{pid}:k",
+                person_id=pid,
                 program_id="demo-youth",
                 payload={},
                 status="sent",
@@ -209,8 +212,32 @@ def test_delete_removes_everything_and_the_link_stops_working(env):
     assert client.post(f"{path}/delete").status_code == 404
     with factory() as s:
         for model in (models.Profile, models.SubscriptionRow, models.OutboxAlert):
-            assert count_rows(s, model, user_id=token) == 0
+            assert count_rows(s, model, person_id=pid) == 0
+        assert s.scalar(sa.select(sa.func.count()).select_from(models.AccessLink)) == 0
+        assert s.get(models.Person, pid).deleted_at is not None  # 가명 ID만 남는다
     assert "모두 지웠습니다" in client.get("/?deleted=1").text
+
+
+def test_link_token_is_not_stored_anywhere(env):
+    client, factory = env
+    path = make_profile(client, **BUSAN_FOUNDER)
+    token = path.rsplit("/", 1)[-1]
+    assert client.get(path).status_code == 200
+    with factory() as s:
+        conn = s.connection().connection.driver_connection
+        dump = "\n".join(conn.iterdump())
+        link = s.scalars(sa.select(models.AccessLink)).one()
+    assert token not in dump
+    assert link.token_hash == people.hash_token(token) and link.last_used_at is not None
+
+
+def test_revoked_link_stops_working(env):
+    client, factory = env
+    path = make_profile(client, **BUSAN_FOUNDER)
+    with factory() as s:
+        s.scalars(sa.select(models.AccessLink)).one().revoked_at = date(2026, 11, 1)
+        s.commit()
+    assert client.get(path).status_code == 404
 
 
 def test_privacy_page_shows_items_retention_and_contact(env):

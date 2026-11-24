@@ -31,13 +31,13 @@ class FieldValue:
 
 @dataclass
 class Subscription:
-    user_id: str
+    person_id: str
     fields: set[str]
 
 
 @dataclass
 class Alert:
-    user_id: str
+    person_id: str
     program_id: str
     field: str
     to_version_id: str
@@ -108,8 +108,8 @@ def build_field_source_index(fields: Mapping[str, FieldValue]) -> dict[str, set[
     return dict(index)
 
 
-def _key(user_id: str, program_id: str, field_name: str, to_version_id: str) -> str:
-    return f"{user_id}:{program_id}:{field_name}:{to_version_id}"
+def _key(person_id: str, program_id: str, field_name: str, to_version_id: str) -> str:
+    return f"{person_id}:{program_id}:{field_name}:{to_version_id}"
 
 
 def run_impact(
@@ -197,13 +197,13 @@ def run_impact(
     for rules_field in sorted(rules_fields):
         new_rules = RuleGroup.model_validate(fields[rules_field].value)
         # 판정 기록이 없는 사용자도 본다. 조건이 완화돼 새로 해당하게 된 사람에게도 알려야 한다.
-        for user_id in sorted(set(old_judgments) | set(profiles)):
-            before = old_judgments.get(user_id, _NOT_ELIGIBLE)
-            after = judge(new_rules, profiles.get(user_id, {}))
+        for person_id in sorted(set(old_judgments) | set(profiles)):
+            before = old_judgments.get(person_id, _NOT_ELIGIBLE)
+            after = judge(new_rules, profiles.get(person_id, {}))
             if after.result != before.result:
-                k = _key(user_id, program_id, rules_field, to_version_id)
+                k = _key(person_id, program_id, rules_field, to_version_id)
                 alerts[k] = Alert(
-                    user_id,
+                    person_id,
                     program_id,
                     rules_field,
                     to_version_id,
@@ -217,10 +217,10 @@ def run_impact(
     for name in sorted(real - rules_fields):
         for sub in subscriptions:
             if name in sub.fields:
-                k = _key(sub.user_id, program_id, name, to_version_id)
+                k = _key(sub.person_id, program_id, name, to_version_id)
                 old = old_fields.get(name)
                 alerts[k] = Alert(
-                    sub.user_id,
+                    sub.person_id,
                     program_id,
                     name,
                     to_version_id,

@@ -45,7 +45,7 @@ def virtual_profiles(n: int, seed: int = 42, *, messy: float = 0.05) -> list[dic
                     [1],
                 ]
             )
-        out.append({k: v for k, v in p.items() if v is not None} | {"user_id": f"u{i:06d}"})
+        out.append({k: v for k, v in p.items() if v is not None} | {"person_id": f"u{i:06d}"})
     return out
 
 

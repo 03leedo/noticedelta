@@ -137,9 +137,9 @@ class Evidence:
     pairs: list[Pair]  # 그 조각이 이번 정정에서 어떻게 바뀌었나
 
 
-def alert_evidence(session: Session, alert_id: str, user_id: str) -> Evidence | None:
+def alert_evidence(session: Session, alert_id: str, person_id: str) -> Evidence | None:
     alert = session.get(OutboxAlert, alert_id)
-    if alert is None or alert.user_id != user_id:
+    if alert is None or alert.person_id != person_id:
         return None  # 남의 알림은 없는 것과 같다
     p = alert.payload
     to_version = session.get(ProgramVersion, p.get("to_version_id"))
