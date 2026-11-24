@@ -1,0 +1,258 @@
+{
+  "kind": "app",
+  "id": "grant-alerts",
+  "version": 1,
+  "title": "지원사업 정정 알림",
+  "owner": "platform",
+  "sensitivity": "personal",
+  "sources": [
+    {
+      "id": "bizinfo",
+      "read": [
+        "pblancNm",
+        "bsnsSumryCn",
+        "trgetNm",
+        "reqstBeginEndDe",
+        "reqstMthPapersCn",
+        "refrncNm"
+      ],
+      "attachments": true
+    },
+    {
+      "id": "kstartup",
+      "read": [
+        "biz_pbanc_nm",
+        "pbanc_ctnt",
+        "aply_trgt_ctnt",
+        "aply_excl_trgt_ctnt",
+        "biz_enyy",
+        "biz_trgt_age",
+        "supt_regin",
+        "prfn_matr",
+        "aply_trgt",
+        "supt_biz_clsfc",
+        "biz_prch_dprt_nm",
+        "prch_cnpl_no",
+        "pbanc_rcpt_bgng_dt",
+        "pbanc_rcpt_end_dt"
+      ]
+    }
+  ],
+  "engine": {
+    "kind": "change_impact@1",
+    "fields": {
+      "deadline": {
+        "type": "datetime",
+        "from": {
+          "meta": "apply_end"
+        },
+        "else": "extract",
+        "guide": "신청 마감 일시. \"YYYY-MM-DD HH:MM\" 문자열 (시각이 없으면 \"YYYY-MM-DD\")",
+        "keywords": [
+          "마감",
+          "접수\\s*기간",
+          "신청\\s*기간",
+          "모집\\s*기간",
+          "소진\\s*시\\s*까지"
+        ],
+        "note": "날짜가 있는 조각은 날짜 찾기가 따로 잡는다. \"까지\"만으로는 고르지 않는다"
+      },
+      "amount": {
+        "type": "amount",
+        "from": "extract",
+        "guide": "기업당 최대 지원 금액. 원 단위 정수",
+        "keywords": [
+          "지원\\s*금",
+          "지원\\s*규모",
+          "지원\\s*한도",
+          "사업비",
+          "최대\\s*\\d"
+        ]
+      },
+      "eligibility_rules": {
+        "type": "ruleset",
+        "from": "extract",
+        "guide": "신청 자격 규칙. 아래 규칙 형식의 JSON 객체",
+        "keywords": [
+          "신청\\s*자격",
+          "지원\\s*대상",
+          "자격\\s*요건",
+          "제외\\s*대상",
+          "업력",
+          "창업\\s*\\d+\\s*년",
+          "만\\s*\\d+\\s*세",
+          "연령",
+          "나이",
+          "소재",
+          "예비\\s*창업",
+          "재창업",
+          "여성",
+          "매출",
+          "상시\\s*근로자",
+          "중복\\s*수혜"
+        ]
+      },
+      "required_documents": {
+        "type": "list",
+        "from": "extract",
+        "guide": "제출 서류 이름 목록. 문자열 배열",
+        "keywords": [
+          "(?:제출|구비|증빙|첨부|신청|필요|준비)\\s*서류",
+          "서류\\s*(?:제출|목록)",
+          "증빙\\s*자료",
+          "사본"
+        ],
+        "note": "\"서류 평가\"처럼 서류만 들어간 문장은 고르지 않는다"
+      },
+      "contact": {
+        "type": "text",
+        "from": "extract",
+        "guide": "문의처. 문자열",
+        "keywords": [
+          "문의",
+          "연락처",
+          "담당자",
+          "☎",
+          "\\d{2,3}-\\d{3,4}-\\d{4}"
+        ]
+      }
+    }
+  },
+  "subjects": {
+    "model": "rules",
+    "rules_field": "eligibility_rules",
+    "attributes": {
+      "founded_on": {
+        "type": "date",
+        "label": "창업일"
+      },
+      "ceo_birth_date": {
+        "type": "date",
+        "label": "대표자 생년월일"
+      },
+      "is_pre_founder": {
+        "type": "bool",
+        "label": "예비 창업자"
+      },
+      "business_age_months": {
+        "type": "int",
+        "label": "업력(개월)",
+        "derive": "months_since(founded_on)",
+        "units": [
+          "년",
+          "개월"
+        ],
+        "scale": 12
+      },
+      "ceo_age": {
+        "type": "int",
+        "label": "대표자 나이",
+        "derive": "age(ceo_birth_date)",
+        "units": [
+          "세"
+        ]
+      },
+      "region_sido": {
+        "type": "enum",
+        "label": "소재지",
+        "values": [
+          "서울",
+          "부산",
+          "대구",
+          "인천",
+          "광주",
+          "대전",
+          "울산",
+          "세종",
+          "경기",
+          "강원",
+          "충북",
+          "충남",
+          "전북",
+          "전남",
+          "경북",
+          "경남",
+          "제주"
+        ]
+      },
+      "industry_ksic": {
+        "type": "text",
+        "label": "업종 코드"
+      },
+      "business_type": {
+        "type": "enum",
+        "label": "사업자 형태",
+        "values": [
+          "individual",
+          "corporation"
+        ]
+      },
+      "revenue_krw": {
+        "type": "int",
+        "label": "매출(원)",
+        "money": true
+      },
+      "employees": {
+        "type": "int",
+        "label": "상시 근로자 수",
+        "units": [
+          "명",
+          "인"
+        ]
+      },
+      "is_women_owned": {
+        "type": "bool",
+        "label": "여성기업"
+      },
+      "is_restart": {
+        "type": "bool",
+        "label": "재창업"
+      }
+    }
+  },
+  "alerts": {
+    "rules": [
+      {
+        "on": "verdict_changed",
+        "urgent": [
+          "eligible→ineligible"
+        ]
+      },
+      {
+        "on": "field_changed",
+        "fields": [
+          "deadline",
+          "amount",
+          "required_documents"
+        ],
+        "to": "subscribers"
+      }
+    ],
+    "channels": [
+      "inbox",
+      "calendar"
+    ],
+    "hold": {
+      "mass_impact": 20,
+      "min_confidence": 0.7
+    }
+  },
+  "budget": {
+    "llm_usd_per_month": 5,
+    "on_exceed": "pause_extraction"
+  },
+  "labels": {
+    "fields": {
+      "deadline": "마감일",
+      "amount": "지원 금액",
+      "eligibility_rules": "신청 자격",
+      "required_documents": "제출 서류",
+      "contact": "문의처"
+    },
+    "results": {
+      "eligible": "해당",
+      "ineligible": "비해당",
+      "unknown": "확인 필요"
+    }
+  }
+}

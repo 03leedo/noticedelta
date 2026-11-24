@@ -23,7 +23,7 @@ from noticedelta.eligibility.temporal import (
     eligibility_timeline,
     near_misses,
 )
-from noticedelta.grants import ATTRIBUTES, RULES_FIELD
+from noticedelta.grants import ATTRIBUTE_LABELS, ATTRIBUTES, RULES_FIELD
 
 GROUPS = ("eligible", "near", "unknown")
 GROUP_NAMES = {"eligible": "해당", "near": "거의 해당", "unknown": "확인 필요"}
@@ -149,18 +149,7 @@ def my_programs(session: Session, profile: dict[str, Any], today: date) -> MyPro
     return MyPrograms(today, items, hidden)
 
 
-ATTRIBUTE_NAMES = {
-    "business_age_months": "업력(개월)",
-    "ceo_age": "대표자 나이",
-    "region_sido": "소재지",
-    "industry_ksic": "업종 코드",
-    "business_type": "사업자 형태",
-    "revenue_krw": "매출(원)",
-    "employees": "상시 근로자 수",
-    "is_pre_founder": "예비 창업자",
-    "is_women_owned": "여성기업",
-    "is_restart": "재창업",
-}
+ATTRIBUTE_NAMES = ATTRIBUTE_LABELS  # 앱 정의의 subjects.attributes[].label
 _OPS = {
     " <= ": " ≤ ",
     " >= ": " ≥ ",

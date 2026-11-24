@@ -34,10 +34,9 @@ from noticedelta.db.models import (
     SubscriptionRow,
 )
 from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
-from noticedelta.grants import RULES_FIELD, candidates
+from noticedelta.grants import MASS_IMPACT, MIN_CONFIDENCE, RULES_FIELD, candidates
 from noticedelta.history import MATCHER_VERSION, record_program, replay
 from noticedelta.impact import (
-    REVIEW_THRESHOLD,
     Extractor,
     FieldValue,
     Subscription,
@@ -236,7 +235,7 @@ def _save_fields(
     for name, fv in fields.items():
         if name in stale:
             status = "stale"
-        elif fv.confidence < REVIEW_THRESHOLD:
+        elif fv.confidence < MIN_CONFIDENCE:  # 앱 정의의 alerts.hold
             status = "needs_review"
         else:
             status = "verified"
@@ -356,7 +355,7 @@ def handle_impact(ctx: Context) -> Handler:
 def handle_notify(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         program_id = job.payload["program_id"]
-        prepare(session, program_id)
+        prepare(session, program_id, mass_impact=MASS_IMPACT)
         deliver(session, ctx.channel, program_id=program_id, now=ctx.now, labels=ctx.labels)
 
     return handle
