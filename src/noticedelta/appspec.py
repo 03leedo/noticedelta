@@ -217,7 +217,9 @@ def _shape_problems(e: ValidationError) -> list[Problem]:
 
 
 def _meaning_problems(
-    app: AppDefinition, sources: dict[str, set[str] | None] | None
+    app: AppDefinition,
+    sources: dict[str, set[str] | None] | None,
+    meta: dict[str, set[str]] | None = None,
 ) -> list[Problem]:
     p: list[Problem] = []
     fields = app.engine.fields
@@ -280,6 +282,21 @@ def _meaning_problems(
                 p.append(
                     Problem(
                         f"{at}.keywords.{j}", f"정규식이 아니다: {e}", "괄호와 역슬래시를 확인한다"
+                    )
+                )
+
+    if meta is not None:
+        for name, f in fields.items():
+            if not isinstance(f.from_, MetaRef):
+                continue
+            missing = [s.id for s in app.sources if f.from_.meta not in meta.get(s.id, set())]
+            if missing and f.else_ is None:
+                offered = sorted(set().union(*(meta.get(s.id, set()) for s in app.sources)))
+                p.append(
+                    Problem(
+                        f"engine.fields.{name}.from",
+                        f"{', '.join(missing)}가 구조화 값 {f.from_.meta}를 주지 않는다",
+                        f"else: extract를 두거나 고른다. 주는 값: {', '.join(offered) or '(없음)'}",
                     )
                 )
 
@@ -414,22 +431,28 @@ def _meaning_problems(
 
 
 def check_app(
-    data: dict, *, sources: dict[str, set[str] | None] | None = None
+    data: dict,
+    *,
+    sources: dict[str, set[str] | None] | None = None,
+    meta: dict[str, set[str]] | None = None,
 ) -> tuple[AppDefinition | None, list[Problem]]:
     """정의를 검증한다. sources를 주면 출처와 키도 본다({출처 id: 내는 키, 모르면 None})."""
     try:
         app = AppDefinition.model_validate(data)
     except ValidationError as e:
         return None, _shape_problems(e)
-    problems = _meaning_problems(app, sources)
+    problems = _meaning_problems(app, sources, meta)
     return (None if problems else app), problems
 
 
 def load_app(
-    path: Path | str, *, sources: dict[str, set[str] | None] | None = None
+    path: Path | str,
+    *,
+    sources: dict[str, set[str] | None] | None = None,
+    meta: dict[str, set[str]] | None = None,
 ) -> AppDefinition:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    app, problems = check_app(data, sources=sources)
+    app, problems = check_app(data, sources=sources, meta=meta)
     if app is None:
         raise AppSpecError(problems)
     return app

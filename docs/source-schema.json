@@ -1,0 +1,319 @@
+{
+  "$defs": {
+    "Attachments": {
+      "additionalProperties": false,
+      "properties": {
+        "names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Names",
+          "type": "array"
+        },
+        "urls": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Urls",
+          "type": "array"
+        },
+        "hosts": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Hosts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "names",
+        "urls",
+        "hosts"
+      ],
+      "title": "Attachments",
+      "type": "object"
+    },
+    "Connector": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "code",
+          "title": "Kind",
+          "type": "string"
+        },
+        "adapter": {
+          "title": "Adapter",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "adapter"
+      ],
+      "title": "Connector",
+      "type": "object"
+    },
+    "Fetch": {
+      "additionalProperties": false,
+      "properties": {
+        "every_hours": {
+          "maximum": 168,
+          "minimum": 1,
+          "title": "Every Hours",
+          "type": "integer"
+        },
+        "rate_per_second": {
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "title": "Rate Per Second",
+          "type": "number"
+        }
+      },
+      "required": [
+        "every_hours",
+        "rate_per_second"
+      ],
+      "title": "Fetch",
+      "type": "object"
+    },
+    "Ignore": {
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "url_params": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Url Params",
+          "type": "array"
+        },
+        "url_keys": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Url Keys",
+          "type": "array"
+        }
+      },
+      "title": "Ignore",
+      "type": "object"
+    },
+    "ItemKeys": {
+      "additionalProperties": false,
+      "description": "항목을 가리키는 키: 같은 항목인지(id), 사람에게 보일 제목과 주소.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "title": "ItemKeys",
+      "type": "object"
+    },
+    "KeyInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "about": {
+          "title": "About",
+          "type": "string"
+        },
+        "html": {
+          "default": false,
+          "title": "Html",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "about"
+      ],
+      "title": "KeyInfo",
+      "type": "object"
+    },
+    "MetaInfo": {
+      "additionalProperties": false,
+      "description": "출처가 구조화해 준 값. 앱의 `from: {meta: 이름}`이 가리킨다.",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "about": {
+          "title": "About",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "about"
+      ],
+      "title": "MetaInfo",
+      "type": "object"
+    },
+    "Terms": {
+      "additionalProperties": false,
+      "properties": {
+        "license": {
+          "title": "License",
+          "type": "string"
+        },
+        "quote_limit": {
+          "maximum": 5000,
+          "minimum": 0,
+          "title": "Quote Limit",
+          "type": "integer"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "license",
+        "quote_limit"
+      ],
+      "title": "Terms",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "const": "source",
+      "title": "Kind",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[a-z][a-z0-9_-]{1,62}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "verified",
+        "private"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "owner": {
+      "title": "Owner",
+      "type": "string"
+    },
+    "connector": {
+      "$ref": "#/$defs/Connector"
+    },
+    "fetch": {
+      "$ref": "#/$defs/Fetch"
+    },
+    "item": {
+      "$ref": "#/$defs/ItemKeys"
+    },
+    "keys": {
+      "additionalProperties": {
+        "$ref": "#/$defs/KeyInfo"
+      },
+      "minProperties": 1,
+      "title": "Keys",
+      "type": "object"
+    },
+    "meta": {
+      "additionalProperties": {
+        "$ref": "#/$defs/MetaInfo"
+      },
+      "default": {},
+      "title": "Meta",
+      "type": "object"
+    },
+    "ignore": {
+      "$ref": "#/$defs/Ignore",
+      "default": {
+        "keys": [],
+        "url_params": [],
+        "url_keys": []
+      }
+    },
+    "group": {
+      "anyOf": [
+        {
+          "const": "repost_title",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Group"
+    },
+    "attachments": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Attachments"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "terms": {
+      "$ref": "#/$defs/Terms"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "title",
+    "status",
+    "owner",
+    "connector",
+    "fetch",
+    "item",
+    "keys",
+    "terms"
+  ],
+  "title": "SourceSheet",
+  "type": "object"
+}
