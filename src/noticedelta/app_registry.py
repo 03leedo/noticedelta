@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.appspec import AppDefinition
 from noticedelta.db.models import AppDefinitionRow
+from noticedelta.events import Ref, app_ref, emit
 
 
 class VersionConflict(ValueError):
@@ -52,6 +53,15 @@ def enable(session: Session, app_id: str, version: int, *, at: datetime) -> None
         raise KeyError(f"{app_id} 판 {version}이 없다. 먼저 register한다")
     if row.enabled_at is None or row != _current_row(session, app_id):
         row.enabled_at = at
+        emit(
+            session,
+            "app.version_enabled",
+            {"app_id": app_id, "version": version, "content_hash": row.content_hash},
+            producer="svc:apps",
+            key=f"{app_id}@{version}:{at.isoformat()}",
+            ref=Ref(app=app_ref(app_id, version)),
+            now=at,
+        )
 
 
 def seed(session: Session, app: AppDefinition, *, at: datetime) -> AppDefinitionRow:

@@ -36,6 +36,8 @@ from noticedelta.db.models import (
     SubscriptionRow,
 )
 from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
+from noticedelta.events import Ref, Trace, app_ref, emit, subscribe
+from noticedelta.events import Subscription as EventSubscription
 from noticedelta.grants import APP, MASS_IMPACT, MIN_CONFIDENCE, RULES_FIELD, candidates
 from noticedelta.history import MATCHER_VERSION, record_item, replay
 from noticedelta.impact import (
@@ -48,7 +50,7 @@ from noticedelta.ingest import parse_attachments
 from noticedelta.jobs import Handler, PermanentError, TransientError, enqueue
 from noticedelta.llm.extract import FIELD_TYPES, TEMPLATE_VERSION
 from noticedelta.names import ALERT_LABELS
-from noticedelta.notify import Channel, InboxChannel, deliver, prepare
+from noticedelta.notify import Channel, InboxChannel, deliver, note, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
 from noticedelta.programs import LoadSummary, load_run
 
@@ -77,6 +79,14 @@ class Context:
     )  # 결과(필드 값, 판정, 알림)에 이 앱의 id와 판을 단다
 
 
+def _parse_time(value: str | None) -> datetime | None:
+    try:
+        t = datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+    return t if t is None or t.tzinfo else t.replace(tzinfo=UTC)
+
+
 def _unloaded_runs(session: Session, root: Path) -> list[str]:
     loaded = set(session.scalars(sa.select(LoadedRun.name)).all())
     return [p.stem for p in sorted((root / "runs").glob("*.json")) if p.stem not in loaded]
@@ -97,7 +107,7 @@ def enqueue_load(session: Session, root: Path) -> Job | None:
     )
 
 
-def _enqueue_parse(session: Session, pv_id: str) -> None:
+def _enqueue_parse(session: Session, pv_id: str, trace: Trace | None = None) -> None:
     pv = session.get(ItemVersion, pv_id)
     blobs = session.scalar(
         sa.select(sa.func.count()).where(
@@ -108,7 +118,7 @@ def _enqueue_parse(session: Session, pv_id: str) -> None:
     enqueue(
         session,
         PARSE,
-        {"item_version_id": pv_id},
+        {"item_version_id": pv_id, **(trace or Trace()).carry()},
         dedupe_key=f"{PARSE}:{pv_id}:{blobs}",
         concurrency_key=f"item:{pv.item_id}",
         priority=50,
@@ -143,8 +153,46 @@ def handle_load(ctx: Context) -> Handler:
             raise PermanentError(f"실행 파일을 읽지 못함: {path.name}") from e
         summary = LoadSummary()
         load_run(session, path, ctx.store, summary)
-        for pv_id in summary.new_version_ids + summary.refilled_version_ids:
-            _enqueue_parse(session, pv_id)
+        run = json.loads(path.read_text(encoding="utf-8"))
+        env = emit(
+            session,
+            "source.run_finished",
+            {
+                "run": pending[0],
+                "sources": {
+                    sid: {
+                        "count": r.get("count"),
+                        "changed": r.get("changed"),
+                        "error": r.get("error"),
+                    }
+                    for sid, r in (run.get("sources") or {}).items()
+                },
+            },
+            producer="svc:loader",
+            key=pending[0],
+            occurred_at=_parse_time(run.get("finished_at")),
+            now=ctx.now(),
+        )
+        trace = Trace(env.trace_id if env else None, env.id if env else None)
+        for pv_id in summary.new_version_ids:
+            pv = session.get(ItemVersion, pv_id)
+            v = emit(
+                session,
+                "document.version_created",
+                {
+                    "item_version_id": pv.id,
+                    "notice_version_id": pv.notice_version_id,
+                    "content_hash": pv.content_hash,
+                },
+                producer="svc:loader",
+                key=pv.id,
+                ref=Ref(item=f"item:{pv.item_id}", item_version=pv.version_no),
+                trace=trace,
+                now=ctx.now(),
+            )
+            _enqueue_parse(session, pv_id, Trace(trace.trace, v.id if v else trace.cause))
+        for pv_id in summary.refilled_version_ids:
+            _enqueue_parse(session, pv_id, trace)
         enqueue_load(session, ctx.root)  # 남은 실행이 있으면 다음 것
 
     return handle
@@ -156,14 +204,30 @@ def handle_parse(ctx: Context) -> Handler:
         if pv is None:
             raise PermanentError("사업 버전이 없음")
         try:
-            parse_attachments(session, pv.notice_version_id, parser=ctx.parser, store=ctx.store)
+            outcomes = parse_attachments(
+                session, pv.notice_version_id, parser=ctx.parser, store=ctx.store
+            )
         except ParserUnavailable as e:
             raise TransientError("파서 컨테이너를 쓸 수 없음") from e
+        env = emit(
+            session,
+            "document.parsed",
+            {
+                "item_version_id": pv.id,
+                "attachments": len(outcomes),
+                "unreadable": sum(o.status != "ok" for o in outcomes),
+            },
+            producer="svc:parser",
+            key=job.dedupe_key,
+            ref=Ref(item=f"item:{pv.item_id}", item_version=pv.version_no),
+            trace=Trace.of(job.payload),
+            now=ctx.now(),
+        )
         # 파싱 작업 키(받은 첨부 수 포함)를 이어 쓴다. 첨부가 늦게 채워지면 비교도 다시 한다.
         enqueue(
             session,
             DIFF,
-            {"item_id": pv.item_id},
+            {"item_id": pv.item_id, **Trace.of(job.payload).carry(env)},
             dedupe_key=f"{DIFF}:{job.dedupe_key}:{MATCHER_VERSION}",
             concurrency_key=f"item:{pv.item_id}",
             priority=60,
@@ -176,10 +240,30 @@ def handle_diff(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         item_id = job.payload["item_id"]
         results = record_item(session, item_id, ctx.store)
-        if ctx.extractor is not None:
-            for r in results:
-                if r.status == "recorded":
-                    _enqueue_impact(session, item_id, r.event.to_version_id)
+        trace = Trace.of(job.payload)
+        for r in results:
+            if r.status != "recorded":
+                continue
+            c = r.event.changed_lineages
+            env = emit(
+                session,
+                "change.detected",
+                {
+                    "from_version_id": r.event.from_version_id,
+                    "to_version_id": r.event.to_version_id,
+                    "added": len(c.get("added", [])),
+                    "removed": len(c.get("removed", [])),
+                    "modified": len(c.get("modified", [])),
+                    "matcher": r.event.matcher_version,
+                },
+                producer="svc:engine",
+                key=r.event.to_version_id,
+                ref=Ref(item=f"item:{item_id}", item_version=r.version_no),
+                trace=trace,
+                now=ctx.now(),
+            )
+            if ctx.extractor is not None:
+                _enqueue_impact(session, item_id, r.event.to_version_id, trace.carry(env))
         waiting = next((r for r in results if r.status == "waiting"), None)
         if waiting is None:
             return
@@ -192,7 +276,7 @@ def handle_diff(ctx: Context) -> Handler:
         enqueue(
             session,
             DIFF,
-            {"item_id": item_id, "wait": n + 1, "reason": reason},
+            {"item_id": item_id, "wait": n + 1, "reason": reason, **trace.carry()},
             dedupe_key=f"{job.dedupe_key}|w{n + 1}",
             concurrency_key=job.concurrency_key,
             priority=job.priority,
@@ -209,11 +293,13 @@ def _impact_key(pv_id: str) -> str:
     return f"{IMPACT}:{pv_id}:{TEMPLATE_VERSION}"
 
 
-def _enqueue_impact(session: Session, item_id: str, pv_id: str) -> None:
+def _enqueue_impact(
+    session: Session, item_id: str, pv_id: str, carry: dict[str, str] | None = None
+) -> None:
     enqueue(
         session,
         IMPACT,
-        {"item_version_id": pv_id},
+        {"item_version_id": pv_id, **(carry or {})},
         dedupe_key=_impact_key(pv_id),
         concurrency_key=f"item:{item_id}",
         priority=70,
@@ -326,6 +412,35 @@ def handle_impact(ctx: Context) -> Handler:
             app_version=ctx.app.version,
         )
         _save_fields(ctx, session, pv, res.fields, res.stale)
+        trace = Trace.of(job.payload)
+        app = app_ref(ctx.app.id, ctx.app.version)
+        where = Ref(app=app, item=f"item:{item_id}", item_version=pv.version_no)
+        for name in sorted(res.real_changes):
+            fv = res.fields.get(name)
+            if fv is None:
+                continue
+            emit(
+                session,
+                "field.changed",
+                {
+                    "field": name,
+                    "value_type": fv.value_type,
+                    "to_version_id": pv.id,
+                    "sources": list(fv.sources),
+                    "confidence": fv.confidence,
+                    "after": _short(fv.value),
+                },
+                producer="svc:engine",
+                key=f"{ctx.app.id}:{pv.id}:{name}",
+                ref=Ref(
+                    app=app,
+                    item=where.item,
+                    item_version=where.item_version,
+                    labels={"llm_derived": True, "confidence": fv.confidence},
+                ),
+                trace=trace,
+                now=ctx.now(),
+            )
 
         if RULES_FIELD in res.real_changes:
             rules = RuleGroup.model_validate(res.fields[RULES_FIELD].value)
@@ -346,33 +461,79 @@ def handle_impact(ctx: Context) -> Handler:
                 )
         session.flush()
         for alert in res.alerts:
-            if repo.enqueue_alert(session, alert) and alert.needs_review:
-                # 근거 확인을 통과하지 못한 값은 바로 보내지 않고 붙잡는다 (설계 7.8).
-                row = session.scalar(
-                    sa.select(OutboxAlert).where(
-                        OutboxAlert.idempotency_key == alert.idempotency_key
-                    )
+            person = Ref(
+                app=app,
+                subject=f"person:{alert.person_id}",
+                item=where.item,
+                item_version=where.item_version,
+            )
+            cause = None
+            if alert.kind == "judgment_changed":
+                cause = emit(
+                    session,
+                    "verdict.changed",
+                    {
+                        "field": alert.field,
+                        "to_version_id": pv.id,
+                        "before": alert.before,
+                        "after": alert.after,
+                        "evidence": [f"lineage:{s}" for s in alert.sources],
+                    },
+                    producer="svc:engine",
+                    key=alert.idempotency_key,
+                    ref=person,
+                    trace=trace,
+                    now=ctx.now(),
                 )
+            if not repo.enqueue_alert(session, alert):
+                continue
+            row = session.scalar(
+                sa.select(OutboxAlert).where(OutboxAlert.idempotency_key == alert.idempotency_key)
+            )
+            # 알림이 생겼다는 봉투를 알림 발송이 구독한다(아래 NOTIFY_ON_ALERT)
+            note(
+                session,
+                row,
+                "created",
+                trace=Trace(trace.trace, cause.id if cause else trace.cause),
+                producer="svc:engine",
+            )
+            if alert.needs_review:
+                # 근거 확인을 통과하지 못한 값은 바로 보내지 않고 붙잡는다 (설계 7.8).
                 row.status = "held"
                 row.held_reason = f"근거 확인 필요 (신뢰도 {alert.confidence:.2f})"
-        if res.alerts:
-            enqueue(
-                session,
-                NOTIFY,
-                {"item_id": item_id},
-                dedupe_key=f"{NOTIFY}:{pv.id}",
-                concurrency_key=f"item:{item_id}",
-                priority=80,
-            )
+                note(
+                    session, row, "held", reason=row.held_reason, trace=trace, producer="svc:engine"
+                )
 
     return handle
+
+
+def _short(value, limit: int = 500):
+    """봉투에 넣을 짧은 값. 길면 넣지 않는다(원문 노출 한도, 64KB 한도)."""
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    return value if len(text) <= limit else None
+
+
+# 알림 발송은 알림이 생겼다는 봉투를 받아 돈다(platform-services 2.5). 항목 판 하나에 한 번.
+NOTIFY_ON_ALERT = EventSubscription(
+    name="notify",
+    pattern="alert.created",
+    job=NOTIFY,
+    dedupe=lambda env: f"{NOTIFY}:{env.payload['to_version_id']}",
+    concurrency=lambda env: env.item,
+    payload=lambda env: {"item_id": (env.item or "").removeprefix("item:")},
+    priority=80,
+)
+subscribe(NOTIFY_ON_ALERT)
 
 
 def handle_notify(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         item_id = job.payload["item_id"]
-        prepare(session, item_id, mass_impact=MASS_IMPACT)
-        deliver(session, ctx.channel, item_id=item_id, now=ctx.now, labels=ctx.labels)
+        trace = Trace.of(job.payload)
+        prepare(session, item_id, mass_impact=MASS_IMPACT, trace=trace)
+        deliver(session, ctx.channel, item_id=item_id, now=ctx.now, labels=ctx.labels, trace=trace)
 
     return handle
 
