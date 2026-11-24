@@ -262,7 +262,7 @@ def _latest_judgments(session: Session, program_id: str) -> dict[str, Judgment]:
         .where(JudgmentRow.program_id == program_id)
         .order_by(JudgmentRow.created_at)
     ).all()
-    return {r.user_id: Judgment(r.result) for r in rows}  # 뒤의 것이 앞의 것을 덮는다
+    return {r.person_id: Judgment(r.result) for r in rows}  # 뒤의 것이 앞의 것을 덮는다
 
 
 def handle_impact(ctx: Context) -> Handler:
@@ -288,16 +288,16 @@ def handle_impact(ctx: Context) -> Handler:
 
         program_id = pv.program_id
         subs = [
-            Subscription(r.user_id, set(r.fields))
+            Subscription(r.person_id, set(r.fields))
             for r in session.scalars(
                 sa.select(SubscriptionRow).where(SubscriptionRow.program_id == program_id)
             )
         ]
         old_judgments = _latest_judgments(session, program_id)
-        users = {s.user_id for s in subs} | set(old_judgments)
+        users = {s.person_id for s in subs} | set(old_judgments)
         profiles = {
-            p.user_id: dict(p.attributes)
-            for p in session.scalars(sa.select(Profile).where(Profile.user_id.in_(users)))
+            p.person_id: dict(p.attributes)
+            for p in session.scalars(sa.select(Profile).where(Profile.person_id.in_(users)))
         }
         res = run_impact(
             candidate_detector=candidates,
@@ -317,11 +317,11 @@ def handle_impact(ctx: Context) -> Handler:
         if RULES_FIELD in res.real_changes:
             rules = RuleGroup.model_validate(res.fields[RULES_FIELD].value)
             h = ruleset_hash(rules)
-            for user_id, attrs in profiles.items():
+            for person_id, attrs in profiles.items():
                 j = judge(rules, attrs)
                 session.add(
                     JudgmentRow(
-                        user_id=user_id,
+                        person_id=person_id,
                         program_id=program_id,
                         program_version_id=pv.id,
                         ruleset_hash=h,

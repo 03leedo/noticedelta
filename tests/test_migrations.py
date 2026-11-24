@@ -65,3 +65,59 @@ def test_unversioned_database_from_the_first_schema_is_upgraded(tmp_path):
     assert migrate.upgrade(engine) == migrate.head()
     assert "label" in sa.inspect(engine).get_table_names()
     assert diffs(engine) == []
+
+
+def test_link_tokens_leave_the_database_when_people_get_ids(tmp_path):
+    """0009: 토큰 원문이 사용자 ID였던 DB를 올리면 토큰은 해시로만 남고, 같은 링크로 들어갈 수 있다."""
+    from alembic import command
+    from sqlalchemy.orm import Session
+
+    from noticedelta import people
+
+    token = "tok-" + "x" * 20
+    url = f"sqlite:///{tmp_path / 'p.db'}"
+    command.upgrade(migrate.config(url), "0008")
+    engine = make_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO program (id, title, title_key, created_at) VALUES ('p1', 't', 't', '2026-11-01')"
+            )
+        )
+        conn.execute(
+            sa.text("INSERT INTO profile (user_id, attributes, research_ok) VALUES (:t, '{}', 0)"),
+            {"t": token},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO subscription (id, user_id, program_id, fields) VALUES ('s1', :t, 'p1', '[]')"
+            ),
+            {"t": token},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO outbox_alert (id, idempotency_key, user_id, program_id, payload, status,"
+                " created_at) VALUES ('a1', :k, :t, 'p1', :p, 'sent', '2026-11-01')"
+            ),
+            {
+                "k": f"{token}:p1:deadline:v2",
+                "t": token,
+                "p": f'{{"user_id": "{token}", "field": "deadline"}}',
+            },
+        )
+    assert migrate.upgrade(engine) == migrate.head()
+    assert diffs(engine) == []
+
+    with engine.connect() as conn:
+        dump = "\n".join(conn.connection.driver_connection.iterdump())
+    assert token not in dump
+    with Session(engine) as s:
+        pid = people.resolve(s, token)
+        assert pid is not None and len(pid) == 32
+        assert s.get(models.Profile, pid) is not None
+        sub = s.scalars(sa.select(models.SubscriptionRow)).one()
+        alert = s.scalars(sa.select(models.OutboxAlert)).one()
+    assert sub.person_id == pid
+    assert alert.person_id == pid
+    assert alert.idempotency_key == f"{pid}:p1:deadline:v2"
+    assert alert.payload == {"person_id": pid, "field": "deadline"}

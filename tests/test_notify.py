@@ -21,7 +21,7 @@ class Recorder:
         self.sent = []
 
     def send(self, alert, message):
-        self.sent.append((alert.user_id, message))
+        self.sent.append((alert.person_id, message))
 
 
 @pytest.fixture

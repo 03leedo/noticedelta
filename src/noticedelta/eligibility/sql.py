@@ -250,10 +250,10 @@ def bulk_judge(
 
     h = ruleset_hash(group)
     tri = tri_state(group, column, min_confidence=min_confidence)
-    key = p.c.user_id + f":{program_version_id}:{h}"
+    key = p.c.person_id + f":{program_version_id}:{h}"
     select = sa.select(
         sa.func.md5(key),
-        p.c.user_id,
+        p.c.person_id,
         _t(program_id),
         _t(program_version_id),
         _t(h),
@@ -267,7 +267,7 @@ def bulk_judge(
         .from_select(
             [
                 "id",
-                "user_id",
+                "person_id",
                 "program_id",
                 "program_version_id",
                 "ruleset_hash",
@@ -278,7 +278,7 @@ def bulk_judge(
             select,
         )  # fmt: skip
         .on_conflict_do_nothing(
-            index_elements=["user_id", "program_id", "program_version_id", "ruleset_hash"]
+            index_elements=["person_id", "program_id", "program_version_id", "ruleset_hash"]
         )
     )
     # SQLAlchemy 2.1의 INSERT ... SELECT는 rowcount를 주지 않아 RETURNING으로 센다.

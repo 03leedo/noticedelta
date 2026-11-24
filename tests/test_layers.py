@@ -32,6 +32,7 @@ LAYERS: dict[str, list[str]] = {
         "metrics",
         "notify",
         "parsing",
+        "people",  # 사람 ID와 개인 링크(토큰은 해시로만)
         "snapshot",
         "sources.attachments",
         "sources.base",

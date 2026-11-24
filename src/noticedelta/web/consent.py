@@ -26,11 +26,14 @@ def record(profile: Profile, *, research_ok: bool, at: datetime) -> None:
     profile.research_ok = research_ok
 
 
-def delete_user(session: Session, user_id: str) -> bool:
-    """사용자가 남긴 것을 모두 지운다: 구독, 판정 이력, 알림, 프로필. 없던 사용자면 False."""
-    if session.get(Profile, user_id) is None:
+def delete_user(session: Session, person_id: str) -> bool:
+    """사용자가 남긴 것을 모두 지운다: 구독, 판정 이력, 알림, 프로필. 없던 사용자면 False.
+
+    링크와 사람은 people.forget이 맡는다(사람 ID는 가명으로 남는다).
+    """
+    if session.get(Profile, person_id) is None:
         return False
     for model in (SubscriptionRow, JudgmentRow, OutboxAlert):
-        session.execute(sa.delete(model).where(model.user_id == user_id))
-    session.execute(sa.delete(Profile).where(Profile.user_id == user_id))
+        session.execute(sa.delete(model).where(model.person_id == person_id))
+    session.execute(sa.delete(Profile).where(Profile.person_id == person_id))
     return True
