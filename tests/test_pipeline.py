@@ -145,7 +145,7 @@ def test_late_attachment_is_filled_and_compared(env):
     env.clock.t += timedelta(hours=1)
     env.work()
     assert env.count(models.ChangeEvent) == 1
-    assert env.count(models.ProgramVersion) == 1
+    assert env.count(models.ItemVersion) == 1
 
 
 class RulesFromText:
@@ -186,7 +186,7 @@ class RulesFromText:
 def subscribe_eligible_user(env):
     """v1을 본 사용자: 업력 6년, 자격 규칙을 구독, 판정은 해당."""
     with env.factory() as s:
-        pv = s.scalars(sa.select(models.ProgramVersion)).one()
+        pv = s.scalars(sa.select(models.ItemVersion)).one()
         s.add(models.Person(id="u1"))
         s.add(models.Profile(person_id="u1", attributes={"business_age_months": 72}))
         s.flush()
@@ -197,7 +197,7 @@ def subscribe_eligible_user(env):
                 app_id="grant-alerts",
                 app_version=1,
                 person_id="u1",
-                program_id=pv.program_id,
+                item_id=pv.item_id,
                 fields=["eligibility_rules"],
             )
         )
@@ -206,8 +206,8 @@ def subscribe_eligible_user(env):
                 app_id="grant-alerts",
                 app_version=1,
                 person_id="u1",
-                program_id=pv.program_id,
-                program_version_id=pv.id,
+                item_id=pv.item_id,
+                item_version_id=pv.id,
                 ruleset_hash="v1",
                 result="eligible",
             )

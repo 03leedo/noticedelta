@@ -88,7 +88,7 @@ def test_first_load_makes_one_program_per_posting_with_blobs(env):
         ]
     )
     s = load_snapshots(session, runs.root, store)
-    assert (s.runs, s.new_postings, s.new_programs, s.new_program_versions) == (1, 2, 2, 2)
+    assert (s.runs, s.new_postings, s.new_items, s.new_item_versions) == (1, 2, 2, 2)
     att = session.scalar(sa.select(models.Attachment))
     assert att.blob_key and att.lineage_key == "attachment:공고문:0"
     assert load_snapshots(session, runs.root, store).runs == 0  # 같은 실행은 다시 넣지 않는다
@@ -99,14 +99,12 @@ def test_bizinfo_repost_is_linked_to_the_same_program(env):
     runs.run([item("P1", "2026년 창업 지원 모집", "기관X")])
     runs.run([item("P9", "[수정공고] 2026년 창업 지원 모집", "기관X", deadline="2026-11-14")])
     s = load_snapshots(session, runs.root, store)
-    assert s.new_programs == 1 and s.links["repost_title"] == 1 and s.closed == 1
+    assert s.new_items == 1 and s.links["repost_title"] == 1 and s.closed == 1
     p1 = session.scalar(sa.select(models.Notice).where(models.Notice.external_id == "P1"))
     p9 = session.scalar(sa.select(models.Notice).where(models.Notice.external_id == "P9"))
-    assert p1.program_id == p9.program_id and p1.status == "closed"
+    assert p1.item_id == p9.item_id and p1.status == "closed"
     versions = session.scalars(
-        sa.select(models.ProgramVersion.version_no).where(
-            models.ProgramVersion.program_id == p1.program_id
-        )
+        sa.select(models.ItemVersion.version_no).where(models.ItemVersion.item_id == p1.item_id)
     ).all()
     assert sorted(versions) == [1, 2]
 
@@ -121,9 +119,9 @@ def test_similar_title_is_not_merged_but_queued_for_review(env):
         ]
     )
     s = load_snapshots(session, runs.root, store)
-    assert s.new_programs == 2 and s.links["needs_review"] == 1
+    assert s.new_items == 2 and s.links["needs_review"] == 1
     review = session.scalar(
-        sa.select(models.ProgramLink).where(models.ProgramLink.decision == "needs_review")
+        sa.select(models.ItemLink).where(models.ItemLink.decision == "needs_review")
     )
     assert 0.8 <= review.score < 1.0
 
@@ -132,7 +130,7 @@ def test_different_org_is_never_merged(env):
     runs, session, store = env
     runs.run([item("P1", "2026년 창업 지원 모집", "기관X")])
     runs.run([item("P2", "2026년 창업 지원 모집", "기관Z")])
-    assert load_snapshots(session, runs.root, store).new_programs == 2
+    assert load_snapshots(session, runs.root, store).new_items == 2
 
 
 def test_unchanged_content_adds_no_versions_and_updates_last_seen(env):
@@ -140,7 +138,7 @@ def test_unchanged_content_adds_no_versions_and_updates_last_seen(env):
     runs.run([item("P1", "2026년 창업 지원 모집", "기관X")])
     runs.run([item("P1", "2026년 창업 지원 모집", "기관X")])
     s = load_snapshots(session, runs.root, store)
-    assert (s.runs, s.new_posting_versions, s.new_program_versions) == (2, 1, 1)
+    assert (s.runs, s.new_posting_versions, s.new_item_versions) == (2, 1, 1)
     snap = session.scalar(sa.select(models.SnapshotRecord))
     assert snap.last_seen_at > snap.first_seen_at
     assert count(session, models.SnapshotRecord) == 1
@@ -152,7 +150,7 @@ def test_new_attachment_urls_for_the_same_files_add_no_program_version(env):
     runs.run([item("P1", "2026년 창업 지원 모집", "기관X", files=["공고문.hwp"], path="new")])
     s = load_snapshots(session, runs.root, store)
     # 첨부를 새 주소로 다시 받으려고 게시물 버전은 생기지만, 같은 파일이라 사업 버전은 하나다
-    assert (s.new_posting_versions, s.new_program_versions) == (2, 1)
+    assert (s.new_posting_versions, s.new_item_versions) == (2, 1)
     keys = session.scalars(sa.select(models.Attachment.blob_key)).all()
     assert len(keys) == 2 and len(set(keys)) == 1
 
@@ -164,7 +162,7 @@ def test_loading_in_two_steps_equals_loading_at_once(env):
     runs.run([item("P9", "2026년 창업 지원 모집(정정)", "기관X", deadline="2026-11-30")])
     s = load_snapshots(session, runs.root, store)
     assert s.runs == 1 and s.links["repost_title"] == 1
-    assert count(session, models.Program) == 1
+    assert count(session, models.Item) == 1
 
 
 def test_region_city_or_round_differences_are_not_even_reviewed(env):
@@ -182,7 +180,7 @@ def test_region_city_or_round_differences_are_not_even_reviewed(env):
         ]
     )
     s = load_snapshots(session, runs.root, store)
-    assert s.new_programs == 4 and s.links["needs_review"] == 0
+    assert s.new_items == 4 and s.links["needs_review"] == 0
 
 
 def tokened(token):
@@ -196,7 +194,7 @@ def test_reissued_download_tokens_add_no_versions_at_all(env):
     runs.run([tokened("t1")])
     runs.run([tokened("t2")])
     s = load_snapshots(session, runs.root, store)
-    assert (s.new_posting_versions, s.new_program_versions) == (1, 1)
+    assert (s.new_posting_versions, s.new_item_versions) == (1, 1)
     att = session.scalar(sa.select(models.Attachment))
     assert att.blob_key and "downloadToken" not in att.url
     assert count(session, models.SnapshotRecord) == 1
@@ -224,7 +222,7 @@ def test_a_field_vanishing_everywhere_at_once_is_held_not_treated_as_corrections
     runs.run(many(25, trgetNm=None))  # 출처가 이 항목을 한꺼번에 비워 보낸다
     runs.run(many(25, trgetNm=None))
     s = load_snapshots(session, runs.root, store)
-    assert s.new_posting_versions == 25 and s.new_program_versions == 25  # 처음 것뿐
+    assert s.new_posting_versions == 25 and s.new_item_versions == 25  # 처음 것뿐
     assert len(s.drift) == 2
     assert all(d["bizinfo"]["trgetNm"]["kind"] == "emptied" for d in s.drift.values())
     raws = session.scalars(sa.select(models.NoticeVersion.raw)).all()
@@ -242,7 +240,7 @@ def test_one_posting_losing_a_field_is_still_a_real_change(env):
     changed[0]["trgetNm"] = None
     runs.run(changed)
     s = load_snapshots(session, runs.root, store)
-    assert s.new_program_versions == 26 and s.drift == {}
+    assert s.new_item_versions == 26 and s.drift == {}
 
 
 def summary_run(runs, session, store, items):
@@ -257,7 +255,7 @@ def test_a_key_rewritten_everywhere_at_once_is_held_then_released_on_decision(en
     summary_run(runs, session, store, many(25, trgetNm="중소기업"))
     # 출처가 같은 키의 표기를 통째로 바꿨다(예: 날짜 형식). 정정 25건이 아니라 형식 변화다
     s = summary_run(runs, session, store, many(25, trgetNm="중소 기업(소상공인 포함)"))
-    assert s.new_program_versions == 0 and s.drift
+    assert s.new_item_versions == 0 and s.drift
     row = session.scalar(sa.select(models.SourceDrift))
     assert (row.status, row.kind, row.changed, row.compared) == ("held", "changed", 25, 25)
     assert len(row.samples) == 3
@@ -265,10 +263,10 @@ def test_a_key_rewritten_everywhere_at_once_is_held_then_released_on_decision(en
     drift.decide(session, "bizinfo", "trgetNm", drift.RELEASED, "출처가 실제로 대상을 넓혔다")
     session.commit()
     s = summary_run(runs, session, store, many(25, trgetNm="중소 기업(소상공인 포함)"))
-    assert s.new_program_versions == 25  # 진짜 변경으로 받았다
+    assert s.new_item_versions == 25  # 진짜 변경으로 받았다
     assert row.status == "closed"
     s = summary_run(runs, session, store, many(25, trgetNm="중소 기업(소상공인 포함)"))
-    assert s.new_program_versions == 0 and not s.drift
+    assert s.new_item_versions == 0 and not s.drift
 
 
 def test_ignored_key_is_carried_forward_silently(env):
@@ -282,18 +280,18 @@ def test_ignored_key_is_carried_forward_silently(env):
     drift.decide(session, "bizinfo", "trgetNm", drift.IGNORED)
     session.commit()
     s = summary_run(runs, session, store, many(25, trgetNm="2026-11-18 16:00"))
-    assert s.new_program_versions == 0 and drift.pending(session) == []
+    assert s.new_item_versions == 0 and drift.pending(session) == []
     changed = many(25, trgetNm="2026-11-18 22:00")
     changed[0]["pblancNm"] = "(가상) 사업 0 (변경)"  # 다른 키의 변경은 그대로 보인다
     s = summary_run(runs, session, store, changed)
-    assert s.new_program_versions == 1
+    assert s.new_item_versions == 1
 
 
 def test_a_key_newly_filled_everywhere_is_held(env):
     runs, session, store = env
     summary_run(runs, session, store, many(25))
     s = summary_run(runs, session, store, many(25, newKey="출처가 새로 주기 시작한 값"))
-    assert s.new_program_versions == 0
+    assert s.new_item_versions == 0
     assert session.scalar(sa.select(models.SourceDrift.kind)) == "filled"
 
 
@@ -302,7 +300,7 @@ def test_held_key_recovers_when_values_come_back(env):
     summary_run(runs, session, store, many(25, trgetNm="중소기업"))
     summary_run(runs, session, store, many(25, trgetNm=None))
     s = summary_run(runs, session, store, many(25, trgetNm="중소기업"))
-    assert s.new_program_versions == 0
+    assert s.new_item_versions == 0
     assert session.scalar(sa.select(models.SourceDrift.status)) == "recovered"
 
 
@@ -320,4 +318,4 @@ def test_differences_the_adapter_absorbs_are_not_format_changes(env):
     summary_run(runs, session, store, tokened(25, "t1"))
     s = summary_run(runs, session, store, tokened(25, "t2"))  # 토큰만 전부 새로 발급됐다
     assert s.drift == {} and session.scalar(sa.select(models.SourceDrift)) is None
-    assert s.new_program_versions == 0
+    assert s.new_item_versions == 0

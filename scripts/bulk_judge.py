@@ -37,7 +37,7 @@ def setup(url: str, n: int) -> sa.Engine:
         s.add(models.Source(id="bizinfo", name="기업마당"))
         s.flush()
         for i, name in enumerate(SAMPLE_RULESETS):
-            s.add(models.Program(id=f"PG{i}", title=f"(가상) {name}", title_key=name))
+            s.add(models.Item(id=f"PG{i}", title=f"(가상) {name}", title_key=name))
             s.add(models.Notice(id=f"N{i}", source_id="bizinfo", external_id=name, title=name))
             s.flush()
             s.add(
@@ -48,9 +48,9 @@ def setup(url: str, n: int) -> sa.Engine:
             s.flush()
             for no, pv in [(1, f"PV{i}"), (2, f"PY{i}")]:  # PY: 파이썬 경로 비교용
                 s.add(
-                    models.ProgramVersion(
+                    models.ItemVersion(
                         id=pv,
-                        program_id=f"PG{i}",
+                        item_id=f"PG{i}",
                         version_no=no,
                         notice_version_id=f"NV{i}",
                         content_hash=f"{name}{no}",
@@ -82,8 +82,8 @@ def main() -> None:
             t0 = time.perf_counter()
             n = bulk_judge(
                 s,
-                program_id=f"PG{i}",
-                program_version_id=f"PV{i}",
+                item_id=f"PG{i}",
+                item_version_id=f"PV{i}",
                 group=group,
                 app_id="bench",
                 app_version=1,
@@ -101,8 +101,8 @@ def main() -> None:
                 [
                     {
                         "person_id": u,
-                        "program_id": f"PG{i}",
-                        "program_version_id": f"PY{i}",
+                        "item_id": f"PG{i}",
+                        "item_version_id": f"PY{i}",
                         "ruleset_hash": h,
                         "result": j.result,
                         "reasons": [vars(r) for r in j.reasons],
@@ -120,7 +120,7 @@ def main() -> None:
                     models.JudgmentRow.person_id,
                     models.JudgmentRow.result,
                     models.JudgmentRow.reasons,
-                ).where(models.JudgmentRow.program_version_id == f"PV{i}")
+                ).where(models.JudgmentRow.item_version_id == f"PV{i}")
             ).all()
             same = sum(
                 r == want[u].result

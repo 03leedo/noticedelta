@@ -128,7 +128,8 @@ def test_lower_layers_do_not_import_upper_layers():
 DOMAIN_WORDS = re.compile(
     r"bizinfo|kstartup|pblanc|pbanc|reqst|flpth|updtPnttm|inqireCo|기업마당|지원사업|업력|창업|"
     r"founded_on|ceo_|business_age|revenue_krw|region_sido|SIDO|eligibility_rules|"
-    r"required_documents|\"deadline\"|\"contact\""  # "amount"는 값 타입(금액) 이름이라 뺀다
+    r"required_documents|\"deadline\"|\"contact\"|"  # "amount"는 값 타입(금액) 이름이라 뺀다
+    r"[Pp]rogram"  # 플랫폼은 항목(item)을 다룬다. 사업(program)은 지원사업 앱의 낱말이다(2026-11-24)
 )
 
 

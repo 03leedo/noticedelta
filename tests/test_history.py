@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.blobstore import LocalBlobStore
 from noticedelta.db import models
-from noticedelta.history import counter_ids, record_program, replay
+from noticedelta.history import counter_ids, record_item, replay
 from noticedelta.ingest import parse_attachments
 from noticedelta.parsing import ParsedDocument
 from noticedelta.programs import load_snapshots
@@ -75,7 +75,7 @@ class Env:
         if parse:
             for nv in self.session.scalars(sa.select(models.NoticeVersion)):
                 parse_attachments(self.session, nv.id, parser=ByContent(), store=self.store)
-        return self.session.scalar(sa.select(models.Program.id))
+        return self.session.scalar(sa.select(models.Item.id))
 
 
 @pytest.fixture
@@ -92,13 +92,13 @@ def lineage_of(step, text):
 def test_records_an_event_per_version_and_replays_the_same_changeset(env):
     env.run("2026-11-07", pdf(RULES, DOCS))
     env.run("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
-    program_id = env.load()
+    item_id = env.load()
 
-    rec = record_program(env.session, program_id, env.store, new_id=counter_ids())
+    rec = record_item(env.session, item_id, env.store, new_id=counter_ids())
     assert [r.status for r in rec] == ["recorded", "recorded"]
     assert rec[0].event.from_version_id is None
 
-    steps = list(replay(env.session, program_id))
+    steps = list(replay(env.session, item_id))
     assert len(steps) == 2
     v1, v2 = steps
     rules_lid = lineage_of(v1, "신청 자격")
@@ -118,22 +118,22 @@ def test_records_an_event_per_version_and_replays_the_same_changeset(env):
 def test_recording_twice_adds_nothing(env):
     env.run("2026-11-07", pdf(RULES, DOCS))
     env.run("2026-11-14", pdf(RULES, DOCS))
-    program_id = env.load()
-    record_program(env.session, program_id, env.store)
+    item_id = env.load()
+    record_item(env.session, item_id, env.store)
     n = env.session.scalar(sa.select(sa.func.count()).select_from(models.SegmentRow))
-    again = record_program(env.session, program_id, env.store)
+    again = record_item(env.session, item_id, env.store)
     assert [r.status for r in again] == ["exists", "exists"]
     assert env.session.scalar(sa.select(sa.func.count()).select_from(models.SegmentRow)) == n
 
 
 def test_waits_until_attachments_are_settled(env):
     env.run("2026-11-07", pdf(RULES, DOCS))
-    program_id = env.load(parse=False)
-    rec = record_program(env.session, program_id, env.store)
+    item_id = env.load(parse=False)
+    rec = record_item(env.session, item_id, env.store)
     assert rec[0].status == "waiting" and rec[0].waiting == ["공고문.pdf"]
     assert env.session.scalar(sa.select(models.ChangeEvent)) is None
     env.load()
-    assert record_program(env.session, program_id, env.store)[0].status == "recorded"
+    assert record_item(env.session, item_id, env.store)[0].status == "recorded"
 
 
 def test_unreadable_attachment_keeps_lineage_across_versions(env):
@@ -141,10 +141,10 @@ def test_unreadable_attachment_keeps_lineage_across_versions(env):
     env.run("2026-11-07", pdf(RULES, DOCS))
     env.run("2026-11-14", SCAN)
     env.run("2026-11-21", pdf(RULES, DOCS))
-    program_id = env.load()
-    record_program(env.session, program_id, env.store, new_id=counter_ids())
+    item_id = env.load()
+    record_item(env.session, item_id, env.store, new_id=counter_ids())
 
-    v1, v2, v3 = replay(env.session, program_id)
+    v1, v2, v3 = replay(env.session, item_id)
     rules_lid = lineage_of(v1, "신청 자격")
     assert rules_lid in v2.unknown and rules_lid not in v2.change.removed
     # 옮겨 둔 옛 첨부 조각은 v2의 조각으로 세지 않는다. 본문 조각만 남는다.

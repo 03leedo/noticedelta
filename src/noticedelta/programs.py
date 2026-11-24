@@ -33,12 +33,12 @@ from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
 from noticedelta.db.models import (
     Attachment,
+    Item,
+    ItemLink,
+    ItemVersion,
     LoadedRun,
     Notice,
     NoticeVersion,
-    Program,
-    ProgramLink,
-    ProgramVersion,
     SnapshotRecord,
 )
 from noticedelta.sources import NoticeRecord, bizinfo, kstartup
@@ -112,8 +112,8 @@ class LoadSummary:
     items: int = 0
     new_postings: int = 0
     new_posting_versions: int = 0
-    new_programs: int = 0
-    new_program_versions: int = 0
+    new_items: int = 0
+    new_item_versions: int = 0
     links: Counter = field(default_factory=Counter)
     closed: int = 0
     drift: dict = field(default_factory=dict)  # {실행 이름: {출처: {키: {"lost", "had"}}}}
@@ -121,9 +121,7 @@ class LoadSummary:
     refilled_version_ids: list[str] = field(default_factory=list)  # 첨부가 늦게 채워진 사업 버전
 
 
-def _link_program(
-    session: Session, notice: Notice, rec: NoticeRecord, summary: LoadSummary
-) -> None:
+def _link_item(session: Session, notice: Notice, rec: NoticeRecord, summary: LoadSummary) -> None:
     key = title_key(rec.title)
     org = rec.org
     best, best_score = None, 0.0
@@ -133,7 +131,7 @@ def _link_program(
                 Notice.source_id == notice.source_id,
                 Notice.org == org,
                 Notice.id != notice.id,
-                Notice.program_id.is_not(None),
+                Notice.item_id.is_not(None),
             )
         ).all()
         marks = distinct_marks(rec.title)
@@ -144,21 +142,21 @@ def _link_program(
             if score > best_score:
                 best, best_score = cand, score
     if best is not None and best_score >= AUTO_LINK:
-        notice.program_id = best.program_id
+        notice.item_id = best.item_id
         decision, method = "linked", "repost_title"
     else:
-        program = Program(title=rec.title, title_key=key, org=org)
+        program = Item(title=rec.title, title_key=key, org=org)
         session.add(program)
         session.flush()
-        notice.program_id = program.id
-        summary.new_programs += 1
+        notice.item_id = program.id
+        summary.new_items += 1
         decision, method = "linked", "new"
         if best is not None and best_score >= REVIEW_LINK:
             # 비슷하지만 같다고 확신할 수 없다. 따로 두고 확인 목록에 올린다.
             session.add(
-                ProgramLink(
+                ItemLink(
                     notice_id=notice.id,
-                    program_id=best.program_id,
+                    item_id=best.item_id,
                     method="repost_title",
                     score=round(best_score, 3),
                     decision="needs_review",
@@ -167,9 +165,9 @@ def _link_program(
             )
             summary.links["needs_review"] += 1
     session.add(
-        ProgramLink(
+        ItemLink(
             notice_id=notice.id,
-            program_id=notice.program_id,
+            item_id=notice.item_id,
             method=method,
             score=round(best_score, 3) if method != "new" else 1.0,
             decision=decision,
@@ -202,20 +200,20 @@ def _attach_blobs(
     return keys, filled
 
 
-def _program_version(
+def _item_version(
     session: Session, notice: Notice, version: NoticeVersion, chash: str, at: datetime
-) -> ProgramVersion | None:
-    program = session.get(Program, notice.program_id)
+) -> ItemVersion | None:
+    program = session.get(Item, notice.item_id)
     exists = session.scalar(
-        sa.select(ProgramVersion.id).where(
-            ProgramVersion.program_id == program.id, ProgramVersion.content_hash == chash
+        sa.select(ItemVersion.id).where(
+            ItemVersion.item_id == program.id, ItemVersion.content_hash == chash
         )
     )
     if exists:
         return None  # 늦게 온 옛 내용이거나 같은 내용의 재게시
     no = (program.current_version_no or 0) + 1
-    pv = ProgramVersion(
-        program_id=program.id,
+    pv = ItemVersion(
+        item_id=program.id,
         version_no=no,
         notice_version_id=version.id,
         content_hash=chash,
@@ -237,7 +235,7 @@ def _refill_attachments(
     if not filled:
         return
     pv_id = session.scalar(
-        sa.select(ProgramVersion.id).where(ProgramVersion.notice_version_id == version.id)
+        sa.select(ItemVersion.id).where(ItemVersion.notice_version_id == version.id)
     )
     if pv_id and pv_id not in summary.refilled_version_ids:
         summary.refilled_version_ids.append(pv_id)
@@ -330,15 +328,15 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
             if is_new:
                 notice.first_seen_at = at
                 summary.new_postings += 1
-                _link_program(session, notice, rec, summary)
+                _link_item(session, notice, rec, summary)
             if version is None:
                 _refill_attachments(session, notice, item, summary, source)
                 continue
             summary.new_posting_versions += 1
             keys, _ = _attach_blobs(session, version, item, DROP_PARAMS.get(source, ()))
-            pv = _program_version(session, notice, version, composite_hash(rec, keys), at)
+            pv = _item_version(session, notice, version, composite_hash(rec, keys), at)
             if pv is not None:
-                summary.new_program_versions += 1
+                summary.new_item_versions += 1
                 summary.new_version_ids.append(pv.id)
         if body.get("error") is None:
             # 이번 실행에 없는 게시물은 닫혔다(기업마당은 정정 때 원공고를 닫는다).

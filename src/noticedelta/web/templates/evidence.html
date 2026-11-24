@@ -5,7 +5,7 @@
   .old { background:#F8E1DE; display:block; padding:2px 6px; border-radius:6px; }
   .new { background:#E1F0E4; display:block; padding:2px 6px; border-radius:6px; margin-top:4px; }
 </style>
-<p class="muted"><a href="/p/{{ token }}/alerts">알림함</a> · <a href="/programs/{{ ev.alert.program_id }}">공고 변경 이력</a></p>
+<p class="muted"><a href="/p/{{ token }}/alerts">알림함</a> · <a href="/programs/{{ ev.alert.item_id }}">공고 변경 이력</a></p>
 <h1>왜 이 알림을 받았나요</h1>
 <article class="card">
   <p><b>{{ ev.alert.payload.get("message", "") }}</b></p>

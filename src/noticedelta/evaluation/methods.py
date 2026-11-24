@@ -131,7 +131,7 @@ class B2Full(_WithState):
 class Engine(_WithState):
     def _step(self, ev: EvalEvent) -> set[str]:
         res = run_impact(
-            program_id=ev.program_id,
+            item_id=ev.item_id,
             to_version_id=ev.event_id,
             change=ev.change,
             old_fields=self.fields,

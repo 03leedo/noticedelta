@@ -210,10 +210,10 @@ def create_app(
             ctx = {**common, "token": token, "ev": ev}
             return templates.TemplateResponse(request, "evidence.html", ctx)
 
-    @app.get("/programs/{program_id}", response_class=HTMLResponse)
-    def program(request: Request, program_id: str):
+    @app.get("/programs/{item_id}", response_class=HTMLResponse)
+    def program(request: Request, item_id: str):
         with session_factory() as s:
-            detail = program_detail(s, program_id)
+            detail = program_detail(s, item_id)
             if detail is None:
                 raise HTTPException(404, "없는 사업입니다")
             return templates.TemplateResponse(request, "program.html", {**common, "d": detail})

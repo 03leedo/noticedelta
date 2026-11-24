@@ -225,8 +225,8 @@ def jsonb_attribute(attributes: ColumnElement, attr: str, expected: type) -> Col
 def bulk_judge(
     session: Session,
     *,
-    program_id: str,
-    program_version_id: str,
+    item_id: str,
+    item_version_id: str,
     group: RuleGroup,
     app_id: str,
     app_version: int,
@@ -252,12 +252,12 @@ def bulk_judge(
 
     h = ruleset_hash(group)
     tri = tri_state(group, column, min_confidence=min_confidence)
-    key = p.c.person_id + f":{program_version_id}:{h}"
+    key = p.c.person_id + f":{item_version_id}:{h}"
     select = sa.select(
         sa.func.md5(key),
         p.c.person_id,
-        _t(program_id),
-        _t(program_version_id),
+        _t(item_id),
+        _t(item_version_id),
         _t(h),
         _t(result_label(tri)),
         reasons_json(group, column, actual, min_confidence=min_confidence),
@@ -272,8 +272,8 @@ def bulk_judge(
             [
                 "id",
                 "person_id",
-                "program_id",
-                "program_version_id",
+                "item_id",
+                "item_version_id",
                 "ruleset_hash",
                 "result",
                 "reasons",
@@ -284,7 +284,7 @@ def bulk_judge(
             select,
         )  # fmt: skip
         .on_conflict_do_nothing(
-            index_elements=["person_id", "program_id", "program_version_id", "ruleset_hash"]
+            index_elements=["person_id", "item_id", "item_version_id", "ruleset_hash"]
         )
     )
     # SQLAlchemy 2.1의 INSERT ... SELECT는 rowcount를 주지 않아 RETURNING으로 센다.

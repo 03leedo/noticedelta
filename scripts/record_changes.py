@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.db import models  # noqa: E402
-from noticedelta.history import record_program, replay  # noqa: E402
+from noticedelta.history import record_item, replay  # noqa: E402
 from noticedelta.ingest import parse_attachments  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
 
@@ -36,22 +36,22 @@ def main() -> None:
     parser = DockerParser()
 
     with Session(engine) as session:
-        q = sa.select(models.Program.id)
+        q = sa.select(models.Item.id)
         if not args.all:
-            q = q.where(models.Program.current_version_no >= 2)
-        program_ids = session.scalars(q.order_by(models.Program.id)).all()
+            q = q.where(models.Item.current_version_no >= 2)
+        item_ids = session.scalars(q.order_by(models.Item.id)).all()
         statuses: dict[str, int] = {}
-        for pid in program_ids:
+        for pid in item_ids:
             for pv in session.scalars(
-                sa.select(models.ProgramVersion).where(models.ProgramVersion.program_id == pid)
+                sa.select(models.ItemVersion).where(models.ItemVersion.item_id == pid)
             ):
                 parse_attachments(session, pv.notice_version_id, parser=parser, store=store)
-            for r in record_program(session, pid, store):
+            for r in record_item(session, pid, store):
                 statuses[r.status] = statuses.get(r.status, 0) + 1
             session.commit()
 
         ratios, sizes = [], []
-        for pid in program_ids:
+        for pid in item_ids:
             for step in replay(session, pid):
                 if step.from_version is None:
                     continue
@@ -64,7 +64,7 @@ def main() -> None:
                     f"조각 {step.total}, 추가 {len(c.added)}, 삭제 {len(c.removed)}, "
                     f"수정 {len(c.modified)}, 알 수 없음 {len(step.unknown)}"
                 )
-    print(f"사업 {len(program_ids)}개, 버전 기록 {statuses}")
+    print(f"사업 {len(item_ids)}개, 버전 기록 {statuses}")
     if ratios:
         print(
             f"변경 이벤트 {len(ratios)}건, 다시 읽을 조각 비율 중앙값 {statistics.median(ratios):.1%}"

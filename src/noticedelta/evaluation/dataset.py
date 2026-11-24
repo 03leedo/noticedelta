@@ -20,7 +20,7 @@ from noticedelta.segments import Segment
 @dataclass
 class EvalEvent:
     event_id: str  # 이후 사업 버전 ID. 라벨(label.to_version_id)과 같은 값이다
-    program_id: str
+    item_id: str
     old_segments: list[Segment]
     change: ChangeSet
     unknown: set[str] = field(default_factory=set)  # 새 버전에서 읽지 못한 첨부의 조각
@@ -30,17 +30,17 @@ class EvalEvent:
 
 @dataclass
 class Chain:
-    program_id: str
+    item_id: str
     first_segments: list[Segment]  # 첫 버전. 방식마다 여기서 처음 상태를 만든다
     events: list[EvalEvent]
 
 
-def split_of(program_id: str) -> str:
+def split_of(item_id: str) -> str:
     """사업 ID로 개발·시험을 가른다. 같은 사업의 정정은 한쪽에만 들어간다.
 
     시험 세트는 측정 동결 때만 본다. 프롬프트와 규칙은 개발 세트만 보고 고친다.
     """
-    return "dev" if int(hashlib.sha256(program_id.encode()).hexdigest(), 16) % 2 == 0 else "test"
+    return "dev" if int(hashlib.sha256(item_id.encode()).hexdigest(), 16) % 2 == 0 else "test"
 
 
 # (출처 이름, 원본 항목) → 출처 API가 구조화해 주는 값. 도메인 팩이 넘긴다 (B0가 본다)
@@ -66,19 +66,19 @@ def load_chains(
     meta: MetaReader | None = None,
 ) -> list[Chain]:
     """정정이 한 번이라도 있는 사업의 흐름. only_changed면 조각이 실제로 바뀐 정정만 남긴다."""
-    program_ids = session.scalars(
-        sa.select(ChangeEvent.program_id)
+    item_ids = session.scalars(
+        sa.select(ChangeEvent.item_id)
         .where(ChangeEvent.from_version_id.is_not(None))
         .distinct()
-        .order_by(ChangeEvent.program_id)
+        .order_by(ChangeEvent.item_id)
     ).all()
     chains = []
-    for program_id in program_ids:
-        if split is not None and split_of(program_id) != split:
+    for item_id in item_ids:
+        if split is not None and split_of(item_id) != split:
             continue
         first: list[Segment] = []
         events = []
-        for step in replay(session, program_id):
+        for step in replay(session, item_id):
             if step.from_version is None:
                 first = step.change.segments
                 continue
@@ -87,7 +87,7 @@ def load_chains(
             events.append(
                 EvalEvent(
                     event_id=step.to_version.id,
-                    program_id=program_id,
+                    item_id=item_id,
                     old_segments=step.old_segments,
                     change=step.change,
                     unknown=step.unknown,
@@ -96,7 +96,7 @@ def load_chains(
                 )
             )
         if events:
-            chains.append(Chain(program_id, first, events))
+            chains.append(Chain(item_id, first, events))
     return chains
 
 

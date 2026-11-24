@@ -38,7 +38,7 @@ class Subscription:
 @dataclass
 class Alert:
     person_id: str
-    program_id: str
+    item_id: str
     field: str
     to_version_id: str
     kind: Literal["judgment_changed", "field_changed"]
@@ -111,15 +111,15 @@ def build_field_source_index(fields: Mapping[str, FieldValue]) -> dict[str, set[
 
 
 def _key(
-    person_id: str, program_id: str, field_name: str, to_version_id: str, app_id: str = ""
+    person_id: str, item_id: str, field_name: str, to_version_id: str, app_id: str = ""
 ) -> str:
-    key = f"{person_id}:{program_id}:{field_name}:{to_version_id}"
+    key = f"{person_id}:{item_id}:{field_name}:{to_version_id}"
     return f"{app_id}:{key}" if app_id else key
 
 
 def run_impact(
     *,
-    program_id: str,
+    item_id: str,
     to_version_id: str,
     change: ChangeSet,
     old_fields: Mapping[str, FieldValue],
@@ -208,10 +208,10 @@ def run_impact(
             before = old_judgments.get(person_id, _NOT_ELIGIBLE)
             after = judge(new_rules, profiles.get(person_id, {}))
             if after.result != before.result:
-                k = _key(person_id, program_id, rules_field, to_version_id, app_id)
+                k = _key(person_id, item_id, rules_field, to_version_id, app_id)
                 alerts[k] = Alert(
                     person_id,
-                    program_id,
+                    item_id,
                     rules_field,
                     to_version_id,
                     "judgment_changed",
@@ -226,11 +226,11 @@ def run_impact(
     for name in sorted(real - rules_fields):
         for sub in subscriptions:
             if name in sub.fields:
-                k = _key(sub.person_id, program_id, name, to_version_id, app_id)
+                k = _key(sub.person_id, item_id, name, to_version_id, app_id)
                 old = old_fields.get(name)
                 alerts[k] = Alert(
                     sub.person_id,
-                    program_id,
+                    item_id,
                     name,
                     to_version_id,
                     "field_changed",
