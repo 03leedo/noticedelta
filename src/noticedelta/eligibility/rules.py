@@ -89,6 +89,13 @@ class ManualCondition(BaseModel):
     text: str
     source: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _from_text(cls, v: Any) -> Any:
+        # 원문 한 줄을 객체로 감싸지 않고 문자열로 주는 모델이 있다(피클 학교 모델, 2026-11-24:
+        # 자격 규칙 60개 중 31개가 이 때문에 통째로 버려졌다). 문자열이면 그 글을 text로 받는다.
+        return {"text": v} if isinstance(v, str) else v
+
 
 class RuleGroup(BaseModel):
     group: Literal["all_of", "any_of"]

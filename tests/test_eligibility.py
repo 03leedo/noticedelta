@@ -222,3 +222,12 @@ def test_without_an_attribute_dictionary_only_the_shape_is_checked():
         }
     )
     assert judge(g, {"favorite_color": "blue"}).result == "eligible"  # 엔진은 속성 이름을 모른다
+
+
+def test_manual_conditions_given_as_plain_text_are_kept():
+    # 객체 대신 원문 문자열로 주는 모델이 있다. 규칙 전체를 버리지 않고 글을 받는다
+    g = RuleGroup.model_validate(
+        {"group": "all_of", "rules": [], "manual": ["중복 수혜 불가", {"text": "기타"}]},
+        context=RULES_CONTEXT,
+    )
+    assert [m.text for m in g.manual] == ["중복 수혜 불가", "기타"]
