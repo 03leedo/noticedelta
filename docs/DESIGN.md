@@ -133,12 +133,13 @@
 | `segment` | id, notice_version_id, lineage_id, kind(paragraph/heading/table_cell), text, text_hash, locator(json), embedding | 조각. `lineage_id`는 버전이 바뀌어도 "같은 조각"이면 유지 |
 | `field_value` | id, notice_id, version_id, name, value(json), value_type, source_lineage_ids[], confidence, extractor | 필드 값. 버전별 이력 보관 |
 | `eligibility_rule` | id, notice_id, version_id, group_id, attribute, op, value, source_lineage_id, confidence | 자격 규칙(7.6절 형식) |
-| `profile` | user_id, attributes(json, 타입 고정) | 사용자 프로필 |
-| `subscription` | id, user_id, notice_id, fields[] | 추적 구독 |
-| `free_question` | id, user_id, notice_id, text, embedding, last_answer(json), answered_version_id | 자유 질문 (선택 기능) |
-| `judgment` | id, user_id, notice_id, version_id, result(eligible/ineligible/unknown), reasons(json) | 판정 결과와 근거 |
+| `person`, `access_link` | id / token_hash, person_id | 사람(가명 ID)과 개인 링크(토큰은 해시로만, 2026-11-24) |
+| `profile` | person_id, attributes(json, 타입 고정) | 사용자 프로필 |
+| `subscription` | id, person_id, notice_id, fields[] | 추적 구독 |
+| `free_question` | id, person_id, notice_id, text, embedding, last_answer(json), answered_version_id | 자유 질문 (선택 기능) |
+| `judgment` | id, person_id, notice_id, version_id, result(eligible/ineligible/unknown), reasons(json) | 판정 결과와 근거 |
 | `change_event` | id, program_id, from_version_id, to_version_id(사업 버전), changed_lineages(json: added·removed·modified·unknown), matcher_version, created_at | 변경 이벤트. 재생(10장)의 기준 로그. 사업 버전마다 조각(lineage 포함)과 함께 남겨 매칭 없이 같은 변경을 다시 만든다 |
-| `outbox_alert` | id, idempotency_key(unique), user_id, notice_id, payload(json), status, created_at, sent_at | 알림 아웃박스 |
+| `outbox_alert` | id, idempotency_key(unique), person_id, notice_id, payload(json), status, created_at, sent_at | 알림 아웃박스 |
 | `job_ledger` | stage, job_key(unique), status, attempts, updated_at | 단계별 멱등 처리 기록 |
 
 색인 포인트:
@@ -147,6 +148,8 @@
 - `segment.embedding`, `free_question.embedding`: pgvector.
 
 ### 6.1 v0.5에서 바뀌는 점 (사업 모델 PR에서 구현)
+
+> 2026-11-24: 표 이름이 `program` → `item`, `program_version` → `item_version`, `program_link` → `item_link`로, 칸 이름이 `program_id` → `item_id`로 바뀌었다(마이그레이션 0011, app-spec 15장). 아래 표는 옛 이름으로 남겨 둔다. "사업"은 지원사업 앱의 낱말이고 플랫폼은 항목을 다룬다.
 
 외부 평가 검토에서 가장 큰 구멍은 **사업 단위가 없다**는 것이었다. 기업마당은 정정할 때마다 새 번호로 다시 올리고 원공고를 닫는다. 구독·판정·알림이 포털별 공고 번호에 걸려 있으면, 정정이 나오는 그 순간 구독자에게 알림이 가지 않는다.
 
@@ -271,7 +274,7 @@ change_event(바뀐 lineage 목록)
 **안전망**: 변경 이벤트마다 그 사업만 B2(전체 재추출)를 **다른 프롬프트 버전으로** 그림자 실행하고, 주 1회 열린 공고의 10%를 표본으로 다시 수집·재추출한다. 이 차이는 "B2와의 불일치"로만 보고하고, **놓침은 사람 라벨로만 센다**(같은 계열 LLM끼리의 비교는 정답이 아니다).
 
 ### 7.8 알림
-- 알림 상태: `pending → held | ready → sending → sent`, 그리고 `superseded`(보내기 전에 같은 필드가 다시 바뀜), `discarded`, `corrected`(틀린 알림을 바로잡음). `idempotency_key = (user_id, program_id, field, to_version_no)`라서 같은 알림은 두 번 가지 않는다. 이메일은 최소 한 번 전달이며 중복은 발송사 멱등 키로 줄인다.
+- 알림 상태: `pending → held | ready → sending → sent`, 그리고 `superseded`(보내기 전에 같은 필드가 다시 바뀜), `discarded`, `corrected`(틀린 알림을 바로잡음). `idempotency_key = (person_id, program_id, field, to_version_no)`라서 같은 알림은 두 번 가지 않는다. 이메일은 최소 한 번 전달이며 중복은 발송사 멱등 키로 줄인다.
 - **붙잡기(held)**: 신뢰도가 낮거나 인용 검증에 실패한 값, 근거 첨부가 `needs_review`인 경우, 영향이 큰 전환(비해당 전환·마감 단축·금액 감소)이 N명 이상에게 가는 경우, 변경 하나가 알림을 M건 넘게 만드는 경우. 해제는 운영자 확인 또는 그림자 B2 일치로 한다.
 - 채널: **ICS 구독 URL이 기본**(정정 시 캘린더 이벤트의 제목·설명이 바뀜), 이메일은 원하는 사람만. 웹 푸시·디스코드·슬랙 웹훅은 1단계 밖이다.
 - 알림 본문은 템플릿과 타입 값(날짜·금액·판정)만 쓴다. 원문 인용은 이스케이프하고 길이를 제한하며, 링크는 자체 상세 화면과 출처 포털 도메인만 쓴다. 추출한 문의처는 알림에 넣지 않는다. **LLM이 만드는 한 줄 설명은 1단계에서 뺀다.**

@@ -135,7 +135,7 @@ def run_demo(
 
     res = run_impact(
         candidate_detector=candidates,
-        program_id=sc["notice_id"],
+        item_id=sc["notice_id"],
         to_version_id=v2["version_id"],
         change=change,
         old_fields=fields,
@@ -157,10 +157,10 @@ def run_demo(
     for a in res.alerts:
         if a.kind == "judgment_changed":
             out(
-                f"  사용자 {a.user_id}: 자격 {LABEL[a.before]} → {LABEL[a.after]} (근거 {', '.join(a.sources)})"
+                f"  사용자 {a.person_id}: 자격 {LABEL[a.before]} → {LABEL[a.after]} (근거 {', '.join(a.sources)})"
             )
         else:
-            out(f"  사용자 {a.user_id}: {a.field} {a.before} → {a.after}")
+            out(f"  사용자 {a.person_id}: {a.field} {a.before} → {a.after}")
     out("\n참고용 정보입니다. 최종 확인은 공고 원문으로 하세요.")
     return DemoResult(
         res.alerts,

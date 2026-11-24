@@ -35,14 +35,14 @@ class Source(Base):
     rate_limit_per_sec: Mapped[float | None] = mapped_column(sa.Float)
 
 
-class Program(Base):
+class Item(Base):
     """사업. 포털 게시물(notice) 여럿이 하나의 사업이 된다 (설계 6.1).
 
     기업마당은 정정할 때마다 새 번호로 다시 올리고 원공고를 닫는다. 구독·판정·알림은 게시물이 아니라
     사업에 걸어야 정정이 나와도 이어진다.
     """
 
-    __tablename__ = "program"
+    __tablename__ = "item"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(sa.Text)
     title_key: Mapped[str] = mapped_column(sa.String(300), index=True)  # 정정 표시를 뺀 정규화 제목
@@ -65,19 +65,19 @@ class Notice(Base):
     status: Mapped[str] = mapped_column(sa.String(16), default="open")  # open / closed
     current_version_id: Mapped[str | None] = mapped_column(sa.String(32))
     current_version_no: Mapped[int | None] = mapped_column(sa.Integer)  # 순서 보장용 (설계 8장)
-    program_id: Mapped[str | None] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str | None] = mapped_column(sa.ForeignKey("item.id"), index=True)
     first_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
-class ProgramLink(Base):
+class ItemLink(Base):
     """게시물 → 사업 연결의 근거. 점수가 낮으면 합치지 않고 운영자 확인으로 남긴다."""
 
-    __tablename__ = "program_link"
+    __tablename__ = "item_link"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     notice_id: Mapped[str] = mapped_column(sa.ForeignKey("notice.id"), index=True)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
     method: Mapped[str] = mapped_column(sa.String(32))  # new / repost_title
     score: Mapped[float] = mapped_column(sa.Float, default=1.0)
     decision: Mapped[str] = mapped_column(sa.String(16))  # linked / needs_review
@@ -85,16 +85,16 @@ class ProgramLink(Base):
     decided_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
 
 
-class ProgramVersion(Base):
+class ItemVersion(Base):
     """엔진의 입력이 되는 사업 내용 버전. 게시물 버전의 본문 해시 + 첨부 내용 해시로 정한다."""
 
-    __tablename__ = "program_version"
+    __tablename__ = "item_version"
     __table_args__ = (
-        sa.UniqueConstraint("program_id", "version_no"),
-        sa.UniqueConstraint("program_id", "content_hash"),
+        sa.UniqueConstraint("item_id", "version_no"),
+        sa.UniqueConstraint("item_id", "content_hash"),
     )
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
     version_no: Mapped[int] = mapped_column(sa.Integer)
     notice_version_id: Mapped[str] = mapped_column(sa.ForeignKey("notice_version.id"))
     content_hash: Mapped[str] = mapped_column(sa.String(64))
@@ -249,15 +249,30 @@ class SegmentRow(Base):
     locator: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
-# 아래 테이블은 모두 사업(program)과 사업 버전에 건다 (DESIGN 6.1). 기업마당이 정정 때 새 번호로
+# 아래 테이블은 모두 항목(item, 지원사업 앱에서는 사업)과 항목 버전에 건다 (DESIGN 6.1). 기업마당이 정정 때 새 번호로
 # 다시 올려도 구독·판정·알림이 끊기지 않게 하기 위해서다.
+
+
+class AppDefinitionRow(Base):
+    """앱 정의의 원본 (app-spec 9·15장). 판마다 한 줄이고, 켠 판은 내용을 바꾸지 않는다.
+
+    우리 앱은 저장소의 파일(apps/*.json)을 씨앗으로 넣는다(app_registry.register).
+    """
+
+    __tablename__ = "app_definition"
+    app_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    content_hash: Mapped[str] = mapped_column(sa.String(64))
+    body: Mapped[dict] = mapped_column(JSONType)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    enabled_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
 class FieldValueRow(Base):
     __tablename__ = "field_value"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
-    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
+    item_version_id: Mapped[str] = mapped_column(sa.ForeignKey("item_version.id"))
     name: Mapped[str] = mapped_column(sa.String(64))
     value: Mapped[object] = mapped_column(JSONType)
     value_type: Mapped[str] = mapped_column(sa.String(16))
@@ -269,13 +284,16 @@ class FieldValueRow(Base):
     extractor: Mapped[str] = mapped_column(sa.String(64), default="")
     template_version: Mapped[str | None] = mapped_column(sa.String(32))  # 추출 프롬프트 버전
     llm_call_key: Mapped[str | None] = mapped_column(sa.String(64))  # 녹화본 키
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class EligibilityRuleRow(Base):
     __tablename__ = "eligibility_rule"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
-    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
+    item_version_id: Mapped[str] = mapped_column(sa.ForeignKey("item_version.id"))
     group_id: Mapped[str] = mapped_column(sa.String(32))
     attribute: Mapped[str] = mapped_column(sa.String(64))
     op: Mapped[str] = mapped_column(sa.String(8))
@@ -284,9 +302,37 @@ class EligibilityRuleRow(Base):
     confidence: Mapped[float] = mapped_column(sa.Float, default=1.0)
 
 
+class Person(Base):
+    """사람 (platform-services 1.1, 4.2). id는 가명이다. 봉투·기록·판정은 이 id만 쓴다.
+
+    본인이 지우면 값과 링크를 지우고 deleted_at만 남긴다(4.6).
+    """
+
+    __tablename__ = "person"
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    deleted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class AccessLink(Base):
+    """사람에게 들어오는 길. 개인 링크의 토큰은 비밀이라 원문을 두지 않고 해시만 둔다."""
+
+    __tablename__ = "access_link"
+    token_hash: Mapped[str] = mapped_column(sa.String(64), primary_key=True)  # sha256 hex
+    person_id: Mapped[str] = mapped_column(sa.ForeignKey("person.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
 class Profile(Base):
+    """지원사업 앱의 자격 속성. 금고 단계에서 vault_value로 옮긴다(platform-services 4.7).
+
+    person_id는 person.id다. 외래 키는 SQLite에서 표를 새로 만들어야 달 수 있어 금고로 옮길 때 단다.
+    """
+
     __tablename__ = "profile"
-    user_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    person_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
     attributes: Mapped[dict] = mapped_column(JSONType, default=dict)
     # 개인정보 수집·이용 동의 (web/consent.py). 문구 판과 시각을 남긴다. research_ok는 선택 동의
     consent_version: Mapped[str | None] = mapped_column(sa.String(32))
@@ -296,11 +342,14 @@ class Profile(Base):
 
 class SubscriptionRow(Base):
     __tablename__ = "subscription"
-    __table_args__ = (sa.UniqueConstraint("user_id", "program_id"),)
+    __table_args__ = (sa.UniqueConstraint("person_id", "item_id"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    user_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.user_id"), index=True)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    person_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.person_id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
     fields: Mapped[list] = mapped_column(JSONType, default=list)
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class JudgmentRow(Base):
@@ -308,23 +357,26 @@ class JudgmentRow(Base):
 
     __tablename__ = "judgment"
     __table_args__ = (
-        sa.UniqueConstraint("user_id", "program_id", "program_version_id", "ruleset_hash"),
+        sa.UniqueConstraint("person_id", "item_id", "item_version_id", "ruleset_hash"),
     )
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    user_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.user_id"), index=True)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
-    program_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"))
+    person_id: Mapped[str] = mapped_column(sa.ForeignKey("profile.person_id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
+    item_version_id: Mapped[str] = mapped_column(sa.ForeignKey("item_version.id"))
     ruleset_hash: Mapped[str] = mapped_column(sa.String(64))
     result: Mapped[str] = mapped_column(sa.String(16))  # eligible / ineligible / unknown
     reasons: Mapped[list] = mapped_column(JSONType, default=list)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class ChangeEvent(Base):
     __tablename__ = "change_event"
-    __table_args__ = (sa.UniqueConstraint("program_id", "to_version_id"),)
+    __table_args__ = (sa.UniqueConstraint("item_id", "to_version_id"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
     from_version_id: Mapped[str | None] = mapped_column(sa.String(32))
     to_version_id: Mapped[str] = mapped_column(sa.String(32))
     changed_lineages: Mapped[dict] = mapped_column(JSONType, default=dict)
@@ -341,8 +393,8 @@ class LabelRow(Base):
     __tablename__ = "label"
     __table_args__ = (sa.UniqueConstraint("to_version_id", "field", "round", "labeler"),)
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
-    program_id: Mapped[str] = mapped_column(sa.ForeignKey("program.id"), index=True)
-    to_version_id: Mapped[str] = mapped_column(sa.ForeignKey("program_version.id"), index=True)
+    item_id: Mapped[str] = mapped_column(sa.ForeignKey("item.id"), index=True)
+    to_version_id: Mapped[str] = mapped_column(sa.ForeignKey("item_version.id"), index=True)
     field: Mapped[str] = mapped_column(sa.String(64))
     round: Mapped[int] = mapped_column(sa.Integer, default=1)  # 1: 처음, 2: 7일 뒤 다시
     labeler: Mapped[str] = mapped_column(sa.String(64), default="me")
@@ -354,20 +406,48 @@ class LabelRow(Base):
     evidence: Mapped[str | None] = mapped_column(sa.Text)  # 위치만: "공고문.hwp 2쪽 표1 신청자격"
     note: Mapped[str | None] = mapped_column(sa.Text)
     labeled_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
 
 
 class OutboxAlert(Base):
     __tablename__ = "outbox_alert"
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
     idempotency_key: Mapped[str] = mapped_column(sa.String(200), unique=True)
-    user_id: Mapped[str] = mapped_column(sa.String(32), index=True)
-    program_id: Mapped[str] = mapped_column(sa.String(32), index=True)
+    person_id: Mapped[str] = mapped_column(sa.String(32), index=True)
+    item_id: Mapped[str] = mapped_column(sa.String(32), index=True)
     payload: Mapped[dict] = mapped_column(JSONType, default=dict)
     # pending → held | ready → sending → sent, 그리고 superseded / discarded / corrected (DESIGN 7.8)
     status: Mapped[str] = mapped_column(sa.String(16), default="pending")
     held_reason: Mapped[str | None] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=now)
     sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # 어느 앱의 몇 판으로 계산했나(app-spec 9·15장). 앱 정의는 app_definition에 있다
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    app_version: Mapped[int] = mapped_column(sa.Integer)
+
+
+class EventRow(Base):
+    """이벤트 봉투 (platform-services 2장, events.py). 추가만 한다."""
+
+    __tablename__ = "event"
+    __table_args__ = (sa.UniqueConstraint("type", "idempotency_key"),)
+    id: Mapped[str] = mapped_column(sa.String(26), primary_key=True)  # ULID: 시간 순으로 정렬된다
+    type: Mapped[str] = mapped_column(sa.String(64), index=True)
+    v: Mapped[int] = mapped_column(sa.Integer)
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    recorded_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    producer: Mapped[str] = mapped_column(sa.String(64))
+    app: Mapped[str | None] = mapped_column(sa.String(80))
+    subject: Mapped[str | None] = mapped_column(sa.String(64))
+    item: Mapped[str | None] = mapped_column(sa.String(40), index=True)
+    item_version: Mapped[int | None] = mapped_column(sa.Integer)
+    trace_id: Mapped[str | None] = mapped_column(sa.String(26), index=True)
+    causation_id: Mapped[str | None] = mapped_column(sa.String(26))
+    idempotency_key: Mapped[str] = mapped_column(sa.String(300))
+    labels: Mapped[dict] = mapped_column(JSONType, default=dict)
+    payload: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
 class Job(Base):

@@ -22,10 +22,10 @@ from noticedelta.db.models import (
     Attachment,
     ChangeEvent,
     FieldValueRow,
+    Item,
+    ItemVersion,
     Notice,
     NoticeVersion,
-    Program,
-    ProgramVersion,
 )
 from noticedelta.history import replay
 from noticedelta.tooling import Tool
@@ -68,8 +68,8 @@ def _where(locator: dict | None) -> str:
 def item_tools(
     session_factory: Callable[[], Session], *, meta: MetaReader | None = None
 ) -> list[Tool]:
-    def postings(s: Session, program_id: str) -> list[dict]:
-        rows = s.scalars(sa.select(Notice).where(Notice.program_id == program_id)).all()
+    def postings(s: Session, item_id: str) -> list[dict]:
+        rows = s.scalars(sa.select(Notice).where(Notice.item_id == item_id)).all()
         return [
             {
                 "source": n.source_id,
@@ -80,11 +80,11 @@ def item_tools(
             for n in rows
         ]
 
-    def summary(s: Session, p: Program) -> dict:
+    def summary(s: Session, p: Item) -> dict:
         posts = postings(s, p.id)
         events = s.scalars(
             sa.select(ChangeEvent).where(
-                ChangeEvent.program_id == p.id, ChangeEvent.from_version_id.is_not(None)
+                ChangeEvent.item_id == p.id, ChangeEvent.from_version_id.is_not(None)
             )
         )
         corrections = sum(_has_change(ev) for ev in events)
@@ -101,29 +101,27 @@ def item_tools(
     def search_items(query: str = "", limit: int = 10, open_only: bool = True) -> dict:
         """제목으로 항목을 찾는다. query가 비면 최근 항목을 준다."""
         with session_factory() as s:
-            q = sa.select(Program)
+            q = sa.select(Item)
             if query.strip():
-                q = q.where(Program.title.contains(query.strip()))
+                q = q.where(Item.title.contains(query.strip()))
             if open_only:
-                q = q.where(
-                    sa.exists().where(Notice.program_id == Program.id, Notice.status == "open")
-                )
+                q = q.where(sa.exists().where(Notice.item_id == Item.id, Notice.status == "open"))
             total = s.scalar(sa.select(sa.func.count()).select_from(q.subquery()))
             rows = s.scalars(
-                q.order_by(Program.created_at.desc()).limit(max(1, min(limit, MAX_ITEMS)))
+                q.order_by(Item.created_at.desc()).limit(max(1, min(limit, MAX_ITEMS)))
             ).all()
             return {"total": total, "items": [summary(s, p) for p in rows]}
 
     def get_item(item_id: str) -> dict:
         """항목 하나의 지금 상태: 원문 링크, 첨부, 뽑아 둔 필드, 버전 이력."""
         with session_factory() as s:
-            p = s.get(Program, item_id)
+            p = s.get(Item, item_id)
             if p is None:
                 return {"error": f"없는 항목: {item_id}"}
             versions = s.scalars(
-                sa.select(ProgramVersion)
-                .where(ProgramVersion.program_id == p.id)
-                .order_by(ProgramVersion.version_no)
+                sa.select(ItemVersion)
+                .where(ItemVersion.item_id == p.id)
+                .order_by(ItemVersion.version_no)
             ).all()
             out = {**summary(s, p), "postings": postings(s, p.id)}
             out["version_history"] = [
@@ -142,7 +140,7 @@ def item_tools(
                 for a in atts
             ]
             fields = s.scalars(
-                sa.select(FieldValueRow).where(FieldValueRow.program_version_id == current.id)
+                sa.select(FieldValueRow).where(FieldValueRow.item_version_id == current.id)
             )
             out["fields"] = [
                 {"name": f.name, "value": f.value, "status": f.status, "confidence": f.confidence}
@@ -158,16 +156,16 @@ def item_tools(
             return {"error": f"날짜 형식이 아니다(YYYY-MM-DD): {since}"}
         with session_factory() as s:
             q = (
-                sa.select(ChangeEvent, ProgramVersion, Program.title)
-                .join(ProgramVersion, ProgramVersion.id == ChangeEvent.to_version_id)
-                .join(Program, Program.id == ChangeEvent.program_id)
+                sa.select(ChangeEvent, ItemVersion, Item.title)
+                .join(ItemVersion, ItemVersion.id == ChangeEvent.to_version_id)
+                .join(Item, Item.id == ChangeEvent.item_id)
                 .where(ChangeEvent.from_version_id.is_not(None))
-                .order_by(ProgramVersion.source_time.desc(), ChangeEvent.id)
+                .order_by(ItemVersion.source_time.desc(), ChangeEvent.id)
             )
             if item_id.strip():
-                q = q.where(ChangeEvent.program_id == item_id.strip())
+                q = q.where(ChangeEvent.item_id == item_id.strip())
             if after is not None:
-                q = q.where(ProgramVersion.source_time >= after)
+                q = q.where(ItemVersion.source_time >= after)
             changes = []
             for ev, pv, title in s.execute(q):
                 if not _has_change(ev):
@@ -175,7 +173,7 @@ def item_tools(
                 changes.append(
                     {
                         "event_id": ev.id,
-                        "item_id": ev.program_id,
+                        "item_id": ev.item_id,
                         "title": title,
                         "seen_at": _iso(pv.source_time),
                         "to_version": pv.version_no,
@@ -192,10 +190,10 @@ def item_tools(
             ev = s.get(ChangeEvent, event_id)
             if ev is None:
                 return {"error": f"없는 변경: {event_id}"}
-            step = next((x for x in replay(s, ev.program_id) if x.event.id == ev.id), None)
+            step = next((x for x in replay(s, ev.item_id) if x.event.id == ev.id), None)
             if step is None:
                 return {"error": f"다시 만들 수 없는 변경: {event_id}"}
-            title = s.scalar(sa.select(Program.title).where(Program.id == ev.program_id))
+            title = s.scalar(sa.select(Item.title).where(Item.id == ev.item_id))
             pairs = []
             for old, new in step.pairs():
                 kind = "modified" if old and new else ("added" if new else "removed")
@@ -211,7 +209,7 @@ def item_tools(
             shown = pairs[: max(1, min(max_pairs, MAX_PAIRS))]
             return {
                 "event_id": ev.id,
-                "item_id": ev.program_id,
+                "item_id": ev.item_id,
                 "title": title,
                 "to_version": step.to_version.version_no,
                 "seen_at": _iso(step.to_version.source_time),

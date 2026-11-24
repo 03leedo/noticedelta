@@ -22,16 +22,19 @@ ROOT = Path(__file__).resolve().parents[1] / "src" / "noticedelta"
 LAYERS: dict[str, list[str]] = {
     "공통": [
         "blobstore",
+        "catalog",  # 출처 한 장 규격(source-catalog.md)
         "config",
         "db",
         "document",
         "drift",  # 출처 형식 변화 감시
+        "events",  # 이벤트 봉투, 타입 등록부, 구독 → 작업 큐
         "jobs",
         "llm",  # gateway, cassette, harness, anthropic_provider
         "mcp_adapter",  # 등록부의 도구를 MCP로 내놓는다
         "metrics",
         "notify",
         "parsing",
+        "people",  # 사람 ID와 개인 링크(토큰은 해시로만)
         "snapshot",
         "sources.attachments",
         "sources.base",
@@ -42,6 +45,8 @@ LAYERS: dict[str, list[str]] = {
         "usage",  # 에이전트 사용 기록과 피드백
     ],
     "엔진": [
+        "app_registry",  # 앱 정의의 원본(DB): 판 넣기, 켜기
+        "appspec",  # 앱 정의 규격과 검증, 엔진이 쓰는 모양으로 바꾸기
         "citation",
         "doc_tools",  # 문서 읽기·두 판 비교·글 검사 도구
         "db.repo",  # 게시물 버전·알림을 엔진 타입으로 저장한다
@@ -124,7 +129,8 @@ def test_lower_layers_do_not_import_upper_layers():
 DOMAIN_WORDS = re.compile(
     r"bizinfo|kstartup|pblanc|pbanc|reqst|flpth|updtPnttm|inqireCo|기업마당|지원사업|업력|창업|"
     r"founded_on|ceo_|business_age|revenue_krw|region_sido|SIDO|eligibility_rules|"
-    r"required_documents|\"deadline\"|\"contact\""  # "amount"는 값 타입(금액) 이름이라 뺀다
+    r"required_documents|\"deadline\"|\"contact\"|"  # "amount"는 값 타입(금액) 이름이라 뺀다
+    r"[Pp]rogram"  # 플랫폼은 항목(item)을 다룬다. 사업(program)은 지원사업 앱의 낱말이다(2026-11-24)
 )
 
 

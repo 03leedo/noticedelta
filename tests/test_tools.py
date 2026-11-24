@@ -34,7 +34,7 @@ def factory(tmp_path):
     with factory() as s:
         s.add(models.Source(id="bizinfo", name="기업마당"))
         s.add(
-            models.Program(
+            models.Item(
                 id="P1",
                 title="(가상) 청년 창업 지원",
                 title_key="k1",
@@ -43,7 +43,7 @@ def factory(tmp_path):
             )
         )
         s.add(
-            models.Program(
+            models.Item(
                 id="P2",
                 title="(가상) 수출 바우처",
                 title_key="k2",
@@ -58,7 +58,7 @@ def factory(tmp_path):
                 source_id="bizinfo",
                 external_id="X1",
                 title="t",
-                program_id="P1",
+                item_id="P1",
                 url="https://example.org/x1",
                 status="open",
             )
@@ -69,7 +69,7 @@ def factory(tmp_path):
                 source_id="bizinfo",
                 external_id="X2",
                 title="t",
-                program_id="P2",
+                item_id="P2",
                 status="closed",
             )
         )
@@ -87,9 +87,9 @@ def factory(tmp_path):
             )
             s.flush()
             s.add(
-                models.ProgramVersion(
+                models.ItemVersion(
                     id=f"PV{no}",
-                    program_id="P1",
+                    item_id="P1",
                     version_no=no,
                     notice_version_id=f"NV{no}",
                     content_hash=f"c{no}",
@@ -121,7 +121,7 @@ def factory(tmp_path):
         s.add(
             models.ChangeEvent(
                 id="E1",
-                program_id="P1",
+                item_id="P1",
                 from_version_id=None,
                 to_version_id="PV1",
                 changed_lineages={**empty, "added": ["s1", "s2", "s3"]},
@@ -130,7 +130,7 @@ def factory(tmp_path):
         s.add(
             models.ChangeEvent(
                 id="E2",
-                program_id="P1",
+                item_id="P1",
                 from_version_id="PV1",
                 to_version_id="PV2",
                 changed_lineages={**empty, "modified": ["s1", "s3"]},

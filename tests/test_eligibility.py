@@ -155,7 +155,7 @@ def test_sql_where_keeps_eligible_and_unknown_only():
     profiles = sa.Table(
         "profile",
         md,
-        sa.Column("user_id", sa.String, primary_key=True),
+        sa.Column("person_id", sa.String, primary_key=True),
         sa.Column("business_age_months", sa.Integer),
         sa.Column("region_sido", sa.String),
     )
@@ -164,14 +164,16 @@ def test_sql_where_keeps_eligible_and_unknown_only():
         conn.execute(
             profiles.insert(),
             [
-                {"user_id": "A", "business_age_months": 72, "region_sido": "부산"},
-                {"user_id": "B", "business_age_months": 72, "region_sido": "서울"},
-                {"user_id": "C", "business_age_months": None, "region_sido": "대구"},
-                {"user_id": "D", "business_age_months": 100, "region_sido": None},
+                {"person_id": "A", "business_age_months": 72, "region_sido": "부산"},
+                {"person_id": "B", "business_age_months": 72, "region_sido": "서울"},
+                {"person_id": "C", "business_age_months": None, "region_sido": "대구"},
+                {"person_id": "D", "business_age_months": 100, "region_sido": None},
             ],
         )
         where = to_sql_where(rules(), lambda attr: profiles.c[attr])
-        got = sorted(r.user_id for r in conn.execute(sa.select(profiles.c.user_id).where(where)))
+        got = sorted(
+            r.person_id for r in conn.execute(sa.select(profiles.c.person_id).where(where))
+        )
     assert got == ["A", "C"]
 
 

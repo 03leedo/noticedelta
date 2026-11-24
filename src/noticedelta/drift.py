@@ -28,6 +28,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.db.models import SourceDrift
+from noticedelta.events import emit
 from noticedelta.text import canonical_text
 
 MIN_ITEMS = 10  # 한 실행에서 이만큼 넘는 항목이
@@ -160,8 +161,25 @@ class Watch:
                 row = SourceDrift(source=self.source, key=key, status=HELD, first_run=run, runs=0)
                 self.session.add(row)
                 self.rows[key] = row
+                new = True
+            else:
+                new = False
             row.kind, row.changed, row.compared = s.kind, s.changed, s.compared
             row.samples, row.last_run, row.runs = list(s.samples), run, row.runs + 1
+            if new:  # 처음 붙잡은 키. 필드를 다 채운 뒤에 낸다(봉투가 먼저 flush한다)
+                emit(
+                    self.session,
+                    "source.drift_held",
+                    {
+                        "source": self.source,
+                        "key": key,
+                        "kind": s.kind,
+                        "affected": s.changed,
+                        "compared": s.compared,
+                    },
+                    producer="svc:loader",
+                    key=f"{self.source}:{key}:{run}",
+                )
         if self.keys(HELD) - set(found):
             # 붙잡았지만 이번에는 많은 항목에서 바뀌지 않았다. 값이 돌아왔으면 풀고, 아니면 계속 이어 둔다
             rest = shifts(before, now)
@@ -193,6 +211,13 @@ def decide(session: Session, source: str, key: str, status: str, note: str = "")
         raise LookupError(f"붙잡아 둔 키가 아니다: {source}.{key}")
     row.status, row.decided_at, row.note = status, _now(), note or row.note
     session.flush()
+    emit(
+        session,
+        "source.drift_decided",
+        {"source": source, "key": key, "status": status, "decided_by": "operator"},
+        producer="svc:operator",
+        key=f"{source}:{key}:{row.id}:{status}",
+    )
     return row
 
 

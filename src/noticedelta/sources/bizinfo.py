@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import html
 import re
+from pathlib import Path
 
 import httpx
 
+from noticedelta.catalog import load_sheet
 from noticedelta.sources.base import (
     AttachmentRef,
     NoticeRecord,
@@ -54,14 +56,15 @@ def _period(v: str | None) -> tuple[str | None, str | None]:
     return out[0], out[1]
 
 
-# 출처 지식 (source-catalog.md의 ignore·attachments). docs/research/api-responses.md
+# 출처 지식은 출처 한 장(catalog/bizinfo.json, 규격은 catalog.py)에 있다. docs/research/api-responses.md
+SHEET = load_sheet(Path(__file__).parent / "catalog" / "bizinfo.json")
 # - 조회수(inqireCo), 일괄 수정 시각(updtPnttm)은 내용이 그대로여도 바뀐다
-IGNORE = frozenset({"id", "totCnt", "inqireCo", "updtPnttm"})
+IGNORE = frozenset(SHEET.ignore.keys)
 # - 첨부 주소. 파일이 그대로여도 주소를 한꺼번에 새로 발급한다(2026-10-30, 1,491건 전부)
-URL_KEYS = frozenset({"flpthNm", "printFlpthNm"})
+URL_KEYS = frozenset(SHEET.ignore.url_keys)
 # - 2026-10-30부터 첨부 주소에 붙는 내려받기 토큰(JWT, 발급 시각이 들어 있다). 호출마다 다르다
-DROP_PARAMS = ("downloadToken",)
-ATTACHMENT_HOSTS = frozenset({"www.bizinfo.go.kr", "bizinfo.go.kr"})
+DROP_PARAMS = tuple(SHEET.ignore.url_params)
+ATTACHMENT_HOSTS = frozenset(SHEET.attachments.hosts if SHEET.attachments else ())
 
 
 def _attachments(item: dict) -> list[AttachmentRef]:

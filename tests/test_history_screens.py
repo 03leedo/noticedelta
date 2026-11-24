@@ -1,5 +1,7 @@
 """공고 상세·변경 이력·알림 근거 화면 (작업 목록 16번). 실제 흐름(수집 → 알림)을 돌린 뒤 본다."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -9,6 +11,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from test_history import DOCS, RULES, pdf  # noqa: E402
 from test_pipeline import Env, RulesFromText, subscribe_eligible_user  # noqa: E402
 
+from noticedelta import people  # noqa: E402
 from noticedelta.db import models  # noqa: E402
 from noticedelta.web.app import create_app  # noqa: E402
 
@@ -23,14 +26,14 @@ def flow(tmp_path):
     env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
     env.work()
     with env.factory() as s:
-        program_id = s.scalar(sa.select(models.Program.id))
+        item_id = s.scalar(sa.select(models.Item.id))
         alert_id = s.scalar(sa.select(models.OutboxAlert.id))
-    return TestClient(create_app(env.factory)), env, program_id, alert_id
+    return TestClient(create_app(env.factory)), env, item_id, alert_id
 
 
 def test_program_page_replays_the_correction(flow):
-    client, _, program_id, _ = flow
-    page = client.get(f"/programs/{program_id}").text
+    client, _, item_id, _ = flow
+    page = client.get(f"/programs/{item_id}").text
     assert "v1 → v2" in page and "수정 · 공고문.pdf" in page
     assert "창업 7년 이내" in page and "창업 5년 이내" in page  # 이전과 이후 문장
     assert "최종 확인은 반드시 공고 원문" in page
@@ -50,6 +53,9 @@ def test_alert_evidence_follows_the_chain_back_to_the_text(flow):
 def test_someone_elses_alert_is_not_found(flow):
     client, env, _, alert_id = flow
     with env.factory() as s:
-        s.add(models.Profile(user_id="u2", attributes={}))
+        s.add(models.Person(id="u2"))
+        s.add(models.Profile(person_id="u2", attributes={}))
+        s.flush()
+        people.add_link(s, "u2", at=datetime(2026, 10, 1, tzinfo=UTC), token="u2")
         s.commit()
     assert client.get(f"/p/u2/alerts/{alert_id}").status_code == 404

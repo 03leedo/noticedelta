@@ -20,24 +20,27 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from noticedelta import app_registry
+from noticedelta.appspec import AppDefinition
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
 from noticedelta.db.models import (
     Attachment,
     FieldValueRow,
+    ItemVersion,
     Job,
     JudgmentRow,
     LoadedRun,
     OutboxAlert,
     Profile,
-    ProgramVersion,
     SubscriptionRow,
 )
 from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
-from noticedelta.grants import RULES_FIELD, candidates
-from noticedelta.history import MATCHER_VERSION, record_program, replay
+from noticedelta.events import Ref, Trace, app_ref, emit, subscribe
+from noticedelta.events import Subscription as EventSubscription
+from noticedelta.grants import APP, MASS_IMPACT, MIN_CONFIDENCE, RULES_FIELD, candidates
+from noticedelta.history import MATCHER_VERSION, record_item, replay
 from noticedelta.impact import (
-    REVIEW_THRESHOLD,
     Extractor,
     FieldValue,
     Subscription,
@@ -47,7 +50,7 @@ from noticedelta.ingest import parse_attachments
 from noticedelta.jobs import Handler, PermanentError, TransientError, enqueue
 from noticedelta.llm.extract import FIELD_TYPES, TEMPLATE_VERSION
 from noticedelta.names import ALERT_LABELS
-from noticedelta.notify import Channel, InboxChannel, deliver, prepare
+from noticedelta.notify import Channel, InboxChannel, deliver, note, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
 from noticedelta.programs import LoadSummary, load_run
 
@@ -71,6 +74,17 @@ class Context:
     now: Callable[[], datetime] = field(default=_utcnow)
     channel: Channel = field(default_factory=InboxChannel)
     labels: Mapping[str, str] = field(default_factory=lambda: dict(ALERT_LABELS))  # 알림 표시 이름
+    app: AppDefinition = field(
+        default_factory=lambda: APP
+    )  # 결과(필드 값, 판정, 알림)에 이 앱의 id와 판을 단다
+
+
+def _parse_time(value: str | None) -> datetime | None:
+    try:
+        t = datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+    return t if t is None or t.tzinfo else t.replace(tzinfo=UTC)
 
 
 def _unloaded_runs(session: Session, root: Path) -> list[str]:
@@ -93,8 +107,8 @@ def enqueue_load(session: Session, root: Path) -> Job | None:
     )
 
 
-def _enqueue_parse(session: Session, pv_id: str) -> None:
-    pv = session.get(ProgramVersion, pv_id)
+def _enqueue_parse(session: Session, pv_id: str, trace: Trace | None = None) -> None:
+    pv = session.get(ItemVersion, pv_id)
     blobs = session.scalar(
         sa.select(sa.func.count()).where(
             Attachment.notice_version_id == pv.notice_version_id, Attachment.blob_key.is_not(None)
@@ -104,9 +118,9 @@ def _enqueue_parse(session: Session, pv_id: str) -> None:
     enqueue(
         session,
         PARSE,
-        {"program_version_id": pv_id},
+        {"item_version_id": pv_id, **(trace or Trace()).carry()},
         dedupe_key=f"{PARSE}:{pv_id}:{blobs}",
-        concurrency_key=f"program:{pv.program_id}",
+        concurrency_key=f"item:{pv.item_id}",
         priority=50,
     )
 
@@ -117,9 +131,9 @@ def enqueue_backfill(session: Session) -> int:
 
     recorded = sa.select(ChangeEvent.to_version_id)
     ids = session.scalars(
-        sa.select(ProgramVersion.id)
-        .where(ProgramVersion.id.not_in(recorded))
-        .order_by(ProgramVersion.program_id, ProgramVersion.version_no)
+        sa.select(ItemVersion.id)
+        .where(ItemVersion.id.not_in(recorded))
+        .order_by(ItemVersion.item_id, ItemVersion.version_no)
     ).all()
     for pv_id in ids:
         _enqueue_parse(session, pv_id)
@@ -139,8 +153,46 @@ def handle_load(ctx: Context) -> Handler:
             raise PermanentError(f"실행 파일을 읽지 못함: {path.name}") from e
         summary = LoadSummary()
         load_run(session, path, ctx.store, summary)
-        for pv_id in summary.new_version_ids + summary.refilled_version_ids:
-            _enqueue_parse(session, pv_id)
+        run = json.loads(path.read_text(encoding="utf-8"))
+        env = emit(
+            session,
+            "source.run_finished",
+            {
+                "run": pending[0],
+                "sources": {
+                    sid: {
+                        "count": r.get("count"),
+                        "changed": r.get("changed"),
+                        "error": r.get("error"),
+                    }
+                    for sid, r in (run.get("sources") or {}).items()
+                },
+            },
+            producer="svc:loader",
+            key=pending[0],
+            occurred_at=_parse_time(run.get("finished_at")),
+            now=ctx.now(),
+        )
+        trace = Trace(env.trace_id if env else None, env.id if env else None)
+        for pv_id in summary.new_version_ids:
+            pv = session.get(ItemVersion, pv_id)
+            v = emit(
+                session,
+                "document.version_created",
+                {
+                    "item_version_id": pv.id,
+                    "notice_version_id": pv.notice_version_id,
+                    "content_hash": pv.content_hash,
+                },
+                producer="svc:loader",
+                key=pv.id,
+                ref=Ref(item=f"item:{pv.item_id}", item_version=pv.version_no),
+                trace=trace,
+                now=ctx.now(),
+            )
+            _enqueue_parse(session, pv_id, Trace(trace.trace, v.id if v else trace.cause))
+        for pv_id in summary.refilled_version_ids:
+            _enqueue_parse(session, pv_id, trace)
         enqueue_load(session, ctx.root)  # 남은 실행이 있으면 다음 것
 
     return handle
@@ -148,20 +200,36 @@ def handle_load(ctx: Context) -> Handler:
 
 def handle_parse(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
-        pv = session.get(ProgramVersion, job.payload["program_version_id"])
+        pv = session.get(ItemVersion, job.payload["item_version_id"])
         if pv is None:
             raise PermanentError("사업 버전이 없음")
         try:
-            parse_attachments(session, pv.notice_version_id, parser=ctx.parser, store=ctx.store)
+            outcomes = parse_attachments(
+                session, pv.notice_version_id, parser=ctx.parser, store=ctx.store
+            )
         except ParserUnavailable as e:
             raise TransientError("파서 컨테이너를 쓸 수 없음") from e
+        env = emit(
+            session,
+            "document.parsed",
+            {
+                "item_version_id": pv.id,
+                "attachments": len(outcomes),
+                "unreadable": sum(o.status != "ok" for o in outcomes),
+            },
+            producer="svc:parser",
+            key=job.dedupe_key,
+            ref=Ref(item=f"item:{pv.item_id}", item_version=pv.version_no),
+            trace=Trace.of(job.payload),
+            now=ctx.now(),
+        )
         # 파싱 작업 키(받은 첨부 수 포함)를 이어 쓴다. 첨부가 늦게 채워지면 비교도 다시 한다.
         enqueue(
             session,
             DIFF,
-            {"program_id": pv.program_id},
+            {"item_id": pv.item_id, **Trace.of(job.payload).carry(env)},
             dedupe_key=f"{DIFF}:{job.dedupe_key}:{MATCHER_VERSION}",
-            concurrency_key=f"program:{pv.program_id}",
+            concurrency_key=f"item:{pv.item_id}",
             priority=60,
         )
 
@@ -170,12 +238,32 @@ def handle_parse(ctx: Context) -> Handler:
 
 def handle_diff(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
-        program_id = job.payload["program_id"]
-        results = record_program(session, program_id, ctx.store)
-        if ctx.extractor is not None:
-            for r in results:
-                if r.status == "recorded":
-                    _enqueue_impact(session, program_id, r.event.to_version_id)
+        item_id = job.payload["item_id"]
+        results = record_item(session, item_id, ctx.store)
+        trace = Trace.of(job.payload)
+        for r in results:
+            if r.status != "recorded":
+                continue
+            c = r.event.changed_lineages
+            env = emit(
+                session,
+                "change.detected",
+                {
+                    "from_version_id": r.event.from_version_id,
+                    "to_version_id": r.event.to_version_id,
+                    "added": len(c.get("added", [])),
+                    "removed": len(c.get("removed", [])),
+                    "modified": len(c.get("modified", [])),
+                    "matcher": r.event.matcher_version,
+                },
+                producer="svc:engine",
+                key=r.event.to_version_id,
+                ref=Ref(item=f"item:{item_id}", item_version=r.version_no),
+                trace=trace,
+                now=ctx.now(),
+            )
+            if ctx.extractor is not None:
+                _enqueue_impact(session, item_id, r.event.to_version_id, trace.carry(env))
         waiting = next((r for r in results if r.status == "waiting"), None)
         if waiting is None:
             return
@@ -188,7 +276,7 @@ def handle_diff(ctx: Context) -> Handler:
         enqueue(
             session,
             DIFF,
-            {"program_id": program_id, "wait": n + 1, "reason": reason},
+            {"item_id": item_id, "wait": n + 1, "reason": reason, **trace.carry()},
             dedupe_key=f"{job.dedupe_key}|w{n + 1}",
             concurrency_key=job.concurrency_key,
             priority=job.priority,
@@ -205,20 +293,24 @@ def _impact_key(pv_id: str) -> str:
     return f"{IMPACT}:{pv_id}:{TEMPLATE_VERSION}"
 
 
-def _enqueue_impact(session: Session, program_id: str, pv_id: str) -> None:
+def _enqueue_impact(
+    session: Session, item_id: str, pv_id: str, carry: dict[str, str] | None = None
+) -> None:
     enqueue(
         session,
         IMPACT,
-        {"program_version_id": pv_id},
+        {"item_version_id": pv_id, **(carry or {})},
         dedupe_key=_impact_key(pv_id),
-        concurrency_key=f"program:{program_id}",
+        concurrency_key=f"item:{item_id}",
         priority=70,
     )
 
 
-def _load_fields(session: Session, pv_id: str) -> dict[str, FieldValue]:
+def _load_fields(session: Session, pv_id: str, app_id: str) -> dict[str, FieldValue]:
     rows = session.scalars(
-        sa.select(FieldValueRow).where(FieldValueRow.program_version_id == pv_id)
+        sa.select(FieldValueRow).where(
+            FieldValueRow.item_version_id == pv_id, FieldValueRow.app_id == app_id
+        )
     ).all()
     return {
         r.name: FieldValue(r.name, r.value_type, r.value, list(r.source_lineage_ids), r.confidence)
@@ -229,21 +321,21 @@ def _load_fields(session: Session, pv_id: str) -> dict[str, FieldValue]:
 def _save_fields(
     ctx: Context,
     session: Session,
-    pv: ProgramVersion,
+    pv: ItemVersion,
     fields: dict[str, FieldValue],
     stale: set[str],
 ) -> None:
     for name, fv in fields.items():
         if name in stale:
             status = "stale"
-        elif fv.confidence < REVIEW_THRESHOLD:
+        elif fv.confidence < MIN_CONFIDENCE:  # 앱 정의의 alerts.hold
             status = "needs_review"
         else:
             status = "verified"
         session.add(
             FieldValueRow(
-                program_id=pv.program_id,
-                program_version_id=pv.id,
+                item_id=pv.item_id,
+                item_version_id=pv.id,
                 name=name,
                 value=fv.value,
                 value_type=fv.value_type,
@@ -252,27 +344,30 @@ def _save_fields(
                 status=status,
                 extractor=ctx.extractor_name,
                 template_version=TEMPLATE_VERSION,
+                app_id=ctx.app.id,
+                app_version=ctx.app.version,
             )
         )
 
 
-def _latest_judgments(session: Session, program_id: str) -> dict[str, Judgment]:
+def _latest_judgments(session: Session, item_id: str, app_id: str) -> dict[str, Judgment]:
     rows = session.scalars(
         sa.select(JudgmentRow)
-        .where(JudgmentRow.program_id == program_id)
+        .where(JudgmentRow.item_id == item_id, JudgmentRow.app_id == app_id)
         .order_by(JudgmentRow.created_at)
     ).all()
-    return {r.user_id: Judgment(r.result) for r in rows}  # 뒤의 것이 앞의 것을 덮는다
+    return {r.person_id: Judgment(r.result) for r in rows}  # 뒤의 것이 앞의 것을 덮는다
 
 
 def handle_impact(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         if ctx.extractor is None:
             raise TransientError("추출기가 설정되지 않음")
-        pv = session.get(ProgramVersion, job.payload["program_version_id"])
-        step = next((s for s in replay(session, pv.program_id) if s.to_version.id == pv.id), None)
+        pv = session.get(ItemVersion, job.payload["item_version_id"])
+        step = next((s for s in replay(session, pv.item_id) if s.to_version.id == pv.id), None)
         if step is None:
             raise PermanentError("변경 이벤트가 없음")
+        app_registry.seed(session, ctx.app, at=ctx.now())  # 결과가 가리킬 앱 정의가 DB에 있게
 
         if step.from_version is None:
             # 첫 버전: 모든 필드를 뽑는다. 새 사업이므로 알림은 없다.
@@ -286,78 +381,159 @@ def handle_impact(ctx: Context) -> Handler:
         if prev != "done":
             raise TransientError(f"v{step.from_version.version_no} 영향 계산이 아직 안 끝남")
 
-        program_id = pv.program_id
+        item_id = pv.item_id
         subs = [
-            Subscription(r.user_id, set(r.fields))
+            Subscription(r.person_id, set(r.fields))
             for r in session.scalars(
-                sa.select(SubscriptionRow).where(SubscriptionRow.program_id == program_id)
+                sa.select(SubscriptionRow).where(
+                    SubscriptionRow.item_id == item_id, SubscriptionRow.app_id == ctx.app.id
+                )
             )
         ]
-        old_judgments = _latest_judgments(session, program_id)
-        users = {s.user_id for s in subs} | set(old_judgments)
+        old_judgments = _latest_judgments(session, item_id, ctx.app.id)
+        users = {s.person_id for s in subs} | set(old_judgments)
         profiles = {
-            p.user_id: dict(p.attributes)
-            for p in session.scalars(sa.select(Profile).where(Profile.user_id.in_(users)))
+            p.person_id: dict(p.attributes)
+            for p in session.scalars(sa.select(Profile).where(Profile.person_id.in_(users)))
         }
         res = run_impact(
             candidate_detector=candidates,
-            program_id=program_id,
+            item_id=item_id,
             to_version_id=pv.id,
             change=step.change,
-            old_fields=_load_fields(session, step.from_version.id),
+            old_fields=_load_fields(session, step.from_version.id, ctx.app.id),
             extractor=ctx.extractor,
             subscriptions=subs,
             profiles=profiles,
             old_judgments=old_judgments,
             old_segments=step.old_segments,
             unknown_lineages=step.unknown,
+            app_id=ctx.app.id,
+            app_version=ctx.app.version,
         )
         _save_fields(ctx, session, pv, res.fields, res.stale)
+        trace = Trace.of(job.payload)
+        app = app_ref(ctx.app.id, ctx.app.version)
+        where = Ref(app=app, item=f"item:{item_id}", item_version=pv.version_no)
+        for name in sorted(res.real_changes):
+            fv = res.fields.get(name)
+            if fv is None:
+                continue
+            emit(
+                session,
+                "field.changed",
+                {
+                    "field": name,
+                    "value_type": fv.value_type,
+                    "to_version_id": pv.id,
+                    "sources": list(fv.sources),
+                    "confidence": fv.confidence,
+                    "after": _short(fv.value),
+                },
+                producer="svc:engine",
+                key=f"{ctx.app.id}:{pv.id}:{name}",
+                ref=Ref(
+                    app=app,
+                    item=where.item,
+                    item_version=where.item_version,
+                    labels={"llm_derived": True, "confidence": fv.confidence},
+                ),
+                trace=trace,
+                now=ctx.now(),
+            )
 
         if RULES_FIELD in res.real_changes:
             rules = RuleGroup.model_validate(res.fields[RULES_FIELD].value)
             h = ruleset_hash(rules)
-            for user_id, attrs in profiles.items():
+            for person_id, attrs in profiles.items():
                 j = judge(rules, attrs)
                 session.add(
                     JudgmentRow(
-                        user_id=user_id,
-                        program_id=program_id,
-                        program_version_id=pv.id,
+                        person_id=person_id,
+                        item_id=item_id,
+                        item_version_id=pv.id,
                         ruleset_hash=h,
                         result=j.result,
                         reasons=[vars(r) for r in j.reasons],
+                        app_id=ctx.app.id,
+                        app_version=ctx.app.version,
                     )
                 )
         session.flush()
         for alert in res.alerts:
-            if repo.enqueue_alert(session, alert) and alert.needs_review:
-                # 근거 확인을 통과하지 못한 값은 바로 보내지 않고 붙잡는다 (설계 7.8).
-                row = session.scalar(
-                    sa.select(OutboxAlert).where(
-                        OutboxAlert.idempotency_key == alert.idempotency_key
-                    )
+            person = Ref(
+                app=app,
+                subject=f"person:{alert.person_id}",
+                item=where.item,
+                item_version=where.item_version,
+            )
+            cause = None
+            if alert.kind == "judgment_changed":
+                cause = emit(
+                    session,
+                    "verdict.changed",
+                    {
+                        "field": alert.field,
+                        "to_version_id": pv.id,
+                        "before": alert.before,
+                        "after": alert.after,
+                        "evidence": [f"lineage:{s}" for s in alert.sources],
+                    },
+                    producer="svc:engine",
+                    key=alert.idempotency_key,
+                    ref=person,
+                    trace=trace,
+                    now=ctx.now(),
                 )
+            if not repo.enqueue_alert(session, alert):
+                continue
+            row = session.scalar(
+                sa.select(OutboxAlert).where(OutboxAlert.idempotency_key == alert.idempotency_key)
+            )
+            # 알림이 생겼다는 봉투를 알림 발송이 구독한다(아래 NOTIFY_ON_ALERT)
+            note(
+                session,
+                row,
+                "created",
+                trace=Trace(trace.trace, cause.id if cause else trace.cause),
+                producer="svc:engine",
+            )
+            if alert.needs_review:
+                # 근거 확인을 통과하지 못한 값은 바로 보내지 않고 붙잡는다 (설계 7.8).
                 row.status = "held"
                 row.held_reason = f"근거 확인 필요 (신뢰도 {alert.confidence:.2f})"
-        if res.alerts:
-            enqueue(
-                session,
-                NOTIFY,
-                {"program_id": program_id},
-                dedupe_key=f"{NOTIFY}:{pv.id}",
-                concurrency_key=f"program:{program_id}",
-                priority=80,
-            )
+                note(
+                    session, row, "held", reason=row.held_reason, trace=trace, producer="svc:engine"
+                )
 
     return handle
 
 
+def _short(value, limit: int = 500):
+    """봉투에 넣을 짧은 값. 길면 넣지 않는다(원문 노출 한도, 64KB 한도)."""
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    return value if len(text) <= limit else None
+
+
+# 알림 발송은 알림이 생겼다는 봉투를 받아 돈다(platform-services 2.5). 항목 판 하나에 한 번.
+NOTIFY_ON_ALERT = EventSubscription(
+    name="notify",
+    pattern="alert.created",
+    job=NOTIFY,
+    dedupe=lambda env: f"{NOTIFY}:{env.payload['to_version_id']}",
+    concurrency=lambda env: env.item,
+    payload=lambda env: {"item_id": (env.item or "").removeprefix("item:")},
+    priority=80,
+)
+subscribe(NOTIFY_ON_ALERT)
+
+
 def handle_notify(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
-        program_id = job.payload["program_id"]
-        prepare(session, program_id)
-        deliver(session, ctx.channel, program_id=program_id, now=ctx.now, labels=ctx.labels)
+        item_id = job.payload["item_id"]
+        trace = Trace.of(job.payload)
+        prepare(session, item_id, mass_impact=MASS_IMPACT, trace=trace)
+        deliver(session, ctx.channel, item_id=item_id, now=ctx.now, labels=ctx.labels, trace=trace)
 
     return handle
 

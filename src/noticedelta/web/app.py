@@ -1,5 +1,7 @@
 """판정 화면 (FastAPI + Jinja2 + HTMX). 가입 없이 개인 링크(추측할 수 없는 토큰)로 쓴다.
 
+토큰은 DB에 해시로만 있다(people.py). 화면은 토큰으로 사람 ID를 찾아 그 ID로 읽는다.
+
 /                     프로필 입력과 개인정보 수집·이용 동의
 /privacy              개인정보 처리 안내 (누구나)
 /p/<토큰>             내 공고: 해당 · 거의 해당 · 확인 필요, 근거, 자격 변경 예정일
@@ -27,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
+from noticedelta import people
 from noticedelta.db.models import Profile
 from noticedelta.grants import SIDO
 from noticedelta.metrics import collect, prometheus_text
@@ -38,7 +41,6 @@ from noticedelta.web.ics import calendar
 from noticedelta.web.views import GROUP_NAMES, GROUPS, OUTCOME_NAMES, humanize, my_programs
 
 TEMPLATES = Path(__file__).parent / "templates"
-TOKEN_BYTES = 18  # 개인 링크가 곧 비밀번호다. 추측할 수 없게 길게.
 
 
 def _int_or_none(v: str | None) -> int | None:
@@ -96,7 +98,10 @@ def create_app(
     }
 
     def load(session: Session, token: str) -> Profile:
-        profile = session.get(Profile, token)
+        person_id = people.resolve(session, token, at=now())
+        if session.dirty:  # 마지막 사용 시각(하루 한 번). 다음 조회의 자동 flush보다 먼저 확정한다
+            session.commit()
+        profile = session.get(Profile, person_id) if person_id else None
         if profile is None:
             raise HTTPException(404, "없는 링크입니다")
         return profile
@@ -120,10 +125,10 @@ def create_app(
             ctx = {**common, "attrs": attrs, "token": None, "research_ok": research_ok}
             ctx["error"] = "개인정보 수집·이용에 동의해야 내 링크를 만들 수 있습니다."
             return templates.TemplateResponse(request, "form.html", ctx, status_code=400)
-        token = secrets.token_urlsafe(TOKEN_BYTES)
         with session_factory() as s:
-            profile = Profile(user_id=token, attributes=attrs)
-            consent.record(profile, research_ok=research_ok, at=now())
+            person, token = people.create(s, at=now())
+            profile = Profile(person_id=person.id, attributes=attrs)
+            consent.record(s, profile, research_ok=research_ok, at=now())
             s.add(profile)
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
@@ -160,7 +165,7 @@ def create_app(
         with session_factory() as s:
             profile = load(s, token)
             profile.attributes = attributes_from_form(form)
-            profile.research_ok = form.get("research_ok") == "on"
+            consent.set_research(s, profile, form.get("research_ok") == "on", at=now())
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
 
@@ -173,15 +178,17 @@ def create_app(
     @app.post("/p/{token}/delete")
     def delete(token: str):
         with session_factory() as s:
-            if not consent.delete_user(s, token):
+            person_id = people.resolve(s, token)
+            if person_id is None or not consent.delete_user(s, person_id):
                 raise HTTPException(404, "없는 링크입니다")
+            people.forget(s, person_id, at=now())
             s.commit()
         return RedirectResponse("/?deleted=1", status_code=303)
 
     @app.get("/p/{token}/alerts", response_class=HTMLResponse)
     def alerts(request: Request, token: str):
         with session_factory() as s:
-            load(s, token)
+            person_id = load(s, token).person_id
             rows = [
                 {
                     "id": a.id,
@@ -189,7 +196,7 @@ def create_app(
                     "sent_at": a.sent_at,
                     "status": a.status,
                 }
-                for a in inbox(s, token)
+                for a in inbox(s, person_id)
             ]
         ctx = {**common, "token": token, "alerts": rows}
         return templates.TemplateResponse(request, "alerts.html", ctx)
@@ -197,17 +204,16 @@ def create_app(
     @app.get("/p/{token}/alerts/{alert_id}", response_class=HTMLResponse)
     def evidence(request: Request, token: str, alert_id: str):
         with session_factory() as s:
-            load(s, token)
-            ev = alert_evidence(s, alert_id, token)
+            ev = alert_evidence(s, alert_id, load(s, token).person_id)
             if ev is None:
                 raise HTTPException(404, "없는 알림입니다")
             ctx = {**common, "token": token, "ev": ev}
             return templates.TemplateResponse(request, "evidence.html", ctx)
 
-    @app.get("/programs/{program_id}", response_class=HTMLResponse)
-    def program(request: Request, program_id: str):
+    @app.get("/programs/{item_id}", response_class=HTMLResponse)
+    def program(request: Request, item_id: str):
         with session_factory() as s:
-            detail = program_detail(s, program_id)
+            detail = program_detail(s, item_id)
             if detail is None:
                 raise HTTPException(404, "없는 사업입니다")
             return templates.TemplateResponse(request, "program.html", {**common, "d": detail})

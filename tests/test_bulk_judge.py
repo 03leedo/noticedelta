@@ -48,7 +48,7 @@ def test_tri_state_matches_judge_on_typed_columns():
     t = sa.Table(
         "p",
         md,
-        sa.Column("user_id", sa.String, primary_key=True),
+        sa.Column("person_id", sa.String, primary_key=True),
         *[sa.Column(a, sa.Integer) for a in TYPED],
         *[sa.Column(a, sa.String) for a in ["region_sido", "business_type"]],
         *[sa.Column(a, sa.Boolean) for a in ["is_pre_founder", "is_women_owned", "is_restart"]],
@@ -59,8 +59,8 @@ def test_tri_state_matches_judge_on_typed_columns():
         conn.execute(t.insert(), [{c.name: p.get(c.name) for c in t.c} for p in profiles])
         for name, g in GROUPS.items():
             label = result_label(tri_state(g, lambda a: t.c[a]))
-            got = dict(conn.execute(sa.select(t.c.user_id, label)).all())
-            want = {p["user_id"]: judge(g, p).result for p in profiles}
+            got = dict(conn.execute(sa.select(t.c.person_id, label)).all())
+            want = {p["person_id"]: judge(g, p).result for p in profiles}
             assert got == want, name
 
 
@@ -97,13 +97,13 @@ def pg_session():
 def seed_program(s):
     for row in [
         models.Source(id="bizinfo", name="기업마당"),
-        models.Program(id="PG1", title="(가상) 사업", title_key="가상사업"),
+        models.Item(id="PG1", title="(가상) 사업", title_key="가상사업"),
         models.Notice(id="N1", source_id="bizinfo", external_id="X", title="(가상)"),
         models.NoticeVersion(
             id="NV1", notice_id="N1", version_no=1, kind="original", content_hash="h"
         ),
-        models.ProgramVersion(
-            id="PV1", program_id="PG1", version_no=1, notice_version_id="NV1", content_hash="h"
+        models.ItemVersion(
+            id="PV1", item_id="PG1", version_no=1, notice_version_id="NV1", content_hash="h"
         ),
     ]:
         s.add(row)
@@ -117,24 +117,27 @@ def test_bulk_judge_matches_judge_with_messy_profiles(pg_session):
     profiles = virtual_profiles(1500, seed=3, messy=0.3)
     s.add_all(
         models.Profile(
-            user_id=p["user_id"], attributes={k: v for k, v in p.items() if k != "user_id"}
+            person_id=p["person_id"], attributes={k: v for k, v in p.items() if k != "person_id"}
         )
         for p in profiles
     )
     s.flush()
     for name, g in GROUPS.items():
-        n = bulk_judge(s, program_id="PG1", program_version_id="PV1", group=g)
+        n = bulk_judge(s, item_id="PG1", item_version_id="PV1", group=g, app_id="t", app_version=1)
         assert n == len(profiles), name
         rows = s.execute(
             sa.select(
-                models.JudgmentRow.user_id, models.JudgmentRow.result, models.JudgmentRow.reasons
+                models.JudgmentRow.person_id, models.JudgmentRow.result, models.JudgmentRow.reasons
             ).where(models.JudgmentRow.ruleset_hash == ruleset_hash(g))
         ).all()
-        by_user = {p["user_id"]: p for p in profiles}
-        for user_id, result, reasons in rows:
-            want = judge(g, by_user[user_id])
-            assert result == want.result, (name, by_user[user_id])
+        by_user = {p["person_id"]: p for p in profiles}
+        for person_id, result, reasons in rows:
+            want = judge(g, by_user[person_id])
+            assert result == want.result, (name, by_user[person_id])
             assert [r["outcome"] for r in reasons] == [r.outcome for r in want.reasons], name
             assert [r["rule_id"] for r in reasons] == [r.rule_id for r in want.reasons], name
         # 다시 돌려도 쌓이지 않는다
-        assert bulk_judge(s, program_id="PG1", program_version_id="PV1", group=g) == 0
+        assert (
+            bulk_judge(s, item_id="PG1", item_version_id="PV1", group=g, app_id="t", app_version=1)
+            == 0
+        )

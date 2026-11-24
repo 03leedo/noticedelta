@@ -18,11 +18,12 @@ from sqlalchemy.orm import Session
 
 from noticedelta.db.models import (
     Attachment,
+    Item,
+    ItemVersion,
     LabelRow,
     NoticeVersion,
-    Program,
-    ProgramVersion,
 )
+from noticedelta.grants import APP
 from noticedelta.llm.extract import FIELD_TYPES
 from noticedelta.sources import bizinfo, kstartup
 
@@ -40,10 +41,10 @@ SECOND_ROUND_AFTER = timedelta(days=7)
 
 @dataclass
 class EventRef:
-    program_id: str
+    item_id: str
     title: str
-    from_version: ProgramVersion
-    to_version: ProgramVersion
+    from_version: ItemVersion
+    to_version: ItemVersion
     rounds: set[int] = field(default_factory=set)  # 라벨을 단 회차
 
 
@@ -51,15 +52,13 @@ def events(session: Session, labeler: str = "me") -> list[EventRef]:
     """라벨할 정정: 버전이 둘 이상인 사업의 (이전, 이후) 쌍. 오래된 것부터."""
     out = []
     later = session.scalars(
-        sa.select(ProgramVersion)
-        .where(ProgramVersion.version_no >= 2)
-        .order_by(ProgramVersion.created_at)
+        sa.select(ItemVersion).where(ItemVersion.version_no >= 2).order_by(ItemVersion.created_at)
     ).all()
     for to in later:
         frm = session.scalar(
-            sa.select(ProgramVersion).where(
-                ProgramVersion.program_id == to.program_id,
-                ProgramVersion.version_no == to.version_no - 1,
+            sa.select(ItemVersion).where(
+                ItemVersion.item_id == to.item_id,
+                ItemVersion.version_no == to.version_no - 1,
             )
         )
         if frm is None:
@@ -71,8 +70,8 @@ def events(session: Session, labeler: str = "me") -> list[EventRef]:
                 .distinct()
             )
         )
-        title = session.get(Program, to.program_id).title
-        out.append(EventRef(to.program_id, title, frm, to, rounds))
+        title = session.get(Item, to.item_id).title
+        out.append(EventRef(to.item_id, title, frm, to, rounds))
     return out
 
 
@@ -179,11 +178,13 @@ def save_labels(
         )
         if row is None:
             row = LabelRow(
-                program_id=ref.program_id,
+                item_id=ref.item_id,
                 to_version_id=ref.to_version.id,
                 field=name,
                 round=round,
                 labeler=labeler,
+                app_id=APP.id,  # 라벨의 필드 이름은 이 앱의 정의를 따른다
+                app_version=APP.version,
             )
             session.add(row)
         row.status = r["status"]

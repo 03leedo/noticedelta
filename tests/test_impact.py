@@ -76,7 +76,7 @@ def run(new_doc, results, **kw):
     ex = FakeExtractor(results)
     res = run_impact(
         candidate_detector=grants.candidates,
-        program_id="N1",
+        item_id="N1",
         to_version_id="V2",
         change=change,
         old_fields=old_fields,
@@ -96,7 +96,7 @@ def test_eligibility_change_alerts_only_users_whose_judgment_changed():
     )
     assert res.affected_fields == {"eligibility_rules"}
     assert res.real_changes == {"eligibility_rules"}
-    assert [(a.user_id, a.kind, a.before, a.after) for a in res.alerts] == [
+    assert [(a.person_id, a.kind, a.before, a.after) for a in res.alerts] == [
         ("A", "judgment_changed", "eligible", "ineligible")
     ]
     assert res.alerts[0].idempotency_key == "A:N1:eligibility_rules:V2"
@@ -118,7 +118,7 @@ def test_deadline_extension_alerts_deadline_subscribers():
         new_doc, {"deadline": FieldValue("deadline", "datetime", "2026-11-07 18:00", ["L6"])}
     )
     assert res.real_changes == {"deadline"}
-    assert sorted((a.user_id, a.kind) for a in res.alerts) == [
+    assert sorted((a.person_id, a.kind) for a in res.alerts) == [
         ("A", "field_changed"),
         ("B", "field_changed"),
     ]
@@ -184,7 +184,7 @@ def test_equal_value_reextraction_updates_sources():
     )
     res = run_impact(
         candidate_detector=grants.candidates,
-        program_id="N1",
+        item_id="N1",
         to_version_id="V2",
         change=change,
         old_fields=old_fields,

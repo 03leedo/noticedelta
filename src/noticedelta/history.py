@@ -18,8 +18,8 @@ from noticedelta.blobstore import BlobStore
 from noticedelta.db.models import (
     Attachment,
     ChangeEvent,
+    ItemVersion,
     NoticeVersion,
-    ProgramVersion,
     SegmentRow,
 )
 from noticedelta.ingest import version_segments
@@ -49,15 +49,15 @@ def stored_segments(session: Session, notice_version_id: str) -> list[Segment]:
     ]
 
 
-def _event(session: Session, program_version_id: str) -> ChangeEvent | None:
+def _event(session: Session, item_version_id: str) -> ChangeEvent | None:
     return session.scalar(
-        sa.select(ChangeEvent).where(ChangeEvent.to_version_id == program_version_id)
+        sa.select(ChangeEvent).where(ChangeEvent.to_version_id == item_version_id)
     )
 
 
 def record_change(
     session: Session,
-    pv: ProgramVersion,
+    pv: ItemVersion,
     store: BlobStore,
     *,
     new_id: Callable[[], str] | None = None,
@@ -74,9 +74,9 @@ def record_change(
         return Recorded(pv.version_no, "waiting", waiting=waiting)
 
     prev = session.scalar(
-        sa.select(ProgramVersion).where(
-            ProgramVersion.program_id == pv.program_id,
-            ProgramVersion.version_no == pv.version_no - 1,
+        sa.select(ItemVersion).where(
+            ItemVersion.item_id == pv.item_id,
+            ItemVersion.version_no == pv.version_no - 1,
         )
     )
     old: list[Segment] = []
@@ -106,7 +106,7 @@ def record_change(
             )
         )
     ev = ChangeEvent(
-        program_id=pv.program_id,
+        item_id=pv.item_id,
         from_version_id=prev.id if prev else None,
         to_version_id=pv.id,
         changed_lineages={
@@ -123,13 +123,13 @@ def record_change(
     return Recorded(pv.version_no, "recorded", ev)
 
 
-def record_program(session: Session, program_id: str, store: BlobStore, **kwargs) -> list[Recorded]:
+def record_item(session: Session, item_id: str, store: BlobStore, **kwargs) -> list[Recorded]:
     """사업의 버전을 순서대로 기록한다. 기다리는 버전에서 멈춘다(뒤 버전은 그 버전과 비교해야 한다)."""
     out = []
     for pv in session.scalars(
-        sa.select(ProgramVersion)
-        .where(ProgramVersion.program_id == program_id)
-        .order_by(ProgramVersion.version_no)
+        sa.select(ItemVersion)
+        .where(ItemVersion.item_id == item_id)
+        .order_by(ItemVersion.version_no)
     ):
         r = record_change(session, pv, store, **kwargs)
         out.append(r)
@@ -187,8 +187,8 @@ def comparable_old_segments(old_segments, unreadable: set[str]):
 @dataclass
 class ReplayStep:
     event: ChangeEvent
-    from_version: ProgramVersion | None
-    to_version: ProgramVersion
+    from_version: ItemVersion | None
+    to_version: ItemVersion
     old_segments: list[Segment]  # 이전 버전 조각 (옮겨 둔 조각 포함)
     change: ChangeSet  # 새 버전 조각과 바뀐 lineage. 기록할 때와 같다.
     unknown: set[str]
@@ -209,16 +209,14 @@ class ReplayStep:
             yield old.get(lid), None
 
 
-def replay(session: Session, program_id: str) -> Iterator[ReplayStep]:
+def replay(session: Session, item_id: str) -> Iterator[ReplayStep]:
     """기록된 이벤트를 버전 순서대로 다시 흘려보낸다. 매칭은 다시 돌리지 않는다."""
     versions = {
         pv.id: pv
-        for pv in session.scalars(
-            sa.select(ProgramVersion).where(ProgramVersion.program_id == program_id)
-        )
+        for pv in session.scalars(sa.select(ItemVersion).where(ItemVersion.item_id == item_id))
     }
     events = sorted(
-        session.scalars(sa.select(ChangeEvent).where(ChangeEvent.program_id == program_id)),
+        session.scalars(sa.select(ChangeEvent).where(ChangeEvent.item_id == item_id)),
         key=lambda e: versions[e.to_version_id].version_no,
     )
     for ev in events:

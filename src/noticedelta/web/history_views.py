@@ -13,12 +13,13 @@ from sqlalchemy.orm import Session
 
 from noticedelta.db.models import (
     FieldValueRow,
+    Item,
+    ItemVersion,
     Notice,
     OutboxAlert,
-    Program,
-    ProgramVersion,
     SegmentRow,
 )
+from noticedelta.grants import APP
 from noticedelta.history import ReplayStep, replay
 
 MAX_PAIRS = 30  # 한 정정에서 보여 줄 바뀐 조각 수 (공고문이 통째로 바뀌면 수백 개다)
@@ -55,7 +56,7 @@ class Correction:
 
 @dataclass
 class ProgramDetail:
-    program: Program
+    program: Item
     postings: list[Notice]
     fields: dict[str, FieldValueRow]
     corrections: list[Correction] = field(default_factory=list)
@@ -100,28 +101,30 @@ def _correction(step: ReplayStep, limit: int = MAX_PAIRS) -> Correction:
     )
 
 
-def program_detail(session: Session, program_id: str) -> ProgramDetail | None:
-    program = session.get(Program, program_id)
+def program_detail(session: Session, item_id: str) -> ProgramDetail | None:
+    program = session.get(Item, item_id)
     if program is None:
         return None
     postings = session.scalars(
-        sa.select(Notice).where(Notice.program_id == program_id).order_by(Notice.first_seen_at)
+        sa.select(Notice).where(Notice.item_id == item_id).order_by(Notice.first_seen_at)
     ).all()
     latest = session.scalar(
-        sa.select(ProgramVersion.id)
-        .join(FieldValueRow, FieldValueRow.program_version_id == ProgramVersion.id)
-        .where(ProgramVersion.program_id == program_id)
-        .order_by(ProgramVersion.version_no.desc())
+        sa.select(ItemVersion.id)
+        .join(FieldValueRow, FieldValueRow.item_version_id == ItemVersion.id)
+        .where(ItemVersion.item_id == item_id, FieldValueRow.app_id == APP.id)
+        .order_by(ItemVersion.version_no.desc())
     )
     fields = {}
     if latest is not None:
         fields = {
             r.name: r
             for r in session.scalars(
-                sa.select(FieldValueRow).where(FieldValueRow.program_version_id == latest)
+                sa.select(FieldValueRow).where(
+                    FieldValueRow.item_version_id == latest, FieldValueRow.app_id == APP.id
+                )
             )
         }
-    corrections = [_correction(s) for s in replay(session, program_id) if s.from_version]
+    corrections = [_correction(s) for s in replay(session, item_id) if s.from_version]
     corrections.reverse()  # 최근 정정부터
     return ProgramDetail(program, postings, fields, corrections)
 
@@ -137,13 +140,13 @@ class Evidence:
     pairs: list[Pair]  # 그 조각이 이번 정정에서 어떻게 바뀌었나
 
 
-def alert_evidence(session: Session, alert_id: str, user_id: str) -> Evidence | None:
+def alert_evidence(session: Session, alert_id: str, person_id: str) -> Evidence | None:
     alert = session.get(OutboxAlert, alert_id)
-    if alert is None or alert.user_id != user_id:
+    if alert is None or alert.person_id != person_id:
         return None  # 남의 알림은 없는 것과 같다
     p = alert.payload
-    to_version = session.get(ProgramVersion, p.get("to_version_id"))
-    program = session.get(Program, alert.program_id)
+    to_version = session.get(ItemVersion, p.get("to_version_id"))
+    program = session.get(Item, alert.item_id)
     sources = set(p.get("sources") or [])
     quotes, pairs = [], []
     if to_version is not None and sources:
@@ -159,7 +162,7 @@ def alert_evidence(session: Session, alert_id: str, user_id: str) -> Evidence | 
             )
         ]
         step = next(
-            (s for s in replay(session, alert.program_id) if s.to_version.id == to_version.id), None
+            (s for s in replay(session, alert.item_id) if s.to_version.id == to_version.id), None
         )
         if step is not None:
             pairs = [
@@ -167,4 +170,4 @@ def alert_evidence(session: Session, alert_id: str, user_id: str) -> Evidence | 
                 for (old, new), pair in zip(step.pairs(), _pairs(step, 10_000)[0], strict=True)
                 if (new and new.lineage_id in sources) or (old and old.lineage_id in sources)
             ]
-    return Evidence(alert, program.title if program else alert.program_id, quotes, pairs)
+    return Evidence(alert, program.title if program else alert.item_id, quotes, pairs)
