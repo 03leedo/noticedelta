@@ -159,6 +159,29 @@ def _norm_list(v: Iterable[Any]) -> set[str]:
     return {normalize_text(str(x)) for x in v}
 
 
+def coerce_shape(value_type: ValueType, v: Any) -> Any | None:
+    """LLM이 준 값을 타입에 맞는 모양으로. 맞출 수 없거나 비었으면 None(값 없음으로 본다).
+
+    스키마는 value_json을 문자열로만 묶으므로 안의 모양은 모델마다 다르다. 예: 없는 필드를
+    빼지 않고 null로 주는 모델이 있다(피클 학교 모델, 2026-11-24 평가에서 비교 단계가 깨졌다).
+    """
+    if v is None or v == "" or v == [] or v == {}:
+        return None
+    if value_type == "rules":
+        return v if isinstance(v, dict) else None
+    if value_type == "list":
+        items = [v] if isinstance(v, str | int | float) else v
+        if not isinstance(items, list):
+            return None
+        out = [str(x).strip() for x in items if isinstance(x, str | int | float) and str(x).strip()]
+        return out or None
+    if isinstance(v, bool) or not isinstance(v, str | int | float):
+        return None
+    if value_type == "text":
+        return str(v).strip() or None
+    return v
+
+
 def values_equal(value_type: ValueType, a: Any, b: Any, *, default_year: int | None = None) -> bool:
     """두 값이 '진짜로' 같은지. 문구만 다르고 값이 같으면 True."""
     if value_type == "datetime":

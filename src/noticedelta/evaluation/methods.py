@@ -21,10 +21,12 @@ from noticedelta.evaluation.dataset import EvalEvent
 from noticedelta.impact import Extractor, FieldValue, keyword_detector, run_impact
 from noticedelta.llm.anthropic_provider import DEFAULT_MODEL
 from noticedelta.llm.gateway import Gateway, LLMRequest, MissingCassette
+from noticedelta.llm.openai_compat import ProviderError
 from noticedelta.segments import Segment
-from noticedelta.values import values_equal
+from noticedelta.values import coerce_shape, values_equal
 
 NO_CASSETTE = "녹화본 없음"
+CALL_FAILED = "호출 실패"  # 공급자가 끝내 답하지 못함(시간 초과, 한도). 그 사업은 거기까지만 잰다
 
 
 @dataclass
@@ -99,7 +101,7 @@ class _WithState:
     def start(self, segments: Sequence[Segment]) -> None:
         try:
             self.fields = self.meter(set(self.spec.types), segments) if segments else {}
-        except MissingCassette:
+        except (MissingCassette, ProviderError):
             self.fields = None
         self.meter.take()  # 처음 추출은 이벤트 비용이 아니다
 
@@ -108,11 +110,13 @@ class _WithState:
             return Outcome(None, note=NO_CASSETTE)
         try:
             changed = self._step(ev)
-        except MissingCassette:
+        except (MissingCassette, ProviderError) as e:
             # 여기서 끊기면 뒤 이벤트의 이전 값도 믿을 수 없다. 이 사업은 여기까지만 잰다.
             self.fields = None
             self.meter.take()
-            return Outcome(None, note=NO_CASSETTE)
+            return Outcome(
+                None, note=NO_CASSETTE if isinstance(e, MissingCassette) else CALL_FAILED
+            )
         calls, chars = self.meter.take()
         return Outcome(changed, calls, chars)
 
@@ -222,6 +226,10 @@ class B3Diff(_WithState):
             try:
                 value = json.loads(item["value_json"])
             except (KeyError, json.JSONDecodeError):
+                continue
+            value = coerce_shape(self.spec.types[name], value)
+            if value is None:
+                self.fields.pop(name, None)  # 바뀌었는데 값이 없다 = 사라졌다
                 continue
             self.fields[name] = FieldValue(name, self.spec.types[name], value, sources=[])
         return changed

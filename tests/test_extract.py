@@ -98,3 +98,17 @@ def test_empty_request_makes_no_call(tmp_path):
     ex, p = extractor([], tmp_path)
     assert ex(set(), segments()) == {}
     assert p.requests == []
+
+
+def test_null_or_misshapen_values_are_treated_as_absent(tmp_path):
+    # 없는 필드를 빼지 않고 null로 주는 모델이 있다(피클 학교 모델). 값 없음으로 본다
+    ex, _ = extractor(
+        [
+            item("required_documents", None, []),
+            item("contact", ["02-1"], ["L1"]),
+            item("amount", 50_000_000, ["L3"]),
+        ],
+        tmp_path,
+    )
+    out = ex({"required_documents", "contact", "amount"}, segments())
+    assert set(out) == {"amount"}

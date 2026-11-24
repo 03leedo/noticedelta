@@ -18,6 +18,7 @@ from noticedelta.impact import FieldValue
 from noticedelta.llm.anthropic_provider import DEFAULT_MODEL
 from noticedelta.llm.gateway import Gateway, LLMRequest
 from noticedelta.segments import Segment
+from noticedelta.values import coerce_shape
 
 TEMPLATE_VERSION = "extract-v1"
 LOW_CONFIDENCE = 0.3
@@ -124,6 +125,9 @@ class LLMExtractor:
         self, name: str, value, sources: list[str], cited: list[str]
     ) -> FieldValue | None:
         vtype = FIELD_TYPES[name]
+        value = coerce_shape(vtype, value)
+        if value is None:
+            return None
         if vtype == "rules":
             try:
                 group = RuleGroup.model_validate(value, context=RULES_CONTEXT)

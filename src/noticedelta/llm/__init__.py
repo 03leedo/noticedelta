@@ -10,18 +10,25 @@ from noticedelta.llm.gateway import (
     UsageTotals,
     request_key,
 )
+from noticedelta.llm.openai_compat import OpenAICompatProvider, ProviderError
+from noticedelta.llm.providers import Choice, choose, make_provider
 
 __all__ = [
     "DEFAULT_MODEL",
     "AnthropicProvider",
     "CassetteStore",
+    "Choice",
     "FileCassetteStore",
     "Gateway",
     "LLMRequest",
     "LLMResponse",
     "MissingCassette",
+    "OpenAICompatProvider",
+    "ProviderError",
     "Mode",
     "Provider",
     "UsageTotals",
+    "choose",
+    "make_provider",
     "request_key",
 ]

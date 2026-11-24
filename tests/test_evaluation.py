@@ -2,6 +2,7 @@
 
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
@@ -284,3 +285,17 @@ def test_chains_and_labels_load_from_recorded_events():
     assert labels == {("PV2", "deadline"): Label("changed", "api_meta")}
     (row,) = evaluate([chain], {"B0": lambda: B0Meta(SPEC)}, labels)
     assert row.score.recall() == 1.0 and json.dumps(sa.inspect(engine).get_table_names())
+
+
+def test_a_failed_call_stops_only_that_program(tmp_path):
+    from noticedelta.evaluation.methods import CALL_FAILED
+    from noticedelta.llm import ProviderError
+
+    def broken(fields, segments):
+        raise ProviderError("504 upstream_timeout")
+
+    spec = Fields({"deadline": "datetime"}, {"deadline": "마감"})
+    m = B2Full(broken, spec)
+    m.fields = {}
+    out = m.step(SimpleNamespace(change=SimpleNamespace(segments=[SimpleNamespace(text="x")])))
+    assert out.changed is None and out.note == CALL_FAILED
