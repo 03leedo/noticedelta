@@ -23,6 +23,7 @@ from noticedelta.db.models import (
     Program,
     ProgramVersion,
 )
+from noticedelta.grants import APP
 from noticedelta.llm.extract import FIELD_TYPES
 from noticedelta.sources import bizinfo, kstartup
 
@@ -184,6 +185,8 @@ def save_labels(
                 field=name,
                 round=round,
                 labeler=labeler,
+                app_id=APP.id,  # 라벨의 필드 이름은 이 앱의 정의를 따른다
+                app_version=APP.version,
             )
             session.add(row)
         row.status = r["status"]

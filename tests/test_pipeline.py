@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 from test_history import DOCS, RULES, ByContent, pdf
 
+from noticedelta import people
 from noticedelta.blobstore import LocalBlobStore
 from noticedelta.db import make_engine, models
 from noticedelta.jobs import counts, run_worker
@@ -186,16 +187,25 @@ def subscribe_eligible_user(env):
     """v1을 본 사용자: 업력 6년, 자격 규칙을 구독, 판정은 해당."""
     with env.factory() as s:
         pv = s.scalars(sa.select(models.ProgramVersion)).one()
-        s.add(models.Profile(user_id="u1", attributes={"business_age_months": 72}))
+        s.add(models.Person(id="u1"))
+        s.add(models.Profile(person_id="u1", attributes={"business_age_months": 72}))
         s.flush()
+        # 화면 시험용 링크. 토큰은 해시로만 남는다
+        people.add_link(s, "u1", at=datetime(2026, 10, 1, tzinfo=UTC), token="u1")
         s.add(
             models.SubscriptionRow(
-                user_id="u1", program_id=pv.program_id, fields=["eligibility_rules"]
+                app_id="grant-alerts",
+                app_version=1,
+                person_id="u1",
+                program_id=pv.program_id,
+                fields=["eligibility_rules"],
             )
         )
         s.add(
             models.JudgmentRow(
-                user_id="u1",
+                app_id="grant-alerts",
+                app_version=1,
+                person_id="u1",
                 program_id=pv.program_id,
                 program_version_id=pv.id,
                 ruleset_hash="v1",
@@ -216,7 +226,12 @@ def test_correction_reaches_outbox_with_rejudgment(env):
     env.work()
     with env.factory() as s:
         alert = s.scalars(sa.select(models.OutboxAlert)).one()
-        assert alert.user_id == "u1" and alert.status == "sent"  # 알림 작업까지 돌았다
+        assert alert.person_id == "u1" and alert.status == "sent"  # 알림 작업까지 돌았다
+        # 결과에 앱과 판이 붙고, 그 판의 정의가 DB에 있다
+        assert (alert.app_id, alert.app_version) == ("grant-alerts", 1)
+        assert alert.idempotency_key.startswith("grant-alerts:u1:")
+        assert s.get(models.AppDefinitionRow, ("grant-alerts", 1)) is not None
+        assert {r.app_id for r in s.scalars(sa.select(models.FieldValueRow))} == {"grant-alerts"}
         assert "신청 자격 판정이 해당에서 비해당" in alert.payload["message"]
         assert (alert.payload["before"], alert.payload["after"]) == ("eligible", "ineligible")
         latest = s.scalars(

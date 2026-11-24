@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from noticedelta.db import models
+from noticedelta.grants import APP
 
 DEMO = [
     {
@@ -187,6 +188,8 @@ def seed_demo(session: Session, today: date) -> int:
                     value_type=vtype,
                     source_lineage_ids=sources,
                     extractor="demo",
+                    app_id=APP.id,
+                    app_version=APP.version,
                 )
             )
         added += 1

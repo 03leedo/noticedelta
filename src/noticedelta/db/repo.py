@@ -165,9 +165,11 @@ def enqueue_alert(session: Session, alert: Alert) -> bool:
             session.add(
                 OutboxAlert(
                     idempotency_key=alert.idempotency_key,
-                    user_id=alert.user_id,
+                    person_id=alert.person_id,
                     program_id=alert.program_id,
                     payload=asdict(alert),
+                    app_id=alert.app_id,
+                    app_version=alert.app_version,
                 )
             )
     except IntegrityError:

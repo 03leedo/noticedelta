@@ -59,7 +59,10 @@ def setup(url: str, n: int) -> sa.Engine:
         s.flush()
         s.execute(
             sa.insert(models.Profile),
-            [{"user_id": p.pop("user_id"), "attributes": p} for p in virtual_profiles(n, seed=42)],
+            [
+                {"person_id": p.pop("person_id"), "attributes": p}
+                for p in virtual_profiles(n, seed=42)
+            ],
         )
         s.commit()
     return engine
@@ -77,25 +80,34 @@ def main() -> None:
     with Session(engine) as s:
         for i, (name, group) in enumerate(SAMPLE_RULESETS.items()):
             t0 = time.perf_counter()
-            n = bulk_judge(s, program_id=f"PG{i}", program_version_id=f"PV{i}", group=group)
+            n = bulk_judge(
+                s,
+                program_id=f"PG{i}",
+                program_version_id=f"PV{i}",
+                group=group,
+                app_id="bench",
+                app_version=1,
+            )
             s.commit()
             sql_s = time.perf_counter() - t0
 
             # 같은 일을 파이썬으로: 프로필 읽기 → 판정 → 판정 기록 쓰기
             t0 = time.perf_counter()
-            loaded = s.execute(sa.select(models.Profile.user_id, models.Profile.attributes)).all()
+            loaded = s.execute(sa.select(models.Profile.person_id, models.Profile.attributes)).all()
             want = {u: judge(group, a) for u, a in loaded}
             h = ruleset_hash(group)
             s.execute(
                 sa.insert(models.JudgmentRow),
                 [
                     {
-                        "user_id": u,
+                        "person_id": u,
                         "program_id": f"PG{i}",
                         "program_version_id": f"PY{i}",
                         "ruleset_hash": h,
                         "result": j.result,
                         "reasons": [vars(r) for r in j.reasons],
+                        "app_id": "bench",
+                        "app_version": 1,
                     }
                     for u, j in want.items()
                 ],
@@ -105,7 +117,7 @@ def main() -> None:
 
             rows = s.execute(
                 sa.select(
-                    models.JudgmentRow.user_id,
+                    models.JudgmentRow.person_id,
                     models.JudgmentRow.result,
                     models.JudgmentRow.reasons,
                 ).where(models.JudgmentRow.program_version_id == f"PV{i}")

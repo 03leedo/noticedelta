@@ -228,6 +228,8 @@ def bulk_judge(
     program_id: str,
     program_version_id: str,
     group: RuleGroup,
+    app_id: str,
+    app_version: int,
     min_confidence: float = 0.7,
 ) -> int:
     """profile 전체를 SQL 한 문장으로 판정해 judgment에 쌓는다 (PostgreSQL). 넣은 행 수를 준다.
@@ -250,16 +252,18 @@ def bulk_judge(
 
     h = ruleset_hash(group)
     tri = tri_state(group, column, min_confidence=min_confidence)
-    key = p.c.user_id + f":{program_version_id}:{h}"
+    key = p.c.person_id + f":{program_version_id}:{h}"
     select = sa.select(
         sa.func.md5(key),
-        p.c.user_id,
+        p.c.person_id,
         _t(program_id),
         _t(program_version_id),
         _t(h),
         _t(result_label(tri)),
         reasons_json(group, column, actual, min_confidence=min_confidence),
         sa.func.now(),
+        _t(app_id),
+        sa.literal(app_version, sa.Integer),
     )
     j = JudgmentRow.__table__
     stmt = (
@@ -267,18 +271,20 @@ def bulk_judge(
         .from_select(
             [
                 "id",
-                "user_id",
+                "person_id",
                 "program_id",
                 "program_version_id",
                 "ruleset_hash",
                 "result",
                 "reasons",
                 "created_at",
+                "app_id",
+                "app_version",
             ],
             select,
         )  # fmt: skip
         .on_conflict_do_nothing(
-            index_elements=["user_id", "program_id", "program_version_id", "ruleset_hash"]
+            index_elements=["person_id", "program_id", "program_version_id", "ruleset_hash"]
         )
     )
     # SQLAlchemy 2.1의 INSERT ... SELECT는 rowcount를 주지 않아 RETURNING으로 센다.

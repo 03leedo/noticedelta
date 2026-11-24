@@ -21,7 +21,7 @@ class Recorder:
         self.sent = []
 
     def send(self, alert, message):
-        self.sent.append((alert.user_id, message))
+        self.sent.append((alert.person_id, message))
 
 
 @pytest.fixture
@@ -144,12 +144,14 @@ def test_low_confidence_hold_from_pipeline_stays_held(s):
 
 def test_render_values():
     row = models.OutboxAlert(
+        app_id="grant-alerts",
+        app_version=1,
         payload={
             "field": "amount",
             "kind": "field_changed",
             "before": 50_000_000,
             "after": 30_000_000,
-        }
+        },
     )
     assert (
         render(row, "사업", ALERT_LABELS)
