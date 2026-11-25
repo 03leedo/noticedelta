@@ -48,10 +48,11 @@ PENDING = ("queued", "running", "retry")  # 아직 끝나지 않은 작업
 
 
 def sha(value: Any) -> str:
+    # ensure_ascii: 깨진 HWP에서 나온 짝 없는 서로게이트도 인코딩 오류 없이 해시한다(재생이 찾은 버그)
     raw = (
         value
         if isinstance(value, bytes)
-        else json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()
+        else json.dumps(value, ensure_ascii=True, sort_keys=True, default=str).encode("ascii")
     )
     return hashlib.sha256(raw).hexdigest()
 
@@ -300,7 +301,7 @@ def canonical_lines(session: Session, trace_id: str) -> list[str]:
 
 
 def digest_of(lines: list[str]) -> str:
-    return sha("\n".join(lines).encode("utf-8"))
+    return sha("\n".join(lines).encode("utf-8", "surrogatepass"))
 
 
 def pending_traces(session: Session) -> set[str]:

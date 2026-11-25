@@ -108,3 +108,10 @@ def test_llm_calls_are_recorded_only_inside_a_bound_trace(tmp_path):
 
 def env_run(env, i):
     return sorted(p.stem for p in (env.root / "runs").glob("*.json"))[i]
+
+
+def test_hashes_survive_lone_surrogates_from_broken_hwp():
+    # 깨진 HWP(UTF-16)의 짝 없는 서로게이트. 실제 데이터 재생에서 파싱 11건이 여기서 멈췄다
+    broken = {"blocks": [{"type": "paragraph", "text": "신청\udfb3자격"}]}
+    assert len(flight.sha(broken)) == 64
+    assert len(flight.digest_of(['{"payload": "\udfa2"}'])) == 64
