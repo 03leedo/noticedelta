@@ -47,11 +47,15 @@ def record(
 
 
 def update_keys(session: Session, profile: Profile, keys: list[str], *, at: datetime) -> None:
-    """사람이 값을 고쳐 키가 바뀌면, 지금 동의한 용도마다 같은 문구로 키를 새로 적는다."""
+    """사람이 값을 고쳐 키가 바뀌면, 키가 달라진 용도만 새로 적는다. 동의한 문구 판은 이어받는다."""
     purposes = [*PURPOSES, "research"] if profile.research_ok else list(PURPOSES)
     for purpose in purposes:
+        current = vault.active_consent(session, profile.person_id, APP.id, purpose)
+        if current is not None and sorted(current.keys) == sorted(set(keys)):
+            continue
+        version = current.text_version if current is not None else VERSION
         vault.grant_consent(
-            session, profile.person_id, APP.id, purpose, keys, text_version=VERSION, now=at
+            session, profile.person_id, APP.id, purpose, keys, text_version=version, now=at
         )
 
 

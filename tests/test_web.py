@@ -71,7 +71,7 @@ def test_profile_gets_an_unguessable_personal_link(env):
         assert consents == {"judge", "notify"}  # 선택 동의(연구)는 하지 않았다
         now = datetime.now(UTC)
         g = vault.issue(
-            s, pid, "grant-alerts", vault.SELF, vault.keys_of(s, pid), holder="t", now=now
+            s, pid, "grant-alerts", vault.SELF, vault.keys_of(s, pid), holder="self:test", now=now
         )
         attrs = vault.read(s, vault.load_cipher(), g.id, now=now)
     assert attrs["revenue_krw"] == 300_000_000 and attrs["founded_on"] == "2021-01-01"

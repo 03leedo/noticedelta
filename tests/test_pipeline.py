@@ -386,8 +386,14 @@ def test_catching_up_fills_values_without_alerting_old_changes(env):
     with env.factory() as s:  # 두 판이 지난 뒤에 구독한 사람
         item_id = s.scalar(sa.select(models.Item.id))
         s.add(models.Person(id="u1"))
-        s.add(models.Profile(person_id="u1", attributes={"business_age_months": 72}))
+        s.add(models.Profile(person_id="u1", attributes={}))
         s.flush()
+        env.ctx.vault = vault.load_cipher()
+        at = datetime(2026, 10, 1, tzinfo=UTC)
+        vault.put(s, env.ctx.vault, "u1", {"business_age_months": 72}, source="input", now=at)
+        vault.grant_consent(
+            s, "u1", "grant-alerts", "judge", ["business_age_months"], text_version="t", now=at
+        )
         s.add(models.SubscriptionRow(app_id="grant-alerts", app_version=1, person_id="u1", item_id=item_id,
                                      fields=["eligibility_rules", "deadline"]))  # fmt: skip
         assert enqueue_scope_backlog(s, env.ctx, env.clock()) == 2
@@ -404,3 +410,20 @@ def test_catching_up_fills_values_without_alerting_old_changes(env):
     with env.factory() as s:
         alerts = s.scalars(sa.select(models.OutboxAlert)).all()
         assert [(a.person_id, a.payload["field"]) for a in alerts] == [("u1", "deadline")]
+
+
+def test_people_whose_values_cannot_be_read_are_not_rejudged(env):
+    env.ctx.extractor = RulesFromText()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    subscribe_eligible_user(env)  # 판정 기록: 해당
+    with env.factory() as s:  # 판정 동의를 철회했다: 금고에서 값을 꺼낼 수 없다
+        vault.withdraw_consent(
+            s, "u1", "grant-alerts", "judge", now=datetime(2026, 10, 2, tzinfo=UTC)
+        )
+        s.commit()
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    env.work()
+    with env.factory() as s:
+        # 빈 속성으로 다시 판정해 "해당 → 확인 필요" 같은 거짓 알림을 내지 않는다
+        assert s.scalar(sa.select(sa.func.count()).select_from(models.OutboxAlert)) == 0

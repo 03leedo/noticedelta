@@ -88,7 +88,13 @@ def test_access_is_logged_without_values(env):
 def test_self_sees_everything_and_erase_keeps_only_the_withdrawal(env):
     s, cipher = env
     g = vault.issue(
-        s, "p1", APP, "self", ["founded_on", "region_sido", "revenue_krw"], holder="link", now=T0
+        s,
+        "p1",
+        APP,
+        "self",
+        ["founded_on", "region_sido", "revenue_krw"],
+        holder="self:link",
+        now=T0,
     )
     assert set(vault.read(s, cipher, g.id, now=T0)) == {"founded_on", "region_sido", "revenue_krw"}
     vault.erase(s, "p1", now=T0)
@@ -100,8 +106,45 @@ def test_self_sees_everything_and_erase_keeps_only_the_withdrawal(env):
 def test_judge_view_holds_only_consented_people_and_keys(env):
     s, cipher = env
     vault.put(s, cipher, "p2", {"region_sido": "서울"}, source="input", now=T0)  # 동의 없음
-    view = vault.judge_view(s, cipher, APP, holder="svc:engine", now=T0)
-    rows = s.execute(sa.select(view)).all()
+    with vault.judge_view(s, cipher, APP, holder="svc:engine", now=T0) as view:
+        rows = s.execute(sa.select(view)).all()
     assert [(r.person_id, r.attributes) for r in rows] == [
         ("p1", {"founded_on": "2021-03-02", "region_sido": "부산"})
     ]
+    # 블록을 나가면 풀어 둔 평문 표가 사라진다
+    with pytest.raises(sa.exc.OperationalError):
+        s.execute(sa.text("select * from vault_judge_view"))
+
+
+def test_narrowing_consent_kills_grants_already_given(env):
+    s, cipher = env
+    g = vault.issue(
+        s, "p1", APP, "judge", ["founded_on", "region_sido"], holder="svc:engine", now=T0, uses=None
+    )
+    vault.grant_consent(
+        s, "p1", APP, "judge", ["founded_on"], text_version="v2", now=T0
+    )  # 지역을 뺐다
+    with pytest.raises(vault.GrantInvalid):
+        vault.read(s, cipher, g.id, ["region_sido"], now=T0)
+    with pytest.raises(vault.GrantInvalid):  # 고치면 이전 허가는 모두 무효
+        vault.read(s, cipher, g.id, ["founded_on"], now=T0)
+
+
+def test_purposes_are_checked_and_self_is_only_for_the_person(env):
+    s, _ = env
+    with pytest.raises(ValueError):
+        vault.issue(s, "p1", APP, "marketing", ["founded_on"], holder="svc:x", now=T0)
+    with pytest.raises(vault.OutsideConsent):  # 엔진이 본인 행세를 하면 막는다
+        vault.issue(s, "p1", APP, vault.SELF, ["revenue_krw"], holder="svc:engine", now=T0)
+
+
+def test_production_needs_the_key_in_the_environment(tmp_path, monkeypatch):
+    monkeypatch.delenv(vault.KEY_ENV)
+    monkeypatch.setenv(vault.ENV_NAME, "production")
+    with pytest.raises(vault.VaultError):
+        vault.load_cipher(tmp_path / "vault.key")
+    assert not (tmp_path / "vault.key").exists()
+    monkeypatch.setenv(vault.ENV_NAME, "dev")  # 개발: 처음 만든 열쇠를 다음에도 쓴다
+    a = vault.load_cipher(tmp_path / "vault.key")
+    b = vault.load_cipher(tmp_path / "vault.key")
+    assert b.decrypt(a.encrypt({"x": 1})) == {"x": 1}

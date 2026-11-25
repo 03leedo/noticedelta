@@ -602,6 +602,9 @@ def handle_impact(ctx: Context) -> Handler:
             if ctx.vault is not None
             else {}
         )
+        # 금고에서 값을 꺼내지 못한 사람(동의 철회, 옮기기 전, 열쇠 없음)은 다시 판정하지 않는다.
+        # 빈 속성으로 판정하면 "판정이 바뀌었다"는 거짓 알림이 나간다
+        old_judgments = {p: j for p, j in old_judgments.items() if p in profiles}
         res = run_impact(
             candidate_detector=_detector(ctx.app),
             item_id=item_id,

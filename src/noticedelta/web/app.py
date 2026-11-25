@@ -107,7 +107,7 @@ def create_app(
         if not keys:
             return {}
         g = vault.issue(
-            session, person_id, consent.APP.id, vault.SELF, keys, holder="web:self", now=now()
+            session, person_id, consent.APP.id, vault.SELF, keys, holder="self:web", now=now()
         )
         return vault.read(session, cipher, g.id, now=now())
 
@@ -188,6 +188,7 @@ def create_app(
             new = attributes_from_form(form)
             gone = {k: None for k in vault.keys_of(s, profile.person_id) - set(new)}
             vault.put(s, cipher, profile.person_id, {**gone, **new}, source="input", now=now())
+            profile.attributes = {}  # 옮기기 전의 옛 값이 남아 있었다면 지운다(금고가 원본)
             consent.update_keys(s, profile, list(new), at=now())
             consent.set_research(s, profile, form.get("research_ok") == "on", at=now())
             s.commit()

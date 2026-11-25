@@ -33,9 +33,19 @@ def main() -> None:
     now = datetime.now(UTC)
     with factory() as s:
         rows = [p for p in s.scalars(sa.select(Profile)) if p.attributes]
-        print(f"값이 남은 프로필 {len(rows)}개")
+        # 동의 기록이 없는 프로필은 동의를 만들어 내지 않는다(따로 알린다)
+        unconsented = [p for p in rows if p.consented_at is None]
+        # 이미 금고에 값이 있는 사람(옮긴 뒤 화면에서 고친 사람)은 옛 값으로 덮지 않는다
+        moved = [p for p in rows if p.consented_at is not None and vault.keys_of(s, p.person_id)]
+        rows = [p for p in rows if p.consented_at is not None and not vault.keys_of(s, p.person_id)]
+        print(
+            f"옮길 프로필 {len(rows)}개 · 동의 기록이 없어 건너뜀 {len(unconsented)}개 · "
+            f"이미 금고에 있어 건너뜀 {len(moved)}개"
+        )
         if not args.write:
             return
+        for p in moved:
+            p.attributes = {}  # 금고가 원본이다
         for p in rows:
             keys = list(p.attributes)
             vault.put(s, cipher, p.person_id, dict(p.attributes), source="input", now=now)

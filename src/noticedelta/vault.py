@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -29,9 +30,16 @@ from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
 
 from noticedelta import flight
-from noticedelta.db.models import ConsentRow, VaultAccessRow, VaultGrantRow, VaultValueRow
+from noticedelta.db.models import (
+    ConsentRow,
+    JSONType,
+    VaultAccessRow,
+    VaultGrantRow,
+    VaultValueRow,
+)
 
 KEY_ENV = "NOTICEDELTA_VAULT_KEY"
+ENV_NAME = "NOTICEDELTA_ENV"  # production이면 개발용 열쇠 파일을 쓰지 않는다
 PURPOSES = ("judge", "notify", "assist", "research", "self")
 SELF = "self"
 GRANT_TTL = timedelta(minutes=10)
@@ -70,14 +78,23 @@ class Cipher:
 
 
 def load_cipher(dev_key_file: Path | None = None) -> Cipher:
-    """환경 변수의 열쇠. 없으면 개발용 열쇠 파일(없으면 만든다). 운영에서는 환경 변수를 둔다."""
+    """환경 변수의 열쇠. 운영(NOTICEDELTA_ENV=production)에서는 환경 변수가 없으면 멈춘다.
+
+    개발에서만 열쇠 파일을 쓴다. 없으면 배타적으로(먼저 만든 쪽이 이기고 나머지는 그것을 읽는다) 0600으로
+    만든다. 열쇠를 잃으면 금고의 값을 영영 못 읽으므로 운영 열쇠는 따로 백업한다.
+    """
     if key := os.environ.get(KEY_ENV):
         return Cipher(key)
-    if dev_key_file is None:
-        raise VaultError(f"{KEY_ENV}가 없다")
-    if not dev_key_file.exists():
-        dev_key_file.parent.mkdir(parents=True, exist_ok=True)
-        dev_key_file.write_text(Cipher.new_key(), encoding="ascii")
+    if os.environ.get(ENV_NAME, "dev") == "production" or dev_key_file is None:
+        raise VaultError(f"{KEY_ENV}가 없다(운영에서는 환경 변수로 열쇠를 준다)")
+    dev_key_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(dev_key_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        with os.fdopen(fd, "w", encoding="ascii") as f:
+            f.write(Cipher.new_key())
     return Cipher(dev_key_file.read_text(encoding="ascii").strip())
 
 
@@ -156,6 +173,9 @@ def grant_consent(
     old = active_consent(session, person_id, app_id, purpose)
     if old is not None:
         old.withdrawn_at = now
+        _revoke(
+            session, person_id, app_id, purpose, now
+        )  # 줄어든 키로 이전 허가를 계속 쓰지 못하게
     row = ConsentRow(
         person_id=person_id,
         app_id=app_id,
@@ -218,6 +238,10 @@ def issue(
 ) -> VaultGrantRow:
     """허가를 만든다. 본인(self)이 아니면 그 앱·용도의 동의가 있어야 하고, 키는 동의한 키 안이어야 한다."""
     wanted = sorted(set(keys))
+    if purpose not in PURPOSES:
+        raise ValueError(f"모르는 용도: {purpose}")
+    if purpose == SELF and not holder.startswith("self:"):
+        raise OutsideConsent("본인 허가는 본인의 링크(self:…)만 받는다")
     if purpose != SELF:
         consent = active_consent(session, person_id, app_id, purpose)
         if consent is None:
@@ -249,7 +273,12 @@ def read(
     now: datetime,
 ) -> dict[str, Any]:
     """허가로 값을 꺼낸다(keys가 없으면 허가의 키 모두). 없는 값은 빠진다. 꺼낼 때마다 접근 기록."""
-    g = session.get(VaultGrantRow, grant_id)
+    # 늘 DB에서 새로 읽는다(철회·사용 횟수가 일괄 UPDATE로 바뀌어도 세션의 옛 값을 믿지 않게)
+    g = session.scalar(
+        sa.select(VaultGrantRow)
+        .where(VaultGrantRow.id == grant_id)
+        .execution_options(populate_existing=True)
+    )
     if g is None or g.revoked_at is not None:
         raise GrantInvalid("없거나 철회된 허가")
     if _aware(g.expires_at, now) <= now:
@@ -259,8 +288,22 @@ def read(
     wanted = set(g.keys if keys is None else keys)
     if not wanted <= set(g.keys):
         raise GrantInvalid(f"허가에 없는 키: {sorted(wanted - set(g.keys))}")
-    if g.purpose != SELF and active_consent(session, g.person_id, g.app_id, g.purpose) is None:
-        raise GrantInvalid("동의가 철회됐다")
+    if g.purpose != SELF:
+        consent = active_consent(session, g.person_id, g.app_id, g.purpose)
+        if consent is None:
+            raise GrantInvalid("동의가 철회됐다")
+        if not wanted <= set(consent.keys):
+            raise GrantInvalid(f"지금 동의 밖의 키: {sorted(wanted - set(consent.keys))}")
+    if g.uses_left is not None:
+        # 읽고 줄이기를 한 문장으로: 같은 허가를 동시에 두 번 쓰지 못하게
+        took = session.execute(
+            sa.update(VaultGrantRow)
+            .where(VaultGrantRow.id == g.id, VaultGrantRow.uses_left > 0)
+            .values(uses_left=VaultGrantRow.uses_left - 1)
+            .execution_options(synchronize_session="fetch")
+        )
+        if took.rowcount != 1:
+            raise GrantInvalid("다 쓴 허가")
     rows = session.scalars(
         sa.select(VaultValueRow).where(
             VaultValueRow.person_id == g.person_id, VaultValueRow.key.in_(wanted)
@@ -271,8 +314,6 @@ def read(
         for r in rows
         if r.expires_at is None or _aware(r.expires_at, now) > now
     }
-    if g.uses_left is not None:
-        g.uses_left -= 1
     session.add(
         VaultAccessRow(
             grant_id=g.id,
@@ -334,20 +375,26 @@ def consented(session: Session, app_id: str, purpose: str) -> list[str]:
     )
 
 
+@contextmanager
 def judge_view(
     session: Session, cipher: Cipher, app_id: str, *, holder: str, now: datetime
-) -> sa.Table:
+) -> Iterator[sa.Table]:
     """대량 판정 SQL이 읽는 임시 표(person_id, attributes): 판정에 동의한 사람의 동의한 키만 풀어 둔다.
 
-    세션의 연결에만 있는 임시 표라 커밋·연결이 끝나면 사라진다. 동의 밖의 키는 여기에 없다.
+        with vault.judge_view(session, cipher, app.id, holder="svc:engine", now=now) as view:
+            bulk_judge(session, ..., profiles=view)
+
+    풀어 둔 평문이 연결에 남지 않도록 블록을 나가면 바로 지운다(PostgreSQL은 커밋 때도 지운다).
+    동의 밖의 키·사람은 여기에 없다.
     """
     md = sa.MetaData()
     view = sa.Table(
         "vault_judge_view",
         md,
         sa.Column("person_id", sa.String(32), primary_key=True),
-        sa.Column("attributes", sa.JSON),
+        sa.Column("attributes", JSONType),  # PostgreSQL에서 jsonb(대량 판정이 jsonb 함수를 쓴다)
         prefixes=["TEMPORARY"],
+        postgresql_on_commit="DROP",
     )
     conn = session.connection()
     view.drop(conn, checkfirst=True)
@@ -360,7 +407,10 @@ def judge_view(
         conn.execute(
             view.insert(), [{"person_id": p, "attributes": attrs} for p, attrs in people.items()]
         )
-    return view
+    try:
+        yield view
+    finally:
+        view.drop(session.connection(), checkfirst=True)
 
 
 def erase(session: Session, person_id: str, *, now: datetime) -> None:
