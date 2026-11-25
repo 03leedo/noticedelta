@@ -115,3 +115,13 @@ def test_hashes_survive_lone_surrogates_from_broken_hwp():
     broken = {"blocks": [{"type": "paragraph", "text": "신청\udfb3자격"}]}
     assert len(flight.sha(broken)) == 64
     assert len(flight.digest_of(['{"payload": "\udfa2"}'])) == 64
+
+
+def test_replay_reads_a_database_from_before_the_recorder(tmp_path):
+    env = live(tmp_path / "live")
+    with env.factory() as s:  # 기록기 전의 운영 DB처럼
+        s.execute(sa.text("DROP TABLE record"))
+        s.execute(sa.text("DROP TABLE trace"))
+        s.commit()
+    r = replay(env.factory, env.root, env.ctx.store, tmp_path / "replay")
+    assert r.missing == [] and all(x.digest and x.same is None for x in r.runs)

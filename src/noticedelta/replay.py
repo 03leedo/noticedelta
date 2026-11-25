@@ -212,10 +212,16 @@ def replay(
         names = [n for n in names if n <= upto]
     with source() as s:
         parses, decisions = recorded_parses(s), recorded_decisions(s)
-        recorded = {
-            r.name: r
-            for r in s.scalars(sa.select(TraceRow).where(TraceRow.kind == flight.COLLECT_RUN))
-        }
+        # 기록기 전의 DB에는 trace 표가 없다. 그때는 비교할 기록이 없을 뿐이다
+        has_traces = sa.inspect(s.connection()).has_table(TraceRow.__tablename__)
+        recorded = (
+            {
+                r.name: r
+                for r in s.scalars(sa.select(TraceRow).where(TraceRow.kind == flight.COLLECT_RUN))
+            }
+            if has_traces
+            else {}
+        )
         s.expunge_all()
 
     workdir.mkdir(parents=True, exist_ok=True)
