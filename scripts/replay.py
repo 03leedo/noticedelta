@@ -5,7 +5,7 @@
     uv run python scripts/replay.py --twice               # 두 번 돌려 서로 같은지도 본다(결정성)
 
 파서는 부르지 않고 원래 DB의 파싱 결과를 쓴다. 없으면 "기록 없음"으로 그 작업만 멈춘다.
-원문 저장소는 읽기만 한다. 재생 DB는 data/replay/에 둔다(저장소에 올리지 않는다).
+원래 DB와 원문 저장소는 읽기만 한다(마이그레이션도 하지 않는다). 재생 DB는 data/replay/에 둔다.
 출력은 실행 이름, 봉투 수, 해시 앞자리와 비교 결과뿐이다.
 """
 
@@ -16,8 +16,11 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
-from noticedelta.config import load_env, open_db  # noqa: E402
+from noticedelta.config import database_url, load_env  # noqa: E402
+from noticedelta.db import make_engine  # noqa: E402
 from noticedelta.flight import platform_rev  # noqa: E402
 from noticedelta.replay import compare, replay  # noqa: E402
 
@@ -31,7 +34,9 @@ def main() -> None:
     ap.add_argument("--show", type=int, default=5, help="다른 줄을 몇 개까지 보일까")
     args = ap.parse_args()
     load_env()
-    _, factory = open_db()
+    # 원래 DB는 읽기만 한다. open_db()는 최신 스키마로 올리므로 쓰지 않는다
+    # (아직 머지하지 않은 브랜치에서 돌리면 운영 DB의 스키마가 바뀐다).
+    factory = sessionmaker(make_engine(database_url()))
     root, work = Path(args.root), Path(args.work)
     store = LocalBlobStore(root / "blobs")
 
