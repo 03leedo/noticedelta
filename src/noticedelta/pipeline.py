@@ -16,12 +16,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta import app_registry, flight
-from noticedelta.appspec import AppDefinition
+from noticedelta.appspec import AppDefinition, MetaRef
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
 from noticedelta.db.models import (
@@ -32,6 +33,8 @@ from noticedelta.db.models import (
     Job,
     JudgmentRow,
     LoadedRun,
+    Notice,
+    NoticeVersion,
     OutboxAlert,
     Profile,
     SubscriptionRow,
@@ -53,10 +56,11 @@ from noticedelta.impact import (
 )
 from noticedelta.ingest import parse_attachments
 from noticedelta.jobs import Handler, PermanentError, TransientError, enqueue
+from noticedelta.llm.gateway import BudgetExceeded
 from noticedelta.names import ALERT_LABELS
 from noticedelta.notify import Channel, InboxChannel, deliver, note, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
-from noticedelta.programs import LoadSummary, load_run
+from noticedelta.programs import LoadSummary, load_run, source_meta
 from noticedelta.sources import CATALOG
 
 LOAD, PARSE, DIFF, IMPACT, NOTIFY = "load_run", "parse", "diff", "impact", "notify"
@@ -82,6 +86,9 @@ class Context:
     app: AppDefinition = field(
         default_factory=lambda: APP
     )  # 결과(필드 값, 판정, 알림)에 이 앱의 id와 판을 단다
+    # 영향 계산(LLM 추출)을 돌릴 사업: all 모두, changed 정정이 생긴 사업, subscribed 구독자가 있는 사업.
+    # 범위에 들어오면 그 사업의 판을 첫 판부터 차례로 계산한다(enqueue_item_impact).
+    extract_scope: Literal["all", "changed", "subscribed"] = "all"
 
 
 _DETECTORS: dict[tuple[str, int], Callable] = {}
@@ -317,10 +324,8 @@ def handle_diff(ctx: Context) -> Handler:
                 trace=trace,
                 now=ctx.now(),
             )
-            if ctx.extractor is not None:
-                _enqueue_impact(
-                    session, item_id, r.event.to_version_id, trace.carry(env), ctx.now()
-                )
+            if ctx.extractor is not None and _in_scope(session, ctx, item_id, r.event):
+                enqueue_item_impact(session, item_id, trace.carry(env), ctx.now())
         waiting = next((r for r in results if r.status == "waiting"), None)
         if waiting is None:
             return
@@ -365,6 +370,58 @@ def _for_app(app: AppDefinition, event: ChangeEvent) -> bool:
 
 def _impact_key(pv_id: str) -> str:
     return f"{IMPACT}:{pv_id}:{TEMPLATE_VERSION}"
+
+
+def _meta_fields(
+    session: Session, app: AppDefinition, notice_version_id: str
+) -> dict[str, FieldValue]:
+    """앱 정의에서 출처 값으로 읽는 필드(from: meta)의 이 판 값. 출처가 값을 주지 않으면 넣지 않는다."""
+    wanted = {n: f.from_.meta for n, f in app.engine.fields.items() if isinstance(f.from_, MetaRef)}
+    if not wanted:
+        return {}
+    nv = session.get(NoticeVersion, notice_version_id)
+    notice = session.get(Notice, nv.notice_id)
+    values = source_meta(notice.source_id, nv.raw or {})
+    types = app.value_types()
+    return {
+        name: FieldValue(name, types[name], values[key], [], 1.0)
+        for name, key in wanted.items()
+        if values.get(key) is not None
+    }
+
+
+def _in_scope(session: Session, ctx: Context, item_id: str, event: ChangeEvent) -> bool:
+    if ctx.extract_scope == "all":
+        return True
+    if ctx.extract_scope == "changed":
+        return event.from_version_id is not None
+    return (
+        session.scalar(
+            sa.select(sa.func.count()).where(
+                SubscriptionRow.item_id == item_id, SubscriptionRow.app_id == ctx.app.id
+            )
+        )
+        > 0
+    )
+
+
+def enqueue_item_impact(
+    session: Session, item_id: str, carry: dict[str, str] | None = None, now: datetime | None = None
+) -> int:
+    """사업의 비교가 끝난 판을 첫 판부터 영향 계산에 넣는다. 이미 넣은 판은 건너뛴다(멱등).
+
+    영향 계산은 판마다 이어지는 사슬이라(앞 판의 값을 읽는다), 범위에 새로 들어온 사업은 첫 판부터 돈다.
+    구독이 생겼을 때, 운영자가 몇 사업만 돌려 볼 때 부른다.
+    """
+    ids = session.scalars(
+        sa.select(ItemVersion.id)
+        .join(ChangeEvent, ChangeEvent.to_version_id == ItemVersion.id)
+        .where(ItemVersion.item_id == item_id)
+        .order_by(ItemVersion.version_no)
+    ).all()
+    for pv_id in ids:
+        _enqueue_impact(session, item_id, pv_id, carry, now)
+    return len(ids)
 
 
 def _enqueue_impact(
@@ -463,10 +520,12 @@ def handle_impact(ctx: Context) -> Handler:
             raise PermanentError("변경 이벤트가 없음")
         app_registry.seed(session, ctx.app, at=ctx.now())  # 결과가 가리킬 앱 정의가 DB에 있게
 
+        meta = _meta_fields(session, ctx.app, pv.notice_version_id)
         if step.from_version is None:
-            # 첫 버전: 모든 필드를 뽑는다. 새 사업이므로 알림은 없다.
-            fields = ctx.extractor(set(ctx.app.value_types()), step.change.segments)
-            _save_fields(ctx, session, pv, fields, set())
+            # 첫 버전: 모든 필드를 뽑는다(출처 값 필드는 출처에서). 새 사업이므로 알림은 없다.
+            wanted = set(ctx.app.value_types()) - set(meta)
+            fields = ctx.extractor(wanted, step.change.segments) if wanted else {}
+            _save_fields(ctx, session, pv, {**fields, **meta}, set())
             return
 
         prev = session.scalar(
@@ -511,6 +570,7 @@ def handle_impact(ctx: Context) -> Handler:
             app_version=ctx.app.version,
             alert_fields=ctx.app.alert_fields(),
             verdict_alerts=ctx.app.alerts_on_verdict(),
+            meta_fields=meta,
         )
         _save_fields(ctx, session, pv, res.fields, res.stale)
         trace = Trace.of(job.payload)
@@ -611,7 +671,11 @@ def handle_impact(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         # 추출기의 게이트웨이에 flight.llm_observer를 달면 이 작업의 LLM 호출이 묶음에 기록된다
         with flight.bound(session, Trace.of(job.payload).trace, ctx.now):
-            _work(session, job)
+            try:
+                _work(session, job)
+            except BudgetExceeded as e:
+                # 오늘 쓸 LLM 토큰을 다 썼다. 보내지 않았으므로 다음 실행에서 이어 한다
+                raise TransientError(f"LLM 한도: {e}") from e
 
     return handle
 

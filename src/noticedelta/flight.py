@@ -323,3 +323,17 @@ def close_finished(session: Session, now: datetime) -> list[TraceRow]:
         closed.append(row)
     session.flush()
     return closed
+
+
+def spent_tokens(session: Session, since: datetime) -> int:
+    """since 이후 실제로 보낸 LLM 호출의 토큰(입력+출력). 녹화본에서 꺼낸 호출은 세지 않는다.
+
+    워커의 하루 한도가 이것으로 남은 양을 정한다. 기록은 묶음이 걸린 작업에서만 남으므로, 추출 작업은
+    늘 묶음을 싣고 다닌다(수집 실행의 묶음, 운영자가 넣은 작업은 그 일의 묶음).
+    """
+    rows = session.execute(
+        sa.select(RecordRow.cost, RecordRow.payload).where(
+            RecordRow.kind == "llm_call", RecordRow.at >= since
+        )
+    )
+    return sum(cost or 0 for cost, payload in rows if not (payload or {}).get("from_cassette"))

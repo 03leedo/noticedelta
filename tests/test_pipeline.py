@@ -219,7 +219,10 @@ def test_correction_reaches_outbox_with_rejudgment(env):
     env.ctx.extractor = RulesFromText()
     env.collect("2026-11-07", pdf(RULES, DOCS))
     env.work()
-    assert env.count(models.FieldValueRow) == 1  # v1: 자격 규칙(창업 7년)
+    with env.factory() as s:  # v1: 자격 규칙(창업 7년)은 LLM으로, 마감은 출처 값(API 접수 기간)으로
+        rows = {r.name: r for r in s.scalars(sa.select(models.FieldValueRow))}
+    assert set(rows) == {"eligibility_rules", "deadline"} and rows["deadline"].value == "2026-11-07"
+    assert "deadline" not in env.ctx.extractor.calls[0]  # 마감은 LLM에 묻지 않았다
     subscribe_eligible_user(env)
 
     env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
@@ -238,9 +241,9 @@ def test_correction_reaches_outbox_with_rejudgment(env):
             sa.select(models.JudgmentRow).order_by(models.JudgmentRow.created_at.desc())
         ).first()
         assert latest.result == "ineligible"
-    # 두 번째 추출은 바뀐 조각(본문의 마감일, 첨부의 자격 문단)에 걸린 필드만 물었다
+    # 두 번째 추출은 바뀐 조각에 걸린 필드만 물었다. 마감은 출처 값으로 비교하므로 묻지 않는다
     first, second = env.ctx.extractor.calls
-    assert second == ["deadline", "eligibility_rules"] and len(second) < len(first)
+    assert second == ["eligibility_rules"] and len(second) < len(first)
 
 
 def test_low_confidence_change_is_held(env):
@@ -304,8 +307,13 @@ def test_change_only_in_keys_the_app_does_not_read_carries_values_without_llm(en
         c = ev.changed_lineages
         assert c["source"] == "bizinfo" and c["attachments"] is True
         assert "bsnsSumryCn" in c["keys"] and "pblancNm" not in c["keys"]
-        rows = s.scalars(sa.select(models.FieldValueRow)).all()
-        assert len(rows) == 2 and rows[0].value == rows[1].value  # 앞 판의 값을 그대로 옮겼다
+        rows = s.scalars(sa.select(models.FieldValueRow).order_by(models.FieldValueRow.name)).all()
+        by_name = {}
+        for r in rows:
+            by_name.setdefault(r.name, []).append(r.value)
+        # 판마다 두 필드(자격, 출처 값 마감), 둘째 판은 앞 판의 값을 그대로 옮겼다
+        assert {n: len(v) for n, v in by_name.items()} == {"deadline": 2, "eligibility_rules": 2}
+        assert all(v[0] == v[1] for v in by_name.values())
         assert s.scalar(sa.select(sa.func.count()).select_from(models.OutboxAlert)) == 0
         detected = s.scalars(
             sa.select(models.EventRow).where(models.EventRow.type == "change.detected")
@@ -320,3 +328,37 @@ def test_a_fixed_past_clock_still_runs_every_job(env):
     env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
     stats = env.work()
     assert (stats.done, stats.dead) == (6, 0) and env.jobs() == {"done": 6}
+
+
+def test_extract_scope_spends_llm_only_on_items_in_scope(env):
+    from noticedelta.pipeline import IMPACT, enqueue_item_impact
+
+    env.ctx.extractor = RulesFromText()
+    env.ctx.extract_scope = "subscribed"
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    env.work()
+    # 구독자가 없는 사업은 LLM을 부르지 않는다(비교까지만)
+    assert env.ctx.extractor.calls == [] and env.count(models.FieldValueRow) == 0
+    # 구독이 생기면 그 사업의 판을 첫 판부터 차례로 계산한다
+    with env.factory() as s:
+        item_id = s.scalar(sa.select(models.Item.id))
+        assert enqueue_item_impact(s, item_id, now=env.clock()) == 2
+        assert enqueue_item_impact(s, item_id, now=env.clock()) == 2  # 다시 넣어도 작업은 한 번
+        assert s.scalar(sa.select(sa.func.count()).where(models.Job.kind == IMPACT)) == 2
+        s.commit()
+    env.work()
+    assert len(env.ctx.extractor.calls) == 2 and not env.jobs().get("dead")
+
+
+def test_changed_scope_starts_at_the_first_correction(env):
+    env.ctx.extractor = RulesFromText()
+    env.ctx.extract_scope = "changed"
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    assert env.ctx.extractor.calls == []  # 정정이 없는 새 사업은 아직 뽑지 않는다
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    env.work()
+    first, second = env.ctx.extractor.calls  # 정정이 생기자 첫 판부터
+    assert second == ["eligibility_rules"] and not env.jobs().get("dead")
