@@ -38,6 +38,7 @@ from noticedelta.evaluation import (  # noqa: E402
     load_chains,
     load_labels,
     render,
+    render_by_field,
 )
 from noticedelta.grants import KEYWORDS, META_FIELDS  # noqa: E402
 from noticedelta.labeling.store import write_focus  # noqa: E402
@@ -69,6 +70,7 @@ def main() -> None:
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.REPLAY.value)
     ap.add_argument("--harness", choices=["public", "personal"], help="하네스를 켠 엔진을 더한다")
     ap.add_argument("--disagreements", action="store_true")
+    ap.add_argument("--labeler", default="me", help="이 이름으로 단 라벨로 채점한다 (예: claude)")
     ap.add_argument("--focus-out", type=Path, help="라벨 화면 순서 파일을 쓴다 (label.py --focus)")
     ap.add_argument("--provider", choices=["anthropic", "pickle"], help="기본은 .env의 공급자")
     ap.add_argument("--model", help="기본은 공급자의 기본 모델(.env의 PICKLE_MODEL 등)")
@@ -124,7 +126,7 @@ def main() -> None:
 
     with factory() as s:
         chains = load_chains(s, split=None if args.split == "all" else args.split, meta=api_meta)
-        labels = load_labels(s)
+        labels = load_labels(s, labeler=args.labeler)
     events = sum(len(c.events) for c in chains)
     labeled = len({e for e, _ in labels} & {ev.event_id for c in chains for ev in c.events})
     print(
@@ -132,6 +134,9 @@ def main() -> None:
     )
     rows = evaluate(chains, methods, labels)
     print(render(rows, input_sizes(chains)))
+    if labeled:
+        print(f"\n필드별 (라벨: {args.labeler}):\n")
+        print(render_by_field(rows, labels))
     if mode is Mode.PLAN:
         n, t = sum(r.planned_calls for r in rows), sum(r.planned_tokens for r in rows)
         print(f"\n미리 세기 합계: 보낼 호출 {n}개, 입력 토큰 어림 {t:,} (토큰/글자 {ratio:.3f})")

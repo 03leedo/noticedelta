@@ -194,3 +194,49 @@ def test_focus_order_and_save_then_next(env, tmp_path):
     assert client.post("/e/PV12?round=1", data=form).headers["location"] == "/e/PV52?round=1"
     assert client.post("/e/PV52?round=1", data=form).headers["location"] == "/"  # 다 했으면 목록
     assert client.post("/e/PV02?round=1", data=form).headers["location"] == "/"  # 순서 밖은 그대로
+
+
+def test_check_sample_and_agreement_with_another_labeler(env):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from noticedelta.labeling.app import create_label_app
+    from noticedelta.labeling.store import agreement_between, check_sample
+
+    factory, store = env
+    fields = ("deadline", "amount", "eligibility_rules", "required_documents", "contact")
+    with factory() as s:
+        for ref in events(s, "claude"):
+            rows = {f: {"status": "changed" if f == "deadline" else "unchanged"} for f in fields}
+            rows["deadline"]["after"] = "2026-11-14"
+            save_labels(s, ref, round=1, labeler="claude", rows=rows, now=T0)
+        s.commit()
+        sample = check_sample(s, "claude")
+        assert len(sample) == 3 and sample == check_sample(
+            s, "claude"
+        )  # 10건의 30%, 다시 뽑아도 같다
+        assert check_sample(s, "nobody") == []
+
+    client = TestClient(
+        create_label_app(
+            factory, store, now=lambda: T0, focus=[(v, "check") for v in sample], peer="claude"
+        ),
+        follow_redirects=False,
+    )
+    page = client.get(f"/e/{sample[0]}?round=1").text
+    assert (
+        'value="2026-11-14"' not in page and "checked" not in page
+    )  # 다른 라벨러의 답은 안 보인다
+    assert "둘 다 단 정정이 아직 없습니다" in client.get("/agreement").text
+
+    form = {f"{f}.status": "unchanged" for f in fields}
+    form["deadline.status"] = "changed"
+    client.post(f"/e/{sample[0]}?round=1", data=form)
+    form["amount.status"] = "changed"  # 하나는 다르게
+    client.post(f"/e/{sample[1]}?round=1", data=form)
+    with factory() as s:
+        b = agreement_between(s, "me", "claude")
+    assert b.agreement.pairs == 10 and b.agreement.agree == 0.9
+    assert b.differ == [(sample[1], "amount", "changed", "unchanged")]
+    page = client.get("/agreement").text
+    assert "me 대 claude" in page and "90.0%" in page and "상태가 다른 곳 1건" in page

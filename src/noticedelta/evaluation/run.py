@@ -163,3 +163,25 @@ def render(rows: Sequence[Row], sizes: Sequence[Mapping[str, int]] = ()) -> str:
                 f"| {sum(xs) / max(sum(b2), 1):.1%} | {statistics.median(ratios):.1%} |"
             )
     return "\n".join(lines)
+
+
+def render_by_field(rows: Sequence[Row], labels: Mapping[tuple[str, str], Label]) -> str:
+    """방식×필드로 맞힘·놓침·가짜 알림. 가짜 알림 가운데 '문구만 바뀜'을 바뀌었다고 한 것은 따로 센다."""
+    fields = sorted({f for _, f in labels})
+    head = "| 방식 | 필드 | 실제 바뀜 | 맞힘 | 놓침 | 가짜 알림 | 그중 문구만 바뀜 |\n|---|---|---|---|---|---|---|"
+    lines = [head]
+    for row in rows:
+        for name in fields:
+            tp = fn = fp = fp_wording = 0
+            for (event_id, f), label in labels.items():
+                said = row.predictions.get(event_id)
+                if f != name or said is None:
+                    continue
+                if label.status == "changed":
+                    tp += name in said
+                    fn += name not in said
+                elif name in said:
+                    fp += 1
+                    fp_wording += label.status == "wording_only"
+            lines.append(f"| {row.name} | {name} | {tp + fn} | {tp} | {fn} | {fp} | {fp_wording} |")
+    return "\n".join(lines)

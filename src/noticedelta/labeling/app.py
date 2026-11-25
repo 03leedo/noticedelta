@@ -30,6 +30,7 @@ from noticedelta.labeling.store import (
     STATUSES,
     VISIBLE,
     agreement,
+    agreement_between,
     event_view,
     events,
     save_labels,
@@ -53,8 +54,13 @@ def create_label_app(
     labeler: str = "me",
     now: Callable[[], datetime] = _now,
     focus: Sequence[tuple[str, str]] = (),
+    peer: str | None = None,
 ) -> FastAPI:
-    """focus: [(이후 버전 ID, 묶음)]. 이 순서로 먼저 보이고, 1차를 저장하면 다음 것으로 넘어간다."""
+    """focus: [(이후 버전 ID, 묶음)]. 이 순서로 먼저 보이고, 1차를 저장하면 다음 것으로 넘어간다.
+
+    peer: 비교할 다른 라벨러(예: "claude"). 일치도 화면에 나와 peer의 1차 라벨 비교가 더 나온다.
+    peer의 답은 라벨 화면에 보이지 않는다(저장된 값은 labeler가 같은 것만 다시 채운다).
+    """
     app = FastAPI(title="NoticeDelta 라벨", docs_url=None, redoc_url=None, openapi_url=None)
     env = Environment(
         loader=FileSystemLoader([HERE / "templates", WEB_TEMPLATES]),
@@ -155,7 +161,10 @@ def create_label_app(
     def agree(request: Request):
         with session_factory() as s:
             a = agreement(s, labeler)
-        return templates.TemplateResponse(request, "label_agreement.html", {**common, "a": a})
+            between = agreement_between(s, labeler, peer) if peer else None
+            titles = {e.to_version.id: e.title for e in events(s, labeler)} if between else {}
+        ctx = {**common, "a": a, "peer": peer, "between": between, "titles": titles, "me": labeler}
+        return templates.TemplateResponse(request, "label_agreement.html", ctx)
 
     @app.get("/blob/{key}")
     def blob(key: str, name: str = "attachment"):

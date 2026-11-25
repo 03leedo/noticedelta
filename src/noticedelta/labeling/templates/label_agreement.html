@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block title %}일치도 · NoticeDelta{% endblock %}
 {% block body %}
-<h1>1차·2차 일치도</h1>
+<h1>일치도</h1>
 <p class="muted"><a href="/">목록</a></p>
+
+<h2>같은 사람의 1차·2차</h2>
 {% if a.pairs %}
 <article class="card">
   <p>비교한 (정정, 필드) 쌍: <b>{{ a.pairs }}</b></p>
@@ -11,5 +13,28 @@
 </article>
 {% else %}
 <p class="muted">2차 라벨이 아직 없습니다.</p>
+{% endif %}
+
+{% if peer %}
+<h2>{{ me }} 대 {{ peer }} (1차)</h2>
+{% set b = between.agreement %}
+{% if b.pairs %}
+<article class="card">
+  <p>둘 다 단 (정정, 필드) 쌍: <b>{{ b.pairs }}</b></p>
+  <p>상태가 같은 비율: <b>{{ "%.1f" | format(b.agree * 100) }}%</b></p>
+  <p>Cohen's kappa: <b>{{ "%.2f" | format(b.kappa) if b.kappa is not none else "계산 불가" }}</b> <span class="muted">(0.8 이상이면 매우 좋음, 0.6~0.8 좋음)</span></p>
+</article>
+{% if between.differ %}
+<h3>상태가 다른 곳 {{ between.differ | length }}건</h3>
+<table class="diff" style="width:100%">
+  <tr><th>정정</th><th>필드</th><th>{{ me }}</th><th>{{ peer }}</th></tr>
+  {% for v, f, x, y in between.differ %}
+  <tr><td><a href="/e/{{ v }}?round=1">{{ titles.get(v, v) }}</a></td><td>{{ FIELD_NAMES[f] }}</td><td>{{ STATUSES[x] }}</td><td>{{ STATUSES[y] }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% else %}
+<p class="muted">둘 다 단 정정이 아직 없습니다. 목록의 확인 표본부터 다세요.</p>
+{% endif %}
 {% endif %}
 {% endblock %}

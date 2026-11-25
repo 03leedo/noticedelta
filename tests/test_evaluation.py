@@ -334,3 +334,23 @@ def test_over_budget_stops_only_that_program():
     m.fields = {}
     out = m.step(SimpleNamespace(change=SimpleNamespace(segments=[SimpleNamespace(text="x")])))
     assert out.changed is None and out.note == OVER_BUDGET
+
+
+def test_render_by_field_counts_hits_misses_and_wording_false_alerts():
+    from noticedelta.evaluation import Label, Row, Score, render_by_field
+
+    labels = {
+        ("e1", "deadline"): Label("changed", "api_meta"),
+        ("e2", "deadline"): Label("changed", "api_meta"),
+        ("e1", "contact"): Label("wording_only", "api_meta"),
+        ("e2", "contact"): Label("unchanged"),
+        ("e3", "deadline"): Label("changed"),  # 판단하지 못한 이벤트는 세지 않는다
+    }
+    row = Row(
+        "엔진", 3, 2, 0, 0, 0, 0, 0, 0,
+        {"e1": {"deadline", "contact"}, "e2": {"contact"}, "e3": None},
+        Score(), Score(), Score(),
+    )  # fmt: skip
+    table = render_by_field([row], labels)
+    assert "| 엔진 | contact | 0 | 0 | 0 | 2 | 1 |" in table
+    assert "| 엔진 | deadline | 2 | 1 | 1 | 0 | 0 |" in table
