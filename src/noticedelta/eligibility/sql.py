@@ -231,14 +231,18 @@ def bulk_judge(
     app_id: str,
     app_version: int,
     min_confidence: float = 0.7,
+    profiles: sa.Table | None = None,
 ) -> int:
-    """profile 전체를 SQL 한 문장으로 판정해 judgment에 쌓는다 (PostgreSQL). 넣은 행 수를 준다.
+    """사람 전체를 SQL 한 문장으로 판정해 judgment에 쌓는다 (PostgreSQL). 넣은 행 수를 준다.
+
+    profiles: (person_id, attributes) 표. 운영에서는 금고의 임시 표(vault.judge_view: 판정에 동의한
+    사람의 동의한 키만)를 준다. 없으면 profile 표(가상 프로필 시험용).
 
     같은 사용자·사업 버전·규칙 해시의 판정이 이미 있으면 건너뛴다(다시 돌려도 같다).
     """
     from noticedelta.db.models import JudgmentRow, Profile  # 순환 import를 피한다
 
-    p = Profile.__table__
+    p = profiles if profiles is not None else Profile.__table__
     attrs = p.c.attributes
 
     # 속성 타입은 규칙 값에서 알아낸다(검사를 거친 규칙이라 속성 사전과 같다)

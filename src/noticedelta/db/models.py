@@ -450,6 +450,62 @@ class EventRow(Base):
     payload: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
+class VaultValueRow(Base):
+    """금고의 속성 값 (platform-services 4.2). 사람 단위로 한 번 두고, 값은 애플리케이션 단에서 암호화한다."""
+
+    __tablename__ = "vault_value"
+    person_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    key: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    ciphertext: Mapped[str] = mapped_column(sa.Text)
+    source: Mapped[str] = mapped_column(sa.String(16))  # input / derived / document
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class ConsentRow(Base):
+    """동의: 사람이 어느 앱에 어느 용도로 어느 키를 쓰게 했나. 철회해도 행은 남긴다(언제 무엇을)."""
+
+    __tablename__ = "consent"
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
+    person_id: Mapped[str] = mapped_column(sa.String(32), index=True)
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    purpose: Mapped[str] = mapped_column(sa.String(16))  # judge / notify / assist / research
+    keys: Mapped[list] = mapped_column(JSONType, default=list)
+    text_version: Mapped[str | None] = mapped_column(sa.String(32))
+    granted_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class VaultGrantRow(Base):
+    """허가: 동의 범위 안에서 줄인 키 목록을 가진 쪽(세션·플랫폼 부품)에 잠깐 준다(4.4)."""
+
+    __tablename__ = "vault_grant"
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True, default=new_id)
+    person_id: Mapped[str] = mapped_column(sa.String(32), index=True)
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    purpose: Mapped[str] = mapped_column(sa.String(16))
+    keys: Mapped[list] = mapped_column(JSONType, default=list)
+    holder: Mapped[str] = mapped_column(sa.String(64))  # svc:engine, session:<id> …
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    uses_left: Mapped[int | None] = mapped_column(sa.Integer)  # None이면 만료까지
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class VaultAccessRow(Base):
+    """금고에서 꺼낸 기록: 누가, 어느 용도로, 어떤 키를(값은 아님)."""
+
+    __tablename__ = "vault_access"
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    grant_id: Mapped[str] = mapped_column(sa.String(32), index=True)
+    person_id: Mapped[str] = mapped_column(sa.String(32), index=True)
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    purpose: Mapped[str] = mapped_column(sa.String(16))
+    keys: Mapped[list] = mapped_column(JSONType, default=list)
+    holder: Mapped[str] = mapped_column(sa.String(64))
+    at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+
+
 class TraceRow(Base):
     """비행 기록기의 묶음 하나 (platform-services 3.3, flight.py). 수집 실행 하나가 묶음 하나다.
 

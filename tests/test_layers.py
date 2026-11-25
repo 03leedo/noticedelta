@@ -44,6 +44,7 @@ LAYERS: dict[str, list[str]] = {
         "text",
         "tooling",  # 도구와 능력 속성, 등록부
         "usage",  # 에이전트 사용 기록과 피드백
+        "vault",  # 개인정보 금고: 암호화한 값, 동의, 허가, 접근 기록
     ],
     "엔진": [
         "app_registry",  # 앱 정의의 원본(DB): 판 넣기, 켜기

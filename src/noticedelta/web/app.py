@@ -29,7 +29,8 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
-from noticedelta import people
+from noticedelta import people, vault
+from noticedelta.config import ROOT
 from noticedelta.db.models import Profile
 from noticedelta.grants import SIDO
 from noticedelta.metrics import collect, prometheus_text
@@ -81,7 +82,10 @@ def create_app(
     metrics_token: str | None = None,
     contact: str | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    cipher: vault.Cipher | None = None,
 ) -> FastAPI:
+    """cipher: 개인정보 금고의 열쇠. 없으면 NOTICEDELTA_VAULT_KEY, 그것도 없으면 개발용 열쇠 파일."""
+    cipher = cipher or vault.load_cipher(ROOT / "data" / "vault.key")
     app = FastAPI(title="NoticeDelta", docs_url=None, redoc_url=None, openapi_url=None)
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html"]))
     env.filters["human"] = humanize
@@ -96,6 +100,16 @@ def create_app(
         "CONSENT": consent,
         "CONTACT": contact,
     }
+
+    def attrs_of(session: Session, person_id: str) -> dict[str, Any]:
+        """본인의 링크로 들어왔으니 자기 값을 모두 본다(금고의 self 허가, 접근 기록이 남는다)."""
+        keys = vault.keys_of(session, person_id)
+        if not keys:
+            return {}
+        g = vault.issue(
+            session, person_id, consent.APP.id, vault.SELF, keys, holder="self:web", now=now()
+        )
+        return vault.read(session, cipher, g.id, now=now())
 
     def load(session: Session, token: str) -> Profile:
         person_id = people.resolve(session, token, at=now())
@@ -127,8 +141,10 @@ def create_app(
             return templates.TemplateResponse(request, "form.html", ctx, status_code=400)
         with session_factory() as s:
             person, token = people.create(s, at=now())
-            profile = Profile(person_id=person.id, attributes=attrs)
-            consent.record(s, profile, research_ok=research_ok, at=now())
+            # 값은 금고에 암호화해 둔다. 프로필 행에는 동의 기록만 남는다
+            profile = Profile(person_id=person.id, attributes={})
+            vault.put(s, cipher, person.id, attrs, source="input", now=now())
+            consent.record(s, profile, research_ok=research_ok, at=now(), keys=list(attrs))
             s.add(profile)
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
@@ -137,16 +153,20 @@ def create_app(
     def mine(request: Request, token: str, group: str = "eligible"):
         with session_factory() as s:
             profile = load(s, token)
-            data = my_programs(s, dict(profile.attributes), today())
+            attrs = attrs_of(s, profile.person_id)
+            s.commit()  # 접근 기록
+            data = my_programs(s, attrs, today())
         group = group if group in GROUPS else "eligible"
-        ctx = {**common, "token": token, "mine": data, "group": group, "attrs": profile.attributes}
+        ctx = {**common, "token": token, "mine": data, "group": group, "attrs": attrs}
         return templates.TemplateResponse(request, "mine.html", ctx)
 
     @app.get("/p/{token}/list", response_class=HTMLResponse)
     def mine_list(request: Request, token: str, group: str = "eligible"):
         with session_factory() as s:
             profile = load(s, token)
-            data = my_programs(s, dict(profile.attributes), today())
+            attrs = attrs_of(s, profile.person_id)
+            s.commit()
+            data = my_programs(s, attrs, today())
         group = group if group in GROUPS else "eligible"
         ctx = {**common, "token": token, "mine": data, "group": group}
         return templates.TemplateResponse(request, "_list.html", ctx)
@@ -155,7 +175,8 @@ def create_app(
     def edit(request: Request, token: str):
         with session_factory() as s:
             profile = load(s, token)
-            attrs, research_ok = dict(profile.attributes), profile.research_ok
+            attrs, research_ok = attrs_of(s, profile.person_id), profile.research_ok
+            s.commit()
         ctx = {**common, "attrs": attrs, "token": token, "research_ok": research_ok}
         return templates.TemplateResponse(request, "form.html", ctx)
 
@@ -164,7 +185,11 @@ def create_app(
         form = dict(await request.form())
         with session_factory() as s:
             profile = load(s, token)
-            profile.attributes = attributes_from_form(form)
+            new = attributes_from_form(form)
+            gone = {k: None for k in vault.keys_of(s, profile.person_id) - set(new)}
+            vault.put(s, cipher, profile.person_id, {**gone, **new}, source="input", now=now())
+            profile.attributes = {}  # 옮기기 전의 옛 값이 남아 있었다면 지운다(금고가 원본)
+            consent.update_keys(s, profile, list(new), at=now())
             consent.set_research(s, profile, form.get("research_ok") == "on", at=now())
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
@@ -179,7 +204,7 @@ def create_app(
     def delete(token: str):
         with session_factory() as s:
             person_id = people.resolve(s, token)
-            if person_id is None or not consent.delete_user(s, person_id):
+            if person_id is None or not consent.delete_user(s, person_id, at=now()):
                 raise HTTPException(404, "없는 링크입니다")
             people.forget(s, person_id, at=now())
             s.commit()
@@ -231,7 +256,9 @@ def create_app(
     def ics(token: str):
         with session_factory() as s:
             profile = load(s, token)
-            data = my_programs(s, dict(profile.attributes), today())
+            attrs = attrs_of(s, profile.person_id)
+            s.commit()
+            data = my_programs(s, attrs, today())
         return Response(calendar(data), media_type="text/calendar; charset=utf-8")
 
     return app
