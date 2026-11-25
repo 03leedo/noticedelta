@@ -110,7 +110,7 @@ def _unloaded_runs(session: Session, root: Path) -> list[str]:
     return [p.stem for p in sorted((root / "runs").glob("*.json")) if p.stem not in loaded]
 
 
-def enqueue_load(session: Session, root: Path) -> Job | None:
+def enqueue_load(session: Session, root: Path, now: datetime | None = None) -> Job | None:
     """아직 넣지 않은 실행 중 가장 이른 것의 적재 작업을 등록한다. 수집이 끝날 때 부른다."""
     pending = _unloaded_runs(session, root)
     if not pending:
@@ -122,10 +122,13 @@ def enqueue_load(session: Session, root: Path) -> Job | None:
         dedupe_key=f"{LOAD}:{pending[0]}",
         concurrency_key=LOADER_KEY,
         priority=10,
+        now=now,
     )
 
 
-def _enqueue_parse(session: Session, pv_id: str, trace: Trace | None = None) -> None:
+def _enqueue_parse(
+    session: Session, pv_id: str, trace: Trace | None = None, now: datetime | None = None
+) -> None:
     pv = session.get(ItemVersion, pv_id)
     blobs = session.scalar(
         sa.select(sa.func.count()).where(
@@ -140,6 +143,7 @@ def _enqueue_parse(session: Session, pv_id: str, trace: Trace | None = None) -> 
         dedupe_key=f"{PARSE}:{pv_id}:{blobs}",
         concurrency_key=f"item:{pv.item_id}",
         priority=50,
+        now=now,
     )
 
 
@@ -218,10 +222,12 @@ def handle_load(ctx: Context) -> Handler:
                 trace=trace,
                 now=ctx.now(),
             )
-            _enqueue_parse(session, pv_id, Trace(trace.trace, v.id if v else trace.cause))
+            _enqueue_parse(
+                session, pv_id, Trace(trace.trace, v.id if v else trace.cause), ctx.now()
+            )
         for pv_id in summary.refilled_version_ids:
-            _enqueue_parse(session, pv_id, trace)
-        enqueue_load(session, ctx.root)  # 남은 실행이 있으면 다음 것
+            _enqueue_parse(session, pv_id, trace, ctx.now())
+        enqueue_load(session, ctx.root, ctx.now())  # 남은 실행이 있으면 다음 것
 
     return handle
 
@@ -263,6 +269,7 @@ def handle_parse(ctx: Context) -> Handler:
             dedupe_key=f"{DIFF}:{job.dedupe_key}:{MATCHER_VERSION}",
             concurrency_key=f"item:{pv.item_id}",
             priority=60,
+            now=ctx.now(),
         )
 
     return handle
@@ -297,7 +304,9 @@ def handle_diff(ctx: Context) -> Handler:
                 now=ctx.now(),
             )
             if ctx.extractor is not None:
-                _enqueue_impact(session, item_id, r.event.to_version_id, trace.carry(env))
+                _enqueue_impact(
+                    session, item_id, r.event.to_version_id, trace.carry(env), ctx.now()
+                )
         waiting = next((r for r in results if r.status == "waiting"), None)
         if waiting is None:
             return
@@ -345,7 +354,11 @@ def _impact_key(pv_id: str) -> str:
 
 
 def _enqueue_impact(
-    session: Session, item_id: str, pv_id: str, carry: dict[str, str] | None = None
+    session: Session,
+    item_id: str,
+    pv_id: str,
+    carry: dict[str, str] | None = None,
+    now: datetime | None = None,
 ) -> None:
     enqueue(
         session,
@@ -354,6 +367,7 @@ def _enqueue_impact(
         dedupe_key=_impact_key(pv_id),
         concurrency_key=f"item:{item_id}",
         priority=70,
+        now=now,
     )
 
 
