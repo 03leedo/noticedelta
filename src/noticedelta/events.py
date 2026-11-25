@@ -125,6 +125,10 @@ class ChangeDetected(_Payload):
     removed: int
     modified: int
     matcher: str
+    keys: list[str] | None = (
+        None  # 원본 항목에서 바뀐 키(모르면 None). 앱은 읽는 키와 겹칠 때만 받는다
+    )
+    attachments: bool = False  # 첨부에서 온 조각이 바뀌었나
 
 
 @event_type("field.changed", 1, "필드 값이 진짜로 바뀌었다(타입별 비교)")

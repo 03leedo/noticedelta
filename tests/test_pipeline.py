@@ -275,3 +275,39 @@ def test_backfill_registers_versions_loaded_before_the_queue(env):
         s.commit()
     env.work()
     assert env.count(models.ChangeEvent) == 1
+
+
+def test_change_only_in_keys_the_app_does_not_read_carries_values_without_llm(env):
+    """플랫폼 3번(app-spec 9장): 출처 단위의 판 하나를 앱마다 자기가 읽는 키로 거른다."""
+    from noticedelta.grants import APP
+
+    narrow = [
+        u.model_copy(update={"read": ["pblancNm"], "attachments": False})
+        if u.id == "bizinfo"
+        else u
+        for u in APP.sources
+    ]
+    env.ctx.app = APP.model_copy(update={"sources": narrow})  # 제목만 읽는 앱
+    env.ctx.extractor = RulesFromText()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    subscribe_eligible_user(env)
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))  # 본문과 첨부만 바뀐다
+    env.work()
+
+    assert len(env.ctx.extractor.calls) == 1  # 첫 판만 뽑았다. 둘째 판에는 LLM을 부르지 않았다
+    assert env.jobs().get("done", 0) and not env.jobs().get("dead")
+    with env.factory() as s:
+        ev = s.scalars(
+            sa.select(models.ChangeEvent).where(models.ChangeEvent.from_version_id.is_not(None))
+        ).one()
+        c = ev.changed_lineages
+        assert c["source"] == "bizinfo" and c["attachments"] is True
+        assert "bsnsSumryCn" in c["keys"] and "pblancNm" not in c["keys"]
+        rows = s.scalars(sa.select(models.FieldValueRow)).all()
+        assert len(rows) == 2 and rows[0].value == rows[1].value  # 앞 판의 값을 그대로 옮겼다
+        assert s.scalar(sa.select(sa.func.count()).select_from(models.OutboxAlert)) == 0
+        detected = s.scalars(
+            sa.select(models.EventRow).where(models.EventRow.type == "change.detected")
+        ).all()
+        assert any(e.payload.get("keys") for e in detected)  # 봉투에도 바뀐 키가 남는다

@@ -110,3 +110,15 @@ def test_app_may_read_only_what_the_catalog_offers():
 def test_sheet_schema_is_published():
     path = Path(__file__).resolve().parents[1] / "docs" / "source-schema.json"
     assert json.loads(path.read_text(encoding="utf-8")) == SourceSheet.model_json_schema()
+
+
+def test_changed_keys_follow_the_item_version_rule():
+    """항목 판을 가르는 기준과 같다: 무시하는 키·주소 키는 빼고, 표기 차이·빈 값은 같게 본다."""
+    from noticedelta.sources import CATALOG
+
+    sheet = CATALOG["bizinfo"]
+    ignored = sheet.ignore.keys[0]
+    url_key = sheet.ignore.url_keys[0]
+    old = {"pblancNm": "모집 공고", "trgetNm": "", ignored: "1", url_key: "a", "hashtags": "x"}
+    new = {"pblancNm": "모집  공고", ignored: "2", url_key: "b", "hashtags": "y", "refrncNm": "02"}
+    assert sheet.changed_keys(old, new) == {"hashtags", "refrncNm"}

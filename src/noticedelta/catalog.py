@@ -11,11 +11,14 @@ file_drop)는 4장의 등록 흐름이 생길 때 연다.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from noticedelta.text import canonical_text
 
 SourceId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{1,62}$")]
 
@@ -91,6 +94,24 @@ class SourceSheet(_Strict):
     def readable_keys(self) -> set[str]:
         """앱이 읽을 수 있는 키. 무시하는 키는 읽어도 변경이 오지 않으므로 뺀다."""
         return set(self.keys) - set(self.ignore.keys)
+
+    def changed_keys(self, old: Mapping[str, Any], new: Mapping[str, Any]) -> set[str]:
+        """두 원본 항목에서 값이 바뀐 키 (app-spec 9장: 변경은 앱이 읽는 것 기준).
+
+        항목 버전을 가르는 기준(sources.base의 body_hash)과 같게 본다: 무시하는 키와 주소 키는 빼고,
+        표기만 다른 글과 빈 값·없는 키는 같은 것으로. 첨부는 주소가 아니라 받은 파일로 따로 비교한다.
+        """
+        skip = set(self.ignore.keys) | set(self.ignore.url_keys)
+        return {
+            k
+            for k in set(old) | set(new)
+            if k not in skip and _canon(old.get(k)) != _canon(new.get(k))
+        }
+
+
+def _canon(v: Any) -> Any:
+    v = canonical_text(v) if isinstance(v, str) else v
+    return None if v in (None, "") else v
 
 
 @dataclass(frozen=True)

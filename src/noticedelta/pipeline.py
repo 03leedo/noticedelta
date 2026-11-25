@@ -26,6 +26,7 @@ from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
 from noticedelta.db.models import (
     Attachment,
+    ChangeEvent,
     FieldValueRow,
     ItemVersion,
     Job,
@@ -39,7 +40,7 @@ from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
 from noticedelta.events import Ref, Trace, app_ref, emit, subscribe
 from noticedelta.events import Subscription as EventSubscription
 from noticedelta.grants import APP, MASS_IMPACT, MIN_CONFIDENCE, RULES_FIELD, candidates
-from noticedelta.history import MATCHER_VERSION, record_item, replay
+from noticedelta.history import MATCHER_VERSION, is_empty, record_item, replay
 from noticedelta.impact import (
     Extractor,
     FieldValue,
@@ -53,6 +54,7 @@ from noticedelta.names import ALERT_LABELS
 from noticedelta.notify import Channel, InboxChannel, deliver, note, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
 from noticedelta.programs import LoadSummary, load_run
+from noticedelta.sources import CATALOG
 
 LOAD, PARSE, DIFF, IMPACT, NOTIFY = "load_run", "parse", "diff", "impact", "notify"
 LOADER_KEY = "loader"  # 실행 파일은 시간 순으로 하나씩 넣는다
@@ -239,7 +241,7 @@ def handle_parse(ctx: Context) -> Handler:
 def handle_diff(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         item_id = job.payload["item_id"]
-        results = record_item(session, item_id, ctx.store)
+        results = record_item(session, item_id, ctx.store, sheets=CATALOG)
         trace = Trace.of(job.payload)
         for r in results:
             if r.status != "recorded":
@@ -255,6 +257,8 @@ def handle_diff(ctx: Context) -> Handler:
                     "removed": len(c.get("removed", [])),
                     "modified": len(c.get("modified", [])),
                     "matcher": r.event.matcher_version,
+                    "keys": c.get("keys"),
+                    "attachments": bool(c.get("attachments")),
                 },
                 producer="svc:engine",
                 key=r.event.to_version_id,
@@ -284,6 +288,23 @@ def handle_diff(ctx: Context) -> Handler:
         )
 
     return handle
+
+
+def _for_app(app: AppDefinition, event: ChangeEvent) -> bool:
+    """이 앱에게 변경인가 (app-spec 9장, platform-services 8장의 3번).
+
+    첫 판은 늘 변경이다(필드를 처음 뽑는다). 그 뒤는 조각이 바뀌었고, 바뀐 원본 키가 앱이 읽는
+    키와 겹칠 때만. 아니면 영향 계산이 LLM을 부르지 않고 앞 판의 값을 그대로 넘긴다.
+    """
+    if event.from_version_id is None:
+        return True
+    if is_empty(event):
+        return False
+    c = event.changed_lineages
+    source = c.get("source")
+    if source is None:  # 출처를 모르면(예전 기록) 받는다
+        return True
+    return app.reads_change(source, c.get("keys"), bool(c.get("attachments")))
 
 
 # --- 영향 계산 (설계 7.7) ---
@@ -350,6 +371,21 @@ def _save_fields(
         )
 
 
+def _carry_fields(session: Session, from_pv_id: str, pv: ItemVersion, app_id: str) -> None:
+    """앞 판의 필드 값을 상태(확인 필요·stale 포함)까지 그대로 이 판으로 옮긴다."""
+    rows = session.scalars(
+        sa.select(FieldValueRow).where(
+            FieldValueRow.item_version_id == from_pv_id, FieldValueRow.app_id == app_id
+        )
+    ).all()
+    skip = {"id", "item_version_id", "created_at"}
+    for r in rows:
+        cols = {
+            c.key: getattr(r, c.key) for c in FieldValueRow.__table__.columns if c.key not in skip
+        }
+        session.add(FieldValueRow(**{**cols, "item_version_id": pv.id}))
+
+
 def _latest_judgments(session: Session, item_id: str, app_id: str) -> dict[str, Judgment]:
     rows = session.scalars(
         sa.select(JudgmentRow)
@@ -380,6 +416,11 @@ def handle_impact(ctx: Context) -> Handler:
         )
         if prev != "done":
             raise TransientError(f"v{step.from_version.version_no} 영향 계산이 아직 안 끝남")
+        event = session.scalar(sa.select(ChangeEvent).where(ChangeEvent.to_version_id == pv.id))
+        if not _for_app(ctx.app, event):
+            # 이 앱이 읽지 않는 것만 바뀌었다. 다음 판이 이어 받도록 값만 옮긴다(LLM·알림 없음)
+            _carry_fields(session, step.from_version.id, pv, ctx.app.id)
+            return
 
         item_id = pv.item_id
         subs = [

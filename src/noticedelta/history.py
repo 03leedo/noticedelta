@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -15,10 +15,12 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.blobstore import BlobStore
+from noticedelta.catalog import SourceSheet
 from noticedelta.db.models import (
     Attachment,
     ChangeEvent,
     ItemVersion,
+    Notice,
     NoticeVersion,
     SegmentRow,
 )
@@ -55,12 +57,82 @@ def _event(session: Session, item_version_id: str) -> ChangeEvent | None:
     )
 
 
+def _source_and_raw(session: Session, pv: ItemVersion) -> tuple[str, dict]:
+    nv = session.get(NoticeVersion, pv.notice_version_id)
+    return session.get(Notice, nv.notice_id).source_id, dict(nv.raw or {})
+
+
+def changed_keys(
+    session: Session,
+    prev: ItemVersion | None,
+    pv: ItemVersion,
+    sheets: Mapping[str, SourceSheet],
+) -> tuple[str, list[str] | None]:
+    """(새 판의 출처, 원본 항목에서 바뀐 키). 모르면 키는 None: 첫 판, 출처가 바뀐 판(다른 출처의
+    게시물로 이어진 항목), 카탈로그에 없는 출처. 앱은 None이면 변경으로 받는다(appspec.reads_change).
+    """
+    source, raw = _source_and_raw(session, pv)
+    if prev is None or source not in sheets:
+        return source, None
+    prev_source, prev_raw = _source_and_raw(session, prev)
+    if prev_source != source:
+        return source, None
+    return source, sorted(sheets[source].changed_keys(prev_raw, raw))
+
+
+def _attachments_changed(change: ChangeSet, old: list[Segment], unknown: set[str]) -> bool:
+    """바뀐 조각 가운데 첨부에서 온 것이 있나. 읽지 못한 첨부(unknown)도 바뀌었을 수 있다고 본다."""
+    if unknown:
+        return True
+    new = {s.lineage_id: s for s in change.segments}
+    gone = {s.lineage_id: s for s in old}
+    touched = [new[i] for i in [*change.added, *change.modified] if i in new]
+    touched += [gone[i] for i in change.removed if i in gone]
+    return any(s.locator.get("source") != "body" for s in touched)
+
+
+def event_keys(
+    session: Session, ev: ChangeEvent, sheets: Mapping[str, SourceSheet]
+) -> tuple[str, list[str] | None, bool]:
+    """이벤트의 (출처, 바뀐 키, 첨부가 바뀌었나). 기록할 때 남긴 값을 쓰고, 예전 기록이면 계산한다."""
+    pv = session.get(ItemVersion, ev.to_version_id)
+    prev = session.get(ItemVersion, ev.from_version_id) if ev.from_version_id else None
+    c = ev.changed_lineages
+    if "keys" in c:
+        return _source_and_raw(session, pv)[0], c["keys"], bool(c.get("attachments"))
+    source, keys = changed_keys(session, prev, pv, sheets)
+    if c.get("unknown"):
+        return source, keys, True
+
+    def sources_of(version: ItemVersion | None, lineages: list[str]) -> list[str | None]:
+        if version is None or not lineages:
+            return []
+        locs = session.scalars(
+            sa.select(SegmentRow.locator).where(
+                SegmentRow.notice_version_id == version.notice_version_id,
+                SegmentRow.lineage_id.in_(lineages),
+            )
+        ).all()
+        return [(loc or {}).get("source") for loc in locs]
+
+    touched = sources_of(pv, [*c.get("added", []), *c.get("modified", [])])
+    touched += sources_of(prev, list(c.get("removed", [])))
+    return source, keys, any(src != "body" for src in touched)
+
+
+def is_empty(ev: ChangeEvent) -> bool:
+    """조각이 하나도 바뀌지 않은 이벤트(원본의 다른 키만 바뀐 판)."""
+    c = ev.changed_lineages
+    return not any(c.get(k) for k in ("added", "removed", "modified", "unknown"))
+
+
 def record_change(
     session: Session,
     pv: ItemVersion,
     store: BlobStore,
     *,
     new_id: Callable[[], str] | None = None,
+    sheets: Mapping[str, SourceSheet] | None = None,
 ) -> Recorded:
     """사업 버전 하나의 조각과 변경 이벤트를 남긴다. 이전 버전은 먼저 기록돼 있어야 한다.
 
@@ -115,6 +187,14 @@ def record_change(
             "modified": change.modified,
             "unknown": sorted(unknown),
             "unchanged": len(change.unchanged),
+            **(
+                dict(
+                    zip(("source", "keys"), changed_keys(session, prev, pv, sheets), strict=True),
+                    attachments=_attachments_changed(change, kept, unknown),
+                )
+                if sheets is not None
+                else {}
+            ),
         },
         matcher_version=MATCHER_VERSION,
     )

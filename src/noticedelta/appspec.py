@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
@@ -150,6 +151,21 @@ class AppDefinition(_Strict):
 
     def keyword_patterns(self) -> dict[str, str]:
         return {n: "|".join(f.keywords) for n, f in self.engine.fields.items() if f.keywords}
+
+    def reads_change(
+        self, source_id: str, keys: Iterable[str] | None, attachments: bool = False
+    ) -> bool:
+        """이 앱에게 변경인가 (app-spec 9장). 출처 단위의 판 하나를 여러 앱이 나눠 읽는다.
+
+        바뀐 키(`keys`)가 앱이 읽는 키와 겹치거나, 첨부를 읽는 앱이고 첨부가 바뀌었으면 변경이다.
+        어떤 키가 바뀌었는지 모르면(`None`, 예전 기록·출처가 바뀐 판) 받는다. 놓치는 것보다 낫다.
+        """
+        use = next((u for u in self.sources if u.id == source_id), None)
+        if use is None:
+            return False
+        if attachments and use.attachments:
+            return True
+        return keys is None or not set(use.read).isdisjoint(keys)
 
     def meta_fields(self) -> tuple[str, ...]:
         """출처가 구조화해 준 값에서 읽는 필드."""
