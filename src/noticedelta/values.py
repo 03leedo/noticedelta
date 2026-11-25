@@ -245,6 +245,21 @@ def coerce_shape(value_type: ValueType, v: Any) -> Any | None:
     return v
 
 
+_TIME = re.compile(r"\d{1,2}:\d{2}")
+
+
+def same_value(value_type: ValueType, a: Any, b: Any, *, default_year: int | None = None) -> bool:
+    """values_equal과 같되, 날짜·시각은 한쪽에 시각이 없으면 날짜만 비교한다.
+
+    출처 값(API 접수 기간)은 날짜만 주고 LLM 값은 시각까지 준다. 같은 날을 바뀐 것으로 보지 않게.
+    """
+    if value_type == "datetime" and not (_TIME.search(str(a)) and _TIME.search(str(b))):
+        da, db = _as_datetime(a, default_year), _as_datetime(b, default_year)
+        if da is not None and db is not None:
+            return da.date() == db.date()
+    return values_equal(value_type, a, b, default_year=default_year)
+
+
 def values_equal(value_type: ValueType, a: Any, b: Any, *, default_year: int | None = None) -> bool:
     """두 값이 '진짜로' 같은지. 문구만 다르고 값이 같으면 True."""
     if value_type == "datetime":

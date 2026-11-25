@@ -33,6 +33,8 @@ TEMPLATE_VERSION = TEMPLATE_V2  # 새로 부르는 추출의 기본 틀
 TEMPLATES = (TEMPLATE_V1, TEMPLATE_V2)
 LOW_CONFIDENCE = 0.3
 DEFAULT_HEADING = "문서 조각"
+# 앱 제목을 분야로 쓰면 제목만 고쳐도 녹화본이 모두 무효가 된다. 분야는 engine.prompt.domain으로 정한다
+DEFAULT_DOMAIN = "주어진 문서"
 
 _LINE_FORMAT = {
     TEMPLATE_V1: "입력의 각 줄은 `[조각ID] 원문`이다. 요청된 필드만 뽑고, 값마다 근거가 된 조각ID를 sources에 적는다.",
@@ -57,7 +59,9 @@ def system_prompt(
         "원문에 근거가 없는 필드는 출력하지 않는다. 추측하지 않는다.",
         "value_json에는 값을 JSON으로 직렬화한 문자열을 넣는다.",
     ]
-    if attributes is not None:
+    if attributes is None:  # 규칙 필드가 없는 앱: 참고 줄은 일반 지시 뒤에
+        lines += [f"- {n}" for n in notes]
+    else:
         lines += [
             "",
             "자격 규칙 형식:",
@@ -87,7 +91,7 @@ class ExtractSpec:
 def spec_for_app(app: AppDefinition) -> ExtractSpec:
     """앱 정의만으로 만드는 추출 명세. 분야·머리말·참고 줄은 engine.prompt에서, 없으면 앱 제목으로."""
     prompt = app.engine.prompt
-    domain = prompt.domain if prompt else app.title
+    domain = prompt.domain if prompt else DEFAULT_DOMAIN
     notes = prompt.notes if prompt else []
     heading = prompt.heading if prompt else DEFAULT_HEADING
     attributes = app.rule_attributes() if app.subjects.rules_field else None

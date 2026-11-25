@@ -183,3 +183,22 @@ def test_postgres_same_key_is_not_claimed_twice_concurrently():
         assert claim(s2, "w2", now=T0) is None  # 커밋 뒤에는 running 행이 막는다
     finally:
         s1.rollback(), s2.rollback(), s1.close(), s2.close()
+
+
+def test_deferred_jobs_keep_their_attempts_and_wait():
+    from datetime import timedelta
+
+    from noticedelta.jobs import Deferred, claim, enqueue, fail
+
+    engine = make_engine("sqlite://")
+    models.Base.metadata.create_all(engine)
+    now = datetime(2026, 11, 25, 9, tzinfo=UTC)
+    with sessionmaker(engine)() as s:
+        enqueue(s, "impact", {}, dedupe_key="d1", now=now)
+        s.commit()
+        for _ in range(5):  # 한도에 몇 번을 걸려도 시도 횟수를 쓰지 않는다
+            job = claim(s, "w", now=now)
+            fail(s, job, Deferred("한도", delay=timedelta(hours=6)), now=now)
+            assert (job.status, job.attempts) == ("retry", 0)
+            assert claim(s, "w", now=now) is None  # 미룬 동안은 꺼내지 않는다
+            now += timedelta(hours=6)

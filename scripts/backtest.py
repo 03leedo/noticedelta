@@ -109,7 +109,7 @@ def main() -> None:
     elif args.alert_fields:
         draft = draft_with_alert_fields(APP, [f for f in args.alert_fields.split(",") if f])
     if draft is not None:
-        if not same_extraction(APP, draft) and not args.plan:
+        if not same_extraction(APP, draft, spec_for) and not args.plan:
             print(
                 "초안의 필드 정의가 달라 추출 요청이 바뀝니다. 녹화본이 없는 사업은 "
                 "'녹화본 없음'으로 셉니다. --plan으로 비용을 보세요.\n"

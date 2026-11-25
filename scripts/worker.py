@@ -49,13 +49,14 @@ from noticedelta.pipeline import (  # noqa: E402
     enqueue_backfill,
     enqueue_item_impact,
     enqueue_load,
+    enqueue_scope_backlog,
     flight_config,
     handlers,
 )
 from noticedelta.vault import load_cipher  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
-DAILY_TOKENS = int(os.environ.get("NOTICEDELTA_LLM_DAILY_TOKENS", "200000"))
+DAILY_ENV = "NOTICEDELTA_LLM_DAILY_TOKENS"  # .env에서 읽으므로 load_env() 뒤에 읽는다
 
 
 def _today_kst() -> datetime:
@@ -85,7 +86,10 @@ def main() -> None:
     ap.add_argument("--extract", action="store_true", help="영향 계산(LLM 추출)까지 돌린다")
     ap.add_argument("--scope", choices=["subscribed", "changed", "all"], default="subscribed")
     ap.add_argument(
-        "--daily-tokens", type=int, default=DAILY_TOKENS, help="하루에 보낼 LLM 토큰 한도"
+        "--daily-tokens",
+        type=int,
+        default=None,
+        help=f"하루에 보낼 LLM 토큰 한도(기본 {DAILY_ENV} 또는 200000)",
     )
     ap.add_argument(
         "--extract-items", type=int, default=0, help="최근 정정된 사업 n개를 첫 판부터 추출"
@@ -113,42 +117,59 @@ def main() -> None:
     parser = DockerParser()
     ctx = Context(root=root, store=LocalBlobStore(root / "blobs"), parser=parser)
     ctx.vault = load_cipher(ROOT / "data" / "vault.key")  # 판정 값은 금고에서(동의 안에서)
-    budget = None
+    budget = gateway = usage_trace = None
     if args.extract:
         choice = choose()
+        daily = (
+            args.daily_tokens
+            if args.daily_tokens is not None
+            else int(os.environ.get(DAILY_ENV, "200000"))
+        )
+        now = datetime.now(UTC)
         with factory() as s:
             spent = flight.spent_tokens(s, _today_kst())
-        budget = Budget(max(args.daily_tokens - spent, 0))
+        budget = Budget(max(daily - spent, 0))
         gateway = Gateway(
             make_provider(choice),
             FileCassetteStore(ROOT / "data" / "cassettes"),
             Mode.REPLAY_OR_LIVE,
             budget=budget,
-            observer=flight.llm_observer,  # 호출마다 묶음에 기록 → 하루 한도를 센다
+            observer=flight.llm_observer,  # 묶음별 녹화본 색인(키·출력 해시)
         )
         ctx.extractor = LLMExtractor(gateway, model=choice.model, spec=spec_for(ctx.app))
         ctx.extractor_name = f"{choice.name}/{choice.model}"
         ctx.extract_scope = args.scope
         print(
             f"추출: {ctx.extractor_name} · 범위 {args.scope} · 오늘 쓴 토큰 {spent:,} / "
-            f"한도 {args.daily_tokens:,} · 남은 {budget.limit:,}"
+            f"한도 {daily:,} · 남은 {budget.limit:,}"
         )
-        if args.extract_items:
-            with factory() as s:
-                # 운영자가 넣은 일도 묶음을 싣는다(LLM 호출이 기록되어 하루 한도에 들어간다)
-                tid = new_ulid()
-                flight.open_trace(
-                    s,
-                    tid,
-                    kind="extract_items",
-                    started_at=datetime.now(UTC),
-                    config=flight_config(ctx),
-                    app=f"app:{ctx.app.id}@{ctx.app.version}",
+        with factory() as s:
+            # 이번 실행의 묶음: 하루 한도에 드는 사용량(llm_usage)을 여기에 남긴다
+            usage_trace = new_ulid()
+            app_ref = f"app:{ctx.app.id}@{ctx.app.version}"
+            flight.open_trace(
+                s,
+                usage_trace,
+                kind="worker_run",
+                started_at=now,
+                config=flight_config(ctx),
+                app=app_ref,
+            )
+            backlog = enqueue_scope_backlog(s, ctx, now)
+            if backlog:
+                print(
+                    f"범위 안인데 계산하지 않은 사업의 판 {backlog}개를 따라잡기로 넣었습니다(알림 없음)"
                 )
+            if args.extract_items:
                 items = _recent_corrected(s, args.extract_items)
-                n = sum(enqueue_item_impact(s, i, {"trace": tid}, datetime.now(UTC)) for i in items)
-                s.commit()
-            print(f"최근 정정된 사업 {len(items)}개의 판 {n}개를 영향 계산에 넣었습니다")
+                carry = {"trace": usage_trace}
+                n = sum(enqueue_item_impact(s, i, carry, now) for i in items)
+                print(
+                    f"최근 정정된 사업 {len(items)}개의 판 {n}개를 새로 넣었습니다(따라잡기, 알림 없음)"
+                )
+            s.commit()
+    elif args.extract_items:
+        print("--extract-items는 --extract와 함께 써야 합니다")
 
     todo = handlers(ctx)
     if not parser.available():
@@ -159,9 +180,35 @@ def main() -> None:
     rest = {k: h for k, h in todo.items() if k != IMPACT}
     stats = run_worker(factory, rest, worker_id=worker_id, max_jobs=args.max_jobs)
     if args.extract and IMPACT in todo:
-        # 영향 계산은 하나씩: 한도를 다 쓰면 더 꺼내지 않는다(꺼낸 작업은 시도 횟수를 쓴다)
-        while budget.spent < budget.limit:
+        logged = 0
+
+        def log_usage() -> None:
+            # 작업 트랜잭션과 따로 바로 커밋한다: 작업이 되돌려지거나, 호출이 실패하거나(공급자가 센
+            # 토큰), 묶음 없는 작업이어도 하루 한도에 들어간다
+            nonlocal logged
+            live = gateway.usage.live_tokens
+            if live > logged:
+                with factory() as s:
+                    flight.add_record(
+                        s,
+                        usage_trace,
+                        "llm_usage",
+                        ref="worker",
+                        at=datetime.now(UTC),
+                        cost=live - logged,
+                    )
+                    s.commit()
+                logged = live
+
+        # 영향 계산은 하나씩: 한도에 닿으면(blocked) 더 꺼내지 않는다. 한도에 걸린 작업은 시도 횟수를 쓰지 않고 미룬다
+        while not budget.blocked and budget.spent < budget.limit:
+            if (
+                args.max_jobs is not None
+                and stats.done + stats.retried + stats.dead >= args.max_jobs
+            ):
+                break
             one = run_worker(factory, {IMPACT: todo[IMPACT]}, worker_id=worker_id, max_jobs=1)
+            log_usage()
             stats.done, stats.retried, stats.dead = (
                 stats.done + one.done,
                 stats.retried + one.retried,
@@ -170,8 +217,14 @@ def main() -> None:
             if one.done + one.retried + one.dead == 0:
                 break
         more = run_worker(factory, rest, worker_id=worker_id)  # 영향 계산이 낸 알림 발송
-        stats.done += more.done
-        print(f"이번에 보낸 LLM 토큰 {budget.spent:,}")
+        stats.done, stats.retried, stats.dead = (
+            stats.done + more.done,
+            stats.retried + more.retried,
+            stats.dead + more.dead,
+        )
+        log_usage()
+        note = " · 한도에 닿아 나머지는 다음 실행으로 미룸" if budget.blocked else ""
+        print(f"이번에 보낸 LLM 토큰 {gateway.usage.live_tokens:,}{note}")
     with factory() as s:
         # 남은 작업이 없는 수집 실행 묶음을 닫고 출력 해시를 적는다(scripts/replay.py가 비교한다)
         closed = flight.close_finished(s, datetime.now(UTC))
