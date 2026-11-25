@@ -311,3 +311,46 @@ def compare(a: list[str], b: list[str]) -> tuple[list[str], list[str]]:
 
     ca, cb = Counter(a), Counter(b)
     return sorted((ca - cb).elements()), sorted((cb - ca).elements())
+
+
+# --- 플랫폼 회귀 시험 (app-spec 15장): 재생 결과를 기준선으로 남기고, 코드를 고친 뒤 다시 재생해 비교 ---
+
+
+def save_baseline(result: Replay, path: Path) -> None:
+    """실행마다 정규형 줄과 해시를 남긴다(gzip JSON). 원문은 들어가지 않고 키와 개수만 들어간다."""
+    import gzip
+
+    body = {
+        "platform_rev": flight.platform_rev(),
+        "runs": {r.run: {"digest": r.digest, "lines": r.lines} for r in result.runs},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+
+
+def load_baseline(path: Path) -> dict:
+    import gzip
+
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@dataclass
+class Regression:
+    run: str
+    only_base: list[str]  # 기준선에만 있던 봉투(정규형 줄)
+    only_now: list[str]  # 지금 재생에만 있는 봉투
+
+
+def against_baseline(result: Replay, baseline: dict) -> tuple[list[Regression], list[str]]:
+    """(출력이 달라진 실행들, 기준선에 없던 실행들). 기준선에만 있는 실행은 재생 범위 밖이라 보지 않는다."""
+    changed, new = [], []
+    for r in result.runs:
+        base = baseline["runs"].get(r.run)
+        if base is None:
+            new.append(r.run)
+        elif base["digest"] != r.digest:
+            only_base, only_now = compare(base["lines"], r.lines)
+            changed.append(Regression(r.run, only_base, only_now))
+    return changed, new

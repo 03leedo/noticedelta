@@ -125,3 +125,27 @@ def test_replay_reads_a_database_from_before_the_recorder(tmp_path):
         s.commit()
     r = replay(env.factory, env.root, env.ctx.store, tmp_path / "replay")
     assert r.missing == [] and all(x.digest and x.same is None for x in r.runs)
+
+
+def test_baseline_catches_a_platform_change(tmp_path):
+    from noticedelta.replay import against_baseline, load_baseline, save_baseline
+
+    env = live(tmp_path / "live")
+    before = replay(env.factory, env.root, env.ctx.store, tmp_path / "a")
+    save_baseline(before, tmp_path / "base.json.gz")
+    base = load_baseline(tmp_path / "base.json.gz")
+    assert against_baseline(before, base) == ([], [])
+    # 플랫폼이 바뀐 것처럼: 두 번째 판의 파싱 결과가 달라지면 그 실행만 달라진다
+    with env.factory() as s:
+        v1 = s.scalar(
+            sa.select(Attachment.parsed_key)
+            .join(NoticeVersion, NoticeVersion.id == Attachment.notice_version_id)
+            .where(NoticeVersion.version_no == 1)
+        )
+        s.execute(sa.update(ParseCache).values(parsed_key=v1))
+        s.execute(sa.update(Attachment).values(parsed_key=v1))
+        s.commit()
+    after = replay(env.factory, env.root, env.ctx.store, tmp_path / "b")
+    changed, new = against_baseline(after, base)
+    assert new == [] and [c.run for c in changed] == [env_run(env, 1)]
+    assert any("change.detected" in line for line in changed[0].only_base)

@@ -167,6 +167,14 @@ class AppDefinition(_Strict):
             return True
         return keys is None or not set(use.read).isdisjoint(keys)
 
+    def alert_fields(self) -> set[str]:
+        """구독자에게 값 변경을 알리는 필드(alerts.rules의 field_changed). 나머지 필드의 변경은 알리지 않는다."""
+        return {f for r in self.alerts.rules if r.on == "field_changed" for f in r.fields}
+
+    def alerts_on_verdict(self) -> bool:
+        """판정이 바뀐 사람에게 알리는가(alerts.rules의 verdict_changed)."""
+        return any(r.on == "verdict_changed" for r in self.alerts.rules)
+
     def meta_fields(self) -> tuple[str, ...]:
         """출처가 구조화해 준 값에서 읽는 필드."""
         return tuple(n for n, f in self.engine.fields.items() if isinstance(f.from_, MetaRef))
