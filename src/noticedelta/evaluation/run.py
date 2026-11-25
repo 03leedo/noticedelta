@@ -185,3 +185,36 @@ def render_by_field(rows: Sequence[Row], labels: Mapping[tuple[str, str], Label]
                     fp_wording += label.status == "wording_only"
             lines.append(f"| {row.name} | {name} | {tp + fn} | {tp} | {fn} | {fp} | {fp_wording} |")
     return "\n".join(lines)
+
+
+def with_meta(
+    base: Row,
+    meta: Row,
+    fields: Sequence[str],
+    labels: Mapping[tuple[str, str], Label],
+    name: str | None = None,
+) -> Row:
+    """출처 값으로 읽는 필드(fields, 예: 마감)는 메타 비교(B0)의 판단을, 나머지는 base의 판단을 쓴다.
+
+    토큰 칸은 base 그대로다(위 한도). 실제로는 바뀐 필드가 출처 값 필드뿐인 정정에서 LLM을 부르지 않는다.
+    """
+    own = set(fields)
+    preds: dict[str, set[str] | None] = {}
+    for event_id, said in base.predictions.items():
+        m = meta.predictions.get(event_id) or set()
+        preds[event_id] = None if said is None else (said - own) | (m & own)
+    return Row(
+        name=name or f"{base.name} + 출처 값({', '.join(sorted(own))})",
+        events=base.events,
+        judged=base.judged,
+        calls=base.calls,
+        input_chars=base.input_chars,
+        input_tokens=base.input_tokens,
+        output_tokens=base.output_tokens,
+        planned_calls=base.planned_calls,
+        planned_tokens=base.planned_tokens,
+        predictions=preds,
+        score=score(preds, labels),
+        score_meta=score(preds, labels, visible_in=("api_meta",)),
+        score_text=score(preds, labels, visible_in=TEXT_ONLY),
+    )

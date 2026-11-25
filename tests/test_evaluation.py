@@ -354,3 +354,42 @@ def test_render_by_field_counts_hits_misses_and_wording_false_alerts():
     table = render_by_field([row], labels)
     assert "| 엔진 | contact | 0 | 0 | 0 | 2 | 1 |" in table
     assert "| 엔진 | deadline | 2 | 1 | 1 | 0 | 0 |" in table
+
+
+def test_closed_mark_in_any_title_key_closes_the_deadline():
+    from noticedelta.programs import CLOSED, closed_by_title
+    from noticedelta.sources.kstartup import to_record
+
+    raw = {
+        "pbanc_sn": "1",
+        "biz_pbanc_nm": "[국비지원] 캠프 8기 모집",
+        "intg_pbanc_biz_nm": "[마감] 캠프 8기 모집",
+        "pbanc_rcpt_bgng_dt": "20260928",
+        "pbanc_rcpt_end_dt": "20261115",
+    }
+    assert closed_by_title(to_record(raw))
+    assert api_meta("kstartup", raw)["deadline"] == CLOSED
+    raw["intg_pbanc_biz_nm"] = "캠프 8기 모집 마감 연장"  # 제목 앞의 표시만 본다
+    assert api_meta("kstartup", raw)["deadline"] == "2026-11-15"
+
+
+def test_with_meta_takes_meta_fields_from_b0_and_the_rest_from_the_base():
+    from noticedelta.evaluation import Row, Score, with_meta
+
+    labels = {
+        ("e1", "deadline"): Label("changed", "api_meta"),
+        ("e1", "contact"): Label("unchanged"),
+        ("e2", "deadline"): Label("unchanged"),
+    }
+
+    def row(name, preds):
+        return Row(name, 2, 2, 0, 0, 0, 0, 0, 0, preds, Score(), Score(), Score())
+
+    base = row("엔진", {"e1": {"contact"}, "e2": {"deadline"}})
+    meta = row("B0", {"e1": {"deadline"}, "e2": set()})
+    both = with_meta(base, meta, ["deadline"], labels)
+    assert both.predictions == {"e1": {"contact", "deadline"}, "e2": set()}
+    assert (both.score.tp, both.score.fp) == (
+        1,
+        1,
+    )  # 마감은 맞히고, 문의처 가짜 알림은 엔진 것 그대로

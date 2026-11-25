@@ -34,6 +34,7 @@ from noticedelta.evaluation.run import (
     input_sizes,
     render,
     render_by_field,
+    with_meta,
 )
 
 __all__ = [
@@ -57,6 +58,7 @@ __all__ = [
     "load_labels",
     "render",
     "render_by_field",
+    "with_meta",
     "score",
     "split_of",
     "wilson",

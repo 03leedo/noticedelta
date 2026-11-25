@@ -87,13 +87,28 @@ def title_score(a: str, b: str) -> float:
     return len(ga & gb) / len(ga | gb)
 
 
+# 제목 앞의 상태 표시. 기간 값은 그대로 두고 제목만 [마감]으로 바꾸는 출처가 있다(K-Startup, 2026-11-25 라벨 12번)
+CLOSED_MARK = re.compile(r"^\s*[\[\(【<]\s*(조기\s*)?마감\s*[\]\)】>]")
+CLOSED = "마감"
+TITLE_KEYS = ("pblancNm", "biz_pbanc_nm", "intg_pbanc_biz_nm")  # 출처마다 제목이 든 키
+
+
+def closed_by_title(rec: NoticeRecord) -> bool:
+    titles = [rec.title, *(str(rec.raw.get(k) or "") for k in TITLE_KEYS)]
+    return any(CLOSED_MARK.search(t) for t in titles)
+
+
 def api_meta(source: str, raw: dict) -> dict:
-    """출처 API가 구조화해 주는 값(접수 기간). 마감 연장 같은 변경은 이것만으로 보인다(평가의 B0)."""
+    """출처 API가 구조화해 주는 값(접수 기간). 마감 연장 같은 변경은 이것만으로 보인다(평가의 B0).
+
+    제목에 [마감]이 붙으면 기간 값이 그대로여도 마감은 "마감"이다(조기 마감).
+    """
     to_record = TO_RECORD.get(source)
     if to_record is None:
         return {}
     rec = to_record(raw)
-    return {"deadline": rec.apply_end, "apply_start": rec.apply_start}
+    deadline = CLOSED if closed_by_title(rec) else rec.apply_end
+    return {"deadline": deadline, "apply_start": rec.apply_start}
 
 
 def composite_hash(rec: NoticeRecord, blob_keys: list[str | None]) -> str:
