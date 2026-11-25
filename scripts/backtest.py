@@ -35,7 +35,7 @@ from noticedelta.eligibility.synthetic import virtual_profiles  # noqa: E402
 from noticedelta.evaluation import load_chains, load_labels  # noqa: E402
 from noticedelta.grants import APP  # noqa: E402
 from noticedelta.llm import FileCassetteStore, Gateway, Mode, choose  # noqa: E402
-from noticedelta.llm.extract import TEMPLATE_V1, LLMExtractor  # noqa: E402
+from noticedelta.llm.extract import TEMPLATE_V1, LLMExtractor, spec_for  # noqa: E402
 from noticedelta.names import FIELD_NAMES  # noqa: E402
 from noticedelta.programs import api_meta  # noqa: E402
 
@@ -81,7 +81,11 @@ def main() -> None:
     choice = choose(args.provider, args.model)
     mode = Mode.PLAN if args.plan else Mode.REPLAY
     gateway = Gateway(None, FileCassetteStore(ROOT / "data" / "cassettes"), mode)
-    extractor = LLMExtractor(gateway, model=choice.model, template=TEMPLATE_V1)
+
+    def extractor(app):
+        # 앱마다 자기 필드 정의로 추출한다. 필드 정의가 같으면 요청이 같아 녹화본을 함께 쓴다
+        return LLMExtractor(gateway, model=choice.model, template=TEMPLATE_V1, spec=spec_for(app))
+
     profiles = {f"v{i:03d}": p for i, p in enumerate(virtual_profiles(args.subscribers))}
 
     with factory() as s:
@@ -97,7 +101,7 @@ def main() -> None:
         return (titles.get(events.get(event_id, ""), "") or event_id)[:40]
 
     usage = lambda: gateway.usage  # noqa: E731
-    on = backtest(APP, chains, extractor, profiles, usage=usage)
+    on = backtest(APP, chains, extractor(APP), profiles, usage=usage)
     rows = [(f"켠 판 {on.app}", on)]
     draft = None
     if args.draft:
@@ -107,15 +111,22 @@ def main() -> None:
     if draft is not None:
         if not same_extraction(APP, draft) and not args.plan:
             print(
-                "초안의 필드 정의가 달라 추출 요청이 바뀝니다. 녹화본이 없으니 --plan으로 비용부터 보세요.\n"
+                "초안의 필드 정의가 달라 추출 요청이 바뀝니다. 녹화본이 없는 사업은 "
+                "'녹화본 없음'으로 셉니다. --plan으로 비용을 보세요.\n"
             )
-        d = backtest(draft, chains, extractor, profiles, usage=usage)
+        d = backtest(draft, chains, extractor(draft), profiles, usage=usage)
         rows.append((f"초안 {d.app}", d))
 
     print(
         f"세트 {args.split} · 정정 {on.events}건 · 가상 구독자 {len(profiles)}명 · 시험(라벨) {len(labels)}칸\n"
     )
     print(_summary(rows))
+    if args.plan:
+        # 미리 세기에서는 녹화본이 없는 호출이 빈 값으로 돌아와 알림이 맞지 않는다. 비용만 본다
+        print(
+            "\n미리 세기: 위의 '보내야 할 호출'이 비용입니다. 알림 비교는 녹화본을 채운 뒤에 하세요."
+        )
+        return
 
     def listing(cards, mark=None):
         out = []

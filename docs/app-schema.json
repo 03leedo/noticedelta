@@ -197,6 +197,17 @@
           },
           "title": "Fields",
           "type": "object"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PromptSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -343,6 +354,35 @@
         "meta"
       ],
       "title": "MetaRef",
+      "type": "object"
+    },
+    "PromptSpec": {
+      "additionalProperties": false,
+      "description": "추출 프롬프트의 앱별 부분(extraction.spec_for_app). 없으면 앱 제목을 분야로 쓴다.",
+      "properties": {
+        "domain": {
+          "minLength": 1,
+          "title": "Domain",
+          "type": "string"
+        },
+        "heading": {
+          "default": "문서 조각",
+          "title": "Heading",
+          "type": "string"
+        },
+        "notes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain"
+      ],
+      "title": "PromptSpec",
       "type": "object"
     },
     "SourceUse": {

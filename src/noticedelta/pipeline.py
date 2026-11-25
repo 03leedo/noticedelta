@@ -39,17 +39,20 @@ from noticedelta.db.models import (
 from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
 from noticedelta.events import Ref, Trace, app_ref, emit, subscribe
 from noticedelta.events import Subscription as EventSubscription
-from noticedelta.grants import APP, MASS_IMPACT, MIN_CONFIDENCE, RULES_FIELD, candidates
+from noticedelta.extraction import TEMPLATE_VERSION
+
+# 운영하는 앱(Context.app의 기본값). 그 밖의 앱 지식(필드·낱말·붙잡기)은 ctx.app에서 읽는다
+from noticedelta.grants import APP
 from noticedelta.history import MATCHER_VERSION, is_empty, record_item, replay
 from noticedelta.impact import (
     Extractor,
     FieldValue,
     Subscription,
+    keyword_detector,
     run_impact,
 )
 from noticedelta.ingest import parse_attachments
 from noticedelta.jobs import Handler, PermanentError, TransientError, enqueue
-from noticedelta.llm.extract import FIELD_TYPES, TEMPLATE_VERSION
 from noticedelta.names import ALERT_LABELS
 from noticedelta.notify import Channel, InboxChannel, deliver, note, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
@@ -79,6 +82,17 @@ class Context:
     app: AppDefinition = field(
         default_factory=lambda: APP
     )  # 결과(필드 값, 판정, 알림)에 이 앱의 id와 판을 단다
+
+
+_DETECTORS: dict[tuple[str, int], Callable] = {}
+
+
+def _detector(app: AppDefinition) -> Callable:
+    """앱의 필드 낱말로 만든 후보 탐지기(impact.keyword_detector). 판마다 한 번 만든다."""
+    key = (app.id, app.version)
+    if key not in _DETECTORS:
+        _DETECTORS[key] = keyword_detector(app.keyword_patterns(), app.value_types())
+    return _DETECTORS[key]
 
 
 def parser_id(parser: Parser) -> str:
@@ -393,7 +407,7 @@ def _save_fields(
     for name, fv in fields.items():
         if name in stale:
             status = "stale"
-        elif fv.confidence < MIN_CONFIDENCE:  # 앱 정의의 alerts.hold
+        elif fv.confidence < ctx.app.alerts.hold.min_confidence:  # 앱 정의의 alerts.hold
             status = "needs_review"
         else:
             status = "verified"
@@ -451,7 +465,7 @@ def handle_impact(ctx: Context) -> Handler:
 
         if step.from_version is None:
             # 첫 버전: 모든 필드를 뽑는다. 새 사업이므로 알림은 없다.
-            fields = ctx.extractor(set(FIELD_TYPES), step.change.segments)
+            fields = ctx.extractor(set(ctx.app.value_types()), step.change.segments)
             _save_fields(ctx, session, pv, fields, set())
             return
 
@@ -482,7 +496,7 @@ def handle_impact(ctx: Context) -> Handler:
             for p in session.scalars(sa.select(Profile).where(Profile.person_id.in_(users)))
         }
         res = run_impact(
-            candidate_detector=candidates,
+            candidate_detector=_detector(ctx.app),
             item_id=item_id,
             to_version_id=pv.id,
             change=step.change,
@@ -529,8 +543,9 @@ def handle_impact(ctx: Context) -> Handler:
                 now=ctx.now(),
             )
 
-        if RULES_FIELD in res.real_changes:
-            rules = RuleGroup.model_validate(res.fields[RULES_FIELD].value)
+        rules_field = ctx.app.subjects.rules_field
+        if rules_field and rules_field in res.real_changes:
+            rules = RuleGroup.model_validate(res.fields[rules_field].value)
             h = ruleset_hash(rules)
             for person_id, attrs in profiles.items():
                 j = judge(rules, attrs)
@@ -624,7 +639,7 @@ def handle_notify(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         item_id = job.payload["item_id"]
         trace = Trace.of(job.payload)
-        prepare(session, item_id, mass_impact=MASS_IMPACT, trace=trace)
+        prepare(session, item_id, mass_impact=ctx.app.alerts.hold.mass_impact, trace=trace)
         deliver(session, ctx.channel, item_id=item_id, now=ctx.now, labels=ctx.labels, trace=trace)
 
     return handle
