@@ -13,15 +13,16 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta import app_registry, flight
-from noticedelta.appspec import AppDefinition
+from noticedelta.appspec import AppDefinition, MetaRef
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
 from noticedelta.db.models import (
@@ -32,6 +33,8 @@ from noticedelta.db.models import (
     Job,
     JudgmentRow,
     LoadedRun,
+    Notice,
+    NoticeVersion,
     OutboxAlert,
     Profile,
     SubscriptionRow,
@@ -52,12 +55,14 @@ from noticedelta.impact import (
     run_impact,
 )
 from noticedelta.ingest import parse_attachments
-from noticedelta.jobs import Handler, PermanentError, TransientError, enqueue
+from noticedelta.jobs import Deferred, Handler, PermanentError, TransientError, enqueue
+from noticedelta.llm.gateway import BudgetExceeded
 from noticedelta.names import ALERT_LABELS
 from noticedelta.notify import Channel, InboxChannel, deliver, note, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
-from noticedelta.programs import LoadSummary, load_run
+from noticedelta.programs import LoadSummary, load_run, source_meta
 from noticedelta.sources import CATALOG
+from noticedelta.values import same_value
 
 LOAD, PARSE, DIFF, IMPACT, NOTIFY = "load_run", "parse", "diff", "impact", "notify"
 LOADER_KEY = "loader"  # 실행 파일은 시간 순으로 하나씩 넣는다
@@ -82,6 +87,9 @@ class Context:
     app: AppDefinition = field(
         default_factory=lambda: APP
     )  # 결과(필드 값, 판정, 알림)에 이 앱의 id와 판을 단다
+    # 영향 계산(LLM 추출)을 돌릴 사업: all 모두, changed 정정이 생긴 사업, subscribed 구독자가 있는 사업.
+    # 범위에 들어오면 그 사업의 판을 첫 판부터 차례로 계산한다(enqueue_item_impact).
+    extract_scope: Literal["all", "changed", "subscribed"] = "all"
 
 
 _DETECTORS: dict[tuple[str, int, str], Callable] = {}
@@ -317,9 +325,9 @@ def handle_diff(ctx: Context) -> Handler:
                 trace=trace,
                 now=ctx.now(),
             )
-            if ctx.extractor is not None:
-                _enqueue_impact(
-                    session, item_id, r.event.to_version_id, trace.carry(env), ctx.now()
+            if ctx.extractor is not None and _in_scope(session, ctx, item_id, r.event):
+                enqueue_item_impact(
+                    session, item_id, trace.carry(env), ctx.now(), r.event.to_version_id
                 )
         waiting = next((r for r in results if r.status == "waiting"), None)
         if waiting is None:
@@ -367,14 +375,94 @@ def _impact_key(pv_id: str) -> str:
     return f"{IMPACT}:{pv_id}:{TEMPLATE_VERSION}"
 
 
+def _meta_fields(
+    session: Session, app: AppDefinition, notice_version_id: str
+) -> dict[str, FieldValue]:
+    """앱 정의에서 출처 값으로 읽는 필드(from: meta)의 이 판 값. 출처가 값을 주지 않으면 넣지 않는다."""
+    wanted = {n: f.from_.meta for n, f in app.engine.fields.items() if isinstance(f.from_, MetaRef)}
+    if not wanted:
+        return {}
+    nv = session.get(NoticeVersion, notice_version_id)
+    notice = session.get(Notice, nv.notice_id)
+    values = source_meta(notice.source_id, nv.raw or {})
+    types = app.value_types()
+    return {
+        name: FieldValue(name, types[name], values[key], [], 1.0)
+        for name, key in wanted.items()
+        if values.get(key) is not None
+    }
+
+
+def _meta_changed(prev: Mapping[str, FieldValue], meta: Mapping[str, FieldValue]) -> bool:
+    return any(
+        name not in prev or not same_value(fv.value_type, prev[name].value, fv.value)
+        for name, fv in meta.items()
+    )
+
+
+def enqueue_scope_backlog(session: Session, ctx: Context, now: datetime | None = None) -> int:
+    """범위(subscribed) 안인데 영향 계산을 넣지 않은 사업을 첫 판부터 따라잡기로 넣는다. 새로 넣은 수.
+
+    구독을 만드는 길(화면·도구)이 생기기 전까지, 워커가 추출을 켤 때마다 부른다. changed·all 범위의
+    지난 사업은 너무 많아 따라잡지 않는다(새 정정부터).
+    """
+    if ctx.extract_scope != "subscribed":
+        return 0
+    items = session.scalars(
+        sa.select(SubscriptionRow.item_id).where(SubscriptionRow.app_id == ctx.app.id).distinct()
+    ).all()
+    return sum(enqueue_item_impact(session, i, None, now) for i in items)
+
+
+def _in_scope(session: Session, ctx: Context, item_id: str, event: ChangeEvent) -> bool:
+    if ctx.extract_scope == "all":
+        return True
+    if ctx.extract_scope == "changed":
+        return event.from_version_id is not None
+    return (
+        session.scalar(
+            sa.select(sa.func.count()).where(
+                SubscriptionRow.item_id == item_id, SubscriptionRow.app_id == ctx.app.id
+            )
+        )
+        > 0
+    )
+
+
+def enqueue_item_impact(
+    session: Session,
+    item_id: str,
+    carry: dict[str, str] | None = None,
+    now: datetime | None = None,
+    live_version: str | None = None,
+) -> int:
+    """사업의 비교가 끝난 판을 첫 판부터 영향 계산에 넣는다. 이미 넣은 판은 건너뛴다(멱등). 새로 넣은 수를 준다.
+
+    영향 계산은 판마다 이어지는 사슬이라(앞 판의 값을 읽는다), 범위에 새로 들어온 사업은 첫 판부터 돈다.
+    live_version이 아닌 판은 따라잡기다: 값과 판정만 채우고 알림은 내지 않는다(지난 정정을 지금 구독자에게
+    새로 알리지 않게). 구독이 생겼을 때, 운영자가 몇 사업만 돌려 볼 때 부른다.
+    """
+    ids = session.scalars(
+        sa.select(ItemVersion.id)
+        .join(ChangeEvent, ChangeEvent.to_version_id == ItemVersion.id)
+        .where(ItemVersion.item_id == item_id)
+        .order_by(ItemVersion.version_no)
+    ).all()
+    n = 0
+    for pv_id in ids:
+        extra = {**(carry or {}), **({"catchup": True} if pv_id != live_version else {})}
+        n += _enqueue_impact(session, item_id, pv_id, extra, now) is not None
+    return n
+
+
 def _enqueue_impact(
     session: Session,
     item_id: str,
     pv_id: str,
-    carry: dict[str, str] | None = None,
+    carry: dict | None = None,
     now: datetime | None = None,
-) -> None:
-    enqueue(
+) -> Job | None:
+    return enqueue(
         session,
         IMPACT,
         {"item_version_id": pv_id, **(carry or {})},
@@ -463,10 +551,12 @@ def handle_impact(ctx: Context) -> Handler:
             raise PermanentError("변경 이벤트가 없음")
         app_registry.seed(session, ctx.app, at=ctx.now())  # 결과가 가리킬 앱 정의가 DB에 있게
 
+        meta = _meta_fields(session, ctx.app, pv.notice_version_id)
         if step.from_version is None:
-            # 첫 버전: 모든 필드를 뽑는다. 새 사업이므로 알림은 없다.
-            fields = ctx.extractor(set(ctx.app.value_types()), step.change.segments)
-            _save_fields(ctx, session, pv, fields, set())
+            # 첫 버전: 모든 필드를 뽑는다(출처 값 필드는 출처에서). 새 사업이므로 알림은 없다.
+            wanted = set(ctx.app.value_types()) - set(meta)
+            fields = ctx.extractor(wanted, step.change.segments) if wanted else {}
+            _save_fields(ctx, session, pv, {**fields, **meta}, set())
             return
 
         prev = session.scalar(
@@ -475,11 +565,17 @@ def handle_impact(ctx: Context) -> Handler:
         if prev != "done":
             raise TransientError(f"v{step.from_version.version_no} 영향 계산이 아직 안 끝남")
         event = session.scalar(sa.select(ChangeEvent).where(ChangeEvent.to_version_id == pv.id))
+        change = step.change
         if not _for_app(ctx.app, event):
             # 이 앱이 읽지 않는 것만 바뀌었다. 다음 판이 이어 받도록 값만 옮긴다(LLM·알림 없음)
-            _carry_fields(session, step.from_version.id, pv, ctx.app.id)
-            return
+            # 다만 출처 값 필드는 읽는 키 밖(예: 제목의 [마감], 접수 기간)에서 바뀔 수 있어 따로 본다
+            if not _meta_changed(_load_fields(session, step.from_version.id, ctx.app.id), meta):
+                _carry_fields(session, step.from_version.id, pv, ctx.app.id)
+                return
+            # 출처 값만 비교한다: 조각 변경은 비워 LLM을 부르지 않는다
+            change = replace(change, added=[], removed=[], modified=[])
 
+        catchup = bool(job.payload.get("catchup"))
         item_id = pv.item_id
         subs = [
             Subscription(r.person_id, set(r.fields))
@@ -499,7 +595,7 @@ def handle_impact(ctx: Context) -> Handler:
             candidate_detector=_detector(ctx.app),
             item_id=item_id,
             to_version_id=pv.id,
-            change=step.change,
+            change=change,
             old_fields=_load_fields(session, step.from_version.id, ctx.app.id),
             extractor=ctx.extractor,
             subscriptions=subs,
@@ -509,8 +605,10 @@ def handle_impact(ctx: Context) -> Handler:
             unknown_lineages=step.unknown,
             app_id=ctx.app.id,
             app_version=ctx.app.version,
-            alert_fields=ctx.app.alert_fields(),
-            verdict_alerts=ctx.app.alerts_on_verdict(),
+            # 따라잡기 판(범위에 늦게 들어와 지난 판을 채우는 것)은 값·판정만 채우고 알리지 않는다
+            alert_fields=set() if catchup else ctx.app.alert_fields(),
+            verdict_alerts=not catchup and ctx.app.alerts_on_verdict(),
+            meta_fields=meta,
         )
         _save_fields(ctx, session, pv, res.fields, res.stale)
         trace = Trace.of(job.payload)
@@ -611,7 +709,11 @@ def handle_impact(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         # 추출기의 게이트웨이에 flight.llm_observer를 달면 이 작업의 LLM 호출이 묶음에 기록된다
         with flight.bound(session, Trace.of(job.payload).trace, ctx.now):
-            _work(session, job)
+            try:
+                _work(session, job)
+            except BudgetExceeded as e:
+                # 오늘 쓸 LLM 토큰을 다 썼다. 보내지 않았으므로 시도 횟수를 쓰지 않고 미룬다
+                raise Deferred(f"LLM 한도: {e}", delay=timedelta(hours=6)) from e
 
     return handle
 

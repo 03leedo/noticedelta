@@ -98,6 +98,19 @@ def closed_by_title(rec: NoticeRecord) -> bool:
     return any(CLOSED_MARK.search(t) for t in titles)
 
 
+def source_meta(source: str, raw: dict) -> dict:
+    """출처가 구조화해 주는 값을 카탈로그 이름으로(sources/catalog의 meta). 앱의 from: {meta: 이름}이 읽는다.
+
+    제목에 [마감]이 붙으면 기간 값이 그대로여도 apply_end는 "마감"이다(조기 마감).
+    """
+    to_record = TO_RECORD.get(source)
+    if to_record is None:
+        return {}
+    rec = to_record(raw)
+    end = CLOSED if closed_by_title(rec) else rec.apply_end
+    return {"apply_end": end, "apply_start": rec.apply_start}
+
+
 def api_meta(source: str, raw: dict) -> dict:
     """출처 API가 구조화해 주는 값(접수 기간). 마감 연장 같은 변경은 이것만으로 보인다(평가의 B0).
 

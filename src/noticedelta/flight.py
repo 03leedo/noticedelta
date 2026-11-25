@@ -323,3 +323,17 @@ def close_finished(session: Session, now: datetime) -> list[TraceRow]:
         closed.append(row)
     session.flush()
     return closed
+
+
+def spent_tokens(session: Session, since: datetime) -> int:
+    """since 이후 실제로 보낸 LLM 토큰(입력+출력, 실패한 호출 포함). 워커의 하루 한도가 쓴다.
+
+    워커가 영향 계산 작업마다 작업 트랜잭션과 따로 바로 커밋하는 기록(kind=llm_usage)을 센다. 작업이
+    되돌려져도, 호출이 실패해도, 묶음 없는 작업이어도 빠지지 않는다. 호출별 색인(llm_call)은 세지 않는다.
+    """
+    total = session.scalar(
+        sa.select(sa.func.coalesce(sa.func.sum(RecordRow.cost), 0)).where(
+            RecordRow.kind == "llm_usage", RecordRow.at >= since
+        )
+    )
+    return int(total or 0)

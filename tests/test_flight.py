@@ -149,3 +149,22 @@ def test_baseline_catches_a_platform_change(tmp_path):
     changed, new = against_baseline(after, base)
     assert new == [] and [c.run for c in changed] == [env_run(env, 1)]
     assert any("change.detected" in line for line in changed[0].only_base)
+
+
+def test_spent_tokens_counts_usage_records_since_a_time(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    env = Env(tmp_path)
+    t0 = datetime(2026, 11, 25, tzinfo=UTC)
+    with env.factory() as s:
+        flight.open_trace(s, "W" * 26, kind="worker_run", started_at=t0, config={})
+        flight.add_record(
+            s, "W" * 26, "llm_usage", ref="worker", at=t0 - timedelta(hours=1), cost=500
+        )
+        flight.add_record(
+            s, "W" * 26, "llm_usage", ref="worker", at=t0 + timedelta(hours=1), cost=1200
+        )
+        flight.add_record(
+            s, "W" * 26, "llm_call", ref="cassette:k", at=t0 + timedelta(hours=1), cost=999
+        )
+        assert flight.spent_tokens(s, t0) == 1200  # 색인(llm_call)은 세지 않는다

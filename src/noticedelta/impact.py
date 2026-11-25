@@ -20,6 +20,7 @@ from noticedelta.values import (
     find_datetimes,
     list_diff,
     list_keys,
+    same_value,
     squash,
     values_equal,
 )
@@ -169,10 +170,14 @@ def run_impact(
     app_version: int = 0,
     alert_fields: Collection[str] | None = None,
     verdict_alerts: bool = True,
+    meta_fields: Mapping[str, FieldValue] | None = None,
 ) -> ImpactResult:
     """alert_fields: 값 변경을 구독자에게 알릴 필드(앱 정의의 alerts.rules). None이면 구독한 필드 모두.
     verdict_alerts: 판정이 바뀐 사람에게 알리는가.
+    meta_fields: 새 판에서 출처가 구조화해 준 값으로 읽은 필드(앱 정의의 from: meta). LLM에 묻지 않고
+    앞 판의 값과 타입별로 비교한다. 출처 값이 없으면 넣지 않는다(그 필드는 글에서 뽑는다, else: extract).
     """
+    meta = dict(meta_fields or {})
     # ⓪ 새 버전에서 읽지 못한 첨부에 걸린 필드: 바뀌었는지 모른다. 재추출하지 않고 stale로 둔다.
     unknown_fields = {
         name for name, fv in old_fields.items() if set(fv.sources) & set(unknown_lineages)
@@ -193,8 +198,18 @@ def run_impact(
         if seg.lineage_id in removed:
             affected |= candidate_detector(seg)
 
+    unknown_fields -= set(meta)  # 출처 값으로 다시 읽었으니 모르는 필드가 아니다
     affected -= unknown_fields
-    if not affected and not unknown_fields:
+    affected -= set(meta)  # 출처 값으로 읽는 필드는 LLM에 묻지 않는다
+    meta_real = {
+        name
+        for name, fv in meta.items()
+        if name not in old_fields
+        or not same_value(
+            fv.value_type, old_fields[name].value, fv.value, default_year=default_year
+        )
+    }
+    if not affected and not unknown_fields and not meta_real:
         return ImpactResult(set(), {}, set(), [], 0, dict(old_fields))
 
     # ② 부분 재추출: 영향 필드만, 바뀐 조각 + 그 필드의 기존 근거 조각만 넘긴다.
@@ -205,8 +220,8 @@ def run_impact(
     context = [s for s in change.segments if s.lineage_id in context_ids]
     reextracted = extractor(affected, context) if affected else {}
 
-    # ③ 진짜 변경 판정 (타입별 비교)
-    real: set[str] = set()
+    # ③ 진짜 변경 판정 (타입별 비교). 출처 값 필드는 위에서 비교했다
+    real: set[str] = set(meta_real)
     stale: set[str] = set(unknown_fields)
     changed_ids = set(change.changed)
     for name in affected:
@@ -239,6 +254,8 @@ def run_impact(
         elif name in fields:
             # 값은 같아도 근거 조각은 새 버전 기준으로 바꾼다. 지워진 조각 ID가 남으면 다음 정정을 놓친다.
             fields[name] = replace(fields[name], sources=new.sources, confidence=new.confidence)
+    for name in meta_real:
+        fields[name] = meta[name]
 
     # ④⑤⑥ 영향 사용자 재판정과 알림
     alerts: dict[str, Alert] = {}

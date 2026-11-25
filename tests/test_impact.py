@@ -259,3 +259,23 @@ def test_app_alert_rules_decide_which_changes_reach_people():
 def test_grant_app_alerts_deadline_amount_documents_and_verdicts():
     assert grants.APP.alert_fields() == {"deadline", "amount", "required_documents"}
     assert grants.APP.alerts_on_verdict()
+
+
+def test_source_value_fields_change_without_asking_the_llm():
+    meta = {"deadline": FieldValue("deadline", "datetime", "2026-11-07 18:00", [])}
+    extended = [OLD_DOC[0].replace("2026년 10월 31일 18:00", "2026년 11월 7일 18:00")]
+    res, ex = run(extended, {}, meta_fields=meta)
+    assert ex.calls == []  # 마감은 출처 값으로: LLM을 부르지 않는다
+    assert res.real_changes == {"deadline"} and res.fields["deadline"].value == "2026-11-07 18:00"
+    assert sorted(a.person_id for a in res.alerts) == ["A", "B"]
+    # 출처 값이 같으면(표기만 다르면) 변경이 아니다
+    same = {"deadline": FieldValue("deadline", "datetime", "2026. 10. 31. 18:00", [])}
+    res, ex = run([OLD_DOC[0]], {}, meta_fields=same)
+    assert res.real_changes == set() and ex.calls == []
+
+
+def test_a_date_only_source_value_equals_the_same_day_with_time():
+    # 앞 판은 LLM 값(시각 포함), 이번 판은 출처 값(날짜만): 같은 날이면 바뀐 것이 아니다
+    meta = {"deadline": FieldValue("deadline", "datetime", "2026-10-31", [])}
+    res, ex = run([OLD_DOC[0]], {}, meta_fields=meta)
+    assert res.real_changes == set() and ex.calls == []
