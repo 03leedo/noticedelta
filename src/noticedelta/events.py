@@ -169,6 +169,29 @@ for _name, _about in [
     REGISTRY[_name] = EventType(_name, 1, _Alert, _about)
 
 
+class _Action(_Payload):
+    action_id: str
+    session_id: str
+    tool: str
+    policy: str | None = None
+    reason: str | None = None
+    marks: list[str] = []  # 받는 쪽 표시의 종류만(값 없음)
+
+
+for _name, _about in [
+    ("action.requested", "에이전트가 효과를 요청했다"),
+    ("action.held", "효과를 붙잡고 사람의 승인을 기다린다"),
+    ("action.approved", "효과를 승인했다(보류 시간 뒤 확정)"),
+    ("action.committed", "효과를 실행했다"),
+    ("action.discarded", "사람이 거절하거나 취소했다"),
+    ("action.expired", "승인 기한이 지났다"),
+    ("action.blocked", "게이트웨이가 막았다"),
+    ("action.failed", "실행하다 실패했다"),
+    ("action.undone", "플랫폼 안의 효과를 되돌렸다"),
+]:
+    REGISTRY[_name] = EventType(_name, 1, _Action, _about)
+
+
 @event_type("app.version_enabled", 1, "앱의 판 하나를 켰다")
 class AppEnabled(_Payload):
     app_id: str

@@ -43,6 +43,7 @@ LAYERS: dict[str, list[str]] = {
         "sources.resilience",
         "text",
         "tooling",  # 도구와 능력 속성, 등록부
+        "tool_gateway",  # 도구 게이트웨이: 세션, 판단, 보류 후 확정, 승인함
         "usage",  # 에이전트 사용 기록과 피드백
         "vault",  # 개인정보 금고: 암호화한 값, 동의, 허가, 접근 기록
     ],

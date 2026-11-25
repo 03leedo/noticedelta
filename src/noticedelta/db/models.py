@@ -576,3 +576,79 @@ class Job(Base):
     updated_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), default=now, onupdate=now
     )
+
+
+class AgentSessionRow(Base):
+    """에이전트 세션 (platform-services 5.3). 사람·앱·에이전트 단위로 이어진다.
+
+    켜진 속성(flags: A·B·C)은 켜지기만 하고, 다시 접속해도 초기화되지 않는다. 닫는 것은 사람(운영자)이다.
+    """
+
+    __tablename__ = "agent_session"
+    __table_args__ = (sa.Index("ix_agent_session_owner", "person_id", "app_id", "agent", "status"),)
+    id: Mapped[str] = mapped_column(sa.String(26), primary_key=True)
+    person_id: Mapped[str | None] = mapped_column(sa.String(32))
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    agent: Mapped[str] = mapped_column(sa.String(64))  # 접속한 에이전트(클라이언트) 이름
+    flags: Mapped[list] = mapped_column(JSONType, default=list)
+    seen: Mapped[list] = mapped_column(JSONType, default=list)  # 외부 글(A)에서 본 주소·전화의 해시
+    sources: Mapped[list] = mapped_column(
+        JSONType, default=list
+    )  # 본 외부 글(도구·참조), 최근 것만
+    calls: Mapped[dict] = mapped_column(JSONType, default=dict)  # 도구별 호출 수
+    effects: Mapped[int] = mapped_column(sa.Integer, default=0)  # 요청한 외부 효과 수
+    started_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(sa.String(16), default="open")  # open / closed
+    closed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class ToolActionRow(Base):
+    """효과 하나 (5.5). 밖으로 나가는 효과는 바로 실행하지 않고 여기에 둔다.
+
+    held(사람의 승인을 기다림) → approved(보류 시간을 기다림, 이때도 취소할 수 있다) → committed,
+    또는 discarded · expired · blocked · failed. 플랫폼 안의 되돌릴 수 있는 효과(internal)는
+    바로 committed이고 되돌리는 정보(undo)를 둔다.
+    """
+
+    __tablename__ = "tool_action"
+    id: Mapped[str] = mapped_column(sa.String(26), primary_key=True)
+    session_id: Mapped[str] = mapped_column(sa.String(26), index=True)
+    tool: Mapped[str] = mapped_column(sa.String(64))
+    effect: Mapped[str] = mapped_column(sa.String(16))  # internal / external
+    arguments: Mapped[dict] = mapped_column(JSONType, default=dict)
+    dropped: Mapped[list] = mapped_column(JSONType, default=list)  # split으로 뺀 인자 이름
+    status: Mapped[str] = mapped_column(sa.String(16), index=True)
+    policy: Mapped[str] = mapped_column(sa.String(16))  # pass / approve / split / block
+    marks: Mapped[list] = mapped_column(JSONType, default=list)  # 받는 쪽 표시
+    reason: Mapped[str | None] = mapped_column(sa.String(300))
+    evidence: Mapped[list] = mapped_column(JSONType, default=list)  # 이 세션이 본 외부 글
+    requested_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    decide_by: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    decided_by: Mapped[str | None] = mapped_column(sa.String(64))
+    commit_after: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    committed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    result: Mapped[dict | None] = mapped_column(JSONType)
+    undo: Mapped[dict | None] = mapped_column(JSONType)
+    undone_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class ToolDecisionRow(Base):
+    """게이트웨이의 판단 하나 (5.4의 5번 기록). 인자 값은 남기지 않는다."""
+
+    __tablename__ = "tool_decision"
+    __table_args__ = (sa.UniqueConstraint("session_id", "seq"),)
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(sa.String(26), index=True)
+    seq: Mapped[int] = mapped_column(sa.Integer)
+    at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    tool: Mapped[str] = mapped_column(sa.String(64))
+    decision: Mapped[str] = mapped_column(sa.String(16))  # pass / held / approved / block / error
+    step: Mapped[str] = mapped_column(
+        sa.String(16)
+    )  # declare / consent / transition / target / run
+    reason: Mapped[str | None] = mapped_column(sa.String(300))
+    flags_before: Mapped[list] = mapped_column(JSONType, default=list)
+    flags_after: Mapped[list] = mapped_column(JSONType, default=list)
+    action_id: Mapped[str | None] = mapped_column(sa.String(26))
