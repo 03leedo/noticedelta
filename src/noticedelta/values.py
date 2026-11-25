@@ -155,8 +155,57 @@ def _canonical(v: Any) -> Any:
     return v
 
 
-def _norm_list(v: Iterable[Any]) -> set[str]:
-    return {normalize_text(str(x)) for x in v}
+_NOTE = re.compile(r"※.*$")
+_LABEL = re.compile(r"^[^:：]{1,20}[:：]\s*")  # "등록특허/상표 : 특허등록원부" 의 앞말
+_PAREN = re.compile(r"\([^)]*\)|\[[^\]]*\]|【[^】]*】|（[^）]*）|<[^>]*>")
+_QTY = re.compile(r"(각\s*)?\d+\s*(부|식|매|통|권|종)\.?\s*$")
+_PUNCT = re.compile(
+    r"[\s·•ㆍ‧∙・,.\-_'\"‘’“”/\ue000-\uf8ff]+"
+)  # 사용자 정의 영역: HWP 기호 글꼴의 공백
+_SPLIT = re.compile(r",|\s및\s|\s또는\s")
+MIN_KEY = 3  # 이보다 짧은 열쇠는 버린다("등", "국세"처럼 나눠서 생긴 토막)
+
+
+def list_item_key(item: Any) -> str:
+    """목록 항목(서류 이름 등)의 비교용 열쇠: 수량, 서식 머리표, 괄호 설명, 띄어쓰기·문장부호를 뺀다.
+
+    "[별지 1] 거래실적 총괄표 1부"와 "거래실적 총괄표", "장관표창에대한 동의서"와 "장관표창에 대한
+    동의서"가 같은 열쇠가 된다(엔진 평가에서 서류 가짜 알림의 절반이 이런 표기 차이였다, 2026-11-25).
+    """
+    s = _PAREN.sub(" ", _NOTE.sub("", normalize_text(str(item))))
+    s = _LABEL.sub("", s.strip())
+    s = _QTY.sub("", s.strip())
+    return _PUNCT.sub("", s)
+
+
+def squash(text: str) -> str:
+    """원문을 항목 열쇠와 맞대 볼 수 있게: 열쇠처럼 괄호 안과 띄어쓰기·문장부호를 뺀다(※ 뒤는 남긴다)."""
+    return _PUNCT.sub("", _PAREN.sub(" ", normalize_text(text)))
+
+
+def list_keys(items: Iterable[Any]) -> set[str]:
+    """한 줄에 여러 서류를 적은 것("A, B 및 C")도 나눠서 본다. 양쪽을 같은 규칙으로 나누므로 공정하다."""
+    keys = set()
+    for x in items:
+        whole = _PAREN.sub(
+            " ", _NOTE.sub("", normalize_text(str(x)))
+        )  # 괄호 안의 "또는"으로 나누지 않게
+        for part in _SPLIT.split(whole):
+            k = list_item_key(part)
+            if len(k) >= MIN_KEY:
+                keys.add(k)
+    return keys
+
+
+def _matched(key: str, others: set[str]) -> bool:
+    """같거나, 한쪽이 다른 쪽에 들어 있으면 같은 항목("사업자등록증" ↔ "신청기업의사업자등록증명")."""
+    return key in others or any(key in o or o in key for o in others)
+
+
+def list_diff(a: Iterable[Any], b: Iterable[Any]) -> tuple[set[str], set[str]]:
+    """(a에만 있는 열쇠, b에만 있는 열쇠)."""
+    ka, kb = list_keys(a), list_keys(b)
+    return {k for k in ka if not _matched(k, kb)}, {k for k in kb if not _matched(k, ka)}
 
 
 def loads_lenient(raw: Any) -> Any:
@@ -215,5 +264,6 @@ def values_equal(value_type: ValueType, a: Any, b: Any, *, default_year: int | N
             b = b.model_dump()
         return _canonical(a) == _canonical(b)
     if value_type == "list":
-        return _norm_list(a) == _norm_list(b)
+        only_a, only_b = list_diff(a, b)
+        return not only_a and not only_b
     return normalize_text(str(a)) == normalize_text(str(b))
