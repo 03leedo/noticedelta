@@ -23,7 +23,7 @@ HOST = "https://www.bizinfo.go.kr"
 
 class Clock:
     def __init__(self):
-        # 작업 등록 시각(실제 시각)보다 늦게 시작한다. 고정 날짜는 그날이 지나면 작업을 못 꺼낸다.
+        # 기본은 지금보다 조금 뒤. 작업 큐도 이 시계로 등록하므로 과거 날짜로 바꿔도 된다.
         self.t = datetime.now(UTC) + timedelta(minutes=1)
 
     def __call__(self):
@@ -79,7 +79,7 @@ class Env:
             now=lambda: t,
         )
         with self.factory() as s:
-            enqueue_load(s, self.root)
+            enqueue_load(s, self.root, self.clock())
             s.commit()
 
     def work(self, parser=None):
@@ -311,3 +311,12 @@ def test_change_only_in_keys_the_app_does_not_read_carries_values_without_llm(en
             sa.select(models.EventRow).where(models.EventRow.type == "change.detected")
         ).all()
         assert any(e.payload.get("keys") for e in detected)  # 봉투에도 바뀐 키가 남는다
+
+
+def test_a_fixed_past_clock_still_runs_every_job(env):
+    # 작업 큐가 주입한 시계로 등록해야 과거 시각으로 다시 흘려도 작업을 꺼낸다(재생, platform-services 3.7)
+    env.clock.t = datetime(2026, 10, 23, 1, tzinfo=UTC)
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    stats = env.work()
+    assert (stats.done, stats.dead) == (6, 0) and env.jobs() == {"done": 6}

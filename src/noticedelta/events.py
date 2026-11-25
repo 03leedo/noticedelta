@@ -227,6 +227,7 @@ def _route(session: Session, env: EventRow) -> int:
             dedupe_key=sub.dedupe(env) if sub.dedupe else f"{env.id}:{sub.name}",
             concurrency_key=sub.concurrency(env) if sub.concurrency else None,
             priority=sub.priority,
+            now=env.recorded_at,  # 봉투를 쓴 쪽의 시계
         )
         n += job is not None
     return n

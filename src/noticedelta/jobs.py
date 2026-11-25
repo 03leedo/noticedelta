@@ -51,15 +51,20 @@ def enqueue(
     priority: int = 100,
     run_after: datetime | None = None,
     max_attempts: int = 3,
+    now: datetime | None = None,
 ) -> Job | None:
-    """작업을 등록한다. 같은 dedupe_key가 이미 있으면 None (멱등)."""
+    """작업을 등록한다. 같은 dedupe_key가 이미 있으면 None (멱등).
+
+    now: 부른 쪽의 시계. run_after가 없으면 이때부터 꺼낼 수 있다. 주입한 시계를 넘겨야
+    재생(같은 입력을 과거 시각으로 다시 흘리기)에서 작업이 같은 순서로 돈다(platform-services 3.7).
+    """
     job = Job(
         kind=kind,
         payload=dict(payload or {}),
         dedupe_key=dedupe_key,
         concurrency_key=concurrency_key,
         priority=priority,
-        run_after=run_after or _now(),
+        run_after=run_after or now or _now(),
         max_attempts=max_attempts,
     )
     try:

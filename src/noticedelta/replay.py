@@ -5,9 +5,8 @@
 - 파서: 원래 DB의 파싱 결과(parse_cache, 첨부의 parsed_key). 없으면 "기록 없음"으로 멈춘다.
 - LLM: 녹화본(REPLAY 모드 게이트웨이). 운영 워커가 추출기를 붙이지 않았으므로 기본은 없다.
 - 사람의 판단: 형식 변화 결정(source_drift). 결정한 뒤의 실행부터 같은 결정을 적용한다.
-- 시계: 실행 사이 간격을 지키며 앞으로 간다. 기다리는 작업이 있으면 다음 실행 전까지 앞으로 감는다.
-  작업 큐는 등록 시각에 실제 시계를 쓴다(jobs.enqueue). 그래서 재생 시계를 과거 날짜에 두면 작업을
-  꺼내지 못한다. 재생 시계는 "지금 + (그 실행 시각 - 첫 실행 시각)"으로 둔다. 시각은 해시에 넣지 않는다.
+- 시계: 실행마다 그 실행이 끝난 시각에서 시작한다. 기다리는 작업이 있으면 다음 실행 전까지 앞으로 감는다.
+  작업 큐도 이 시계로 등록한다(jobs.enqueue의 now). 시각은 해시에 넣지 않는다.
 
 출력은 수집 실행 묶음마다 봉투의 정규형(flight.canonical_lines)과 그 해시다. 같은 코드·설정으로
 기록된 묶음의 해시와 다르면 결정적이지 않은 것이 새는 것이다(버그). 판이 다르면 바꿔 재생이다.
@@ -18,7 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -247,10 +246,9 @@ def replay(
     waiting = list(decisions)
     bodies = {n: (root / "runs" / f"{n}.json").read_bytes() for n in names}
     times = [run_time(n, json.loads(bodies[n])) for n in names]
-    shift = (datetime.now(UTC) + timedelta(minutes=1) - times[0]) if times else timedelta(0)
     for i, name in enumerate(names):
         (runs_dir / f"{name}.json").write_bytes(bodies[name])
-        clock.t = max(clock.t, times[i] + shift)
+        clock.t = max(clock.t, times[i])
         with factory() as s:
             for d in [d for d in waiting if d.at <= times[i]]:
                 try:
@@ -258,9 +256,9 @@ def replay(
                     waiting.remove(d)
                 except LookupError:
                     pass  # 아직 붙잡히지 않았다. 붙잡힌 뒤의 실행에서 다시 본다
-            enqueue_load(s, runs_dir.parent)
+            enqueue_load(s, runs_dir.parent, clock())
             s.commit()
-        _drain(factory, ctx, clock, times[i + 1] + shift if i + 1 < len(names) else None)
+        _drain(factory, ctx, clock, times[i + 1] if i + 1 < len(names) else None)
 
     with factory() as s:
         flight.close_finished(s, clock.t)
