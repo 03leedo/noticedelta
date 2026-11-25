@@ -220,3 +220,23 @@ def test_keyword_candidates_ignore_bare_kkaji_and_seoryu():
     assert "deadline" in cands("예산 소진 시까지 상시 접수")
     assert "required_documents" in cands("첨부서류: 사업자등록증 사본")
     assert "required_documents" in cands("신청 시 증빙자료를 함께 낸다")
+
+
+def test_partial_list_from_changed_segments_is_checked_against_the_full_text():
+    from noticedelta.impact import _list_evidence
+
+    old_text = segment_document(
+        ["제출서류: 신청서 1부, 사업계획서 1부, 사업자등록증 사본 1부"], source="body"
+    )
+    new_text = segment_document(
+        ["제출서류: 신청서 1부, 사업계획서 1부, 사업자등록증 사본 1부, 수요처 확약서"],
+        source="body",
+    )
+    old = ["신청서", "사업계획서", "사업자등록증 사본"]
+    # 바뀐 조각만 읽어 목록 일부만 돌아와도, 빠졌다는 서류가 새 글에 그대로 있으면 변경이 아니다
+    assert _list_evidence(old, ["신청서"], old_text, old_text) is None
+    # 새 서류가 새 글에만 있으면 변경이고, 아직 있는 옛 서류는 값에 다시 붙는다
+    merged = _list_evidence(old, ["수요처 확약서"], old_text, new_text)
+    assert merged is not None and set(merged) == {"수요처 확약서", *old}
+    # 옛 글에 이미 있던 서류는 새로 생긴 것이 아니다(전에 놓친 것)
+    assert _list_evidence(["신청서"], ["신청서", "사업계획서"], old_text, old_text) is None

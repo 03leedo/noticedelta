@@ -15,7 +15,14 @@ from typing import Any, Literal, Protocol
 from noticedelta.eligibility import Judgment, RuleGroup, judge
 from noticedelta.matching import ChangeSet
 from noticedelta.segments import Segment
-from noticedelta.values import find_amounts, find_datetimes, values_equal
+from noticedelta.values import (
+    find_amounts,
+    find_datetimes,
+    list_diff,
+    list_keys,
+    squash,
+    values_equal,
+)
 
 REVIEW_THRESHOLD = 0.7
 
@@ -117,6 +124,33 @@ def _key(
     return f"{app_id}:{key}" if app_id else key
 
 
+def _squash(segments: Sequence[Segment]) -> str:
+    return squash(" ".join(s.text for s in segments))
+
+
+def _list_evidence(
+    old: list, new: list, old_segments: Sequence[Segment], new_segments: Sequence[Segment]
+) -> list | None:
+    """목록 필드(서류 등)를 부분 재추출하면 바뀐 조각만 본 탓에 목록의 일부만 돌아온다.
+
+    원문으로 다시 본다. 빠졌다는 항목이 새 판 글에 아직 있으면 빠진 것이 아니고, 생겼다는 항목이
+    옛 판 글에 이미 있었으면 새로 생긴 것이 아니다(전에 놓친 것). 진짜로 빠지거나 생긴 것이
+    없으면 None. 있으면 새 값에 아직 있는 옛 항목을 더해 돌려준다.
+    (엔진 평가에서 서류 가짜 알림 11건 중 4건이 이렇게 목록 일부만 돌아온 경우였다, 2026-11-25)
+    """
+    gone, came = list_diff(old, new)
+    if not gone and not came:
+        return None
+    old_text, new_text = _squash(old_segments), _squash(new_segments)
+    still_there = {k for k in gone if new_text and k in new_text}
+    really_gone = gone - still_there
+    really_new = {k for k in came if not (old_text and k in old_text)}
+    if not really_gone and not really_new:
+        return None
+    keep = [x for x in old if list_keys([x]) & still_there]
+    return list(new) + keep
+
+
 def run_impact(
     *,
     item_id: str,
@@ -182,6 +216,11 @@ def run_impact(
         if old is None or not values_equal(
             new.value_type, old.value, new.value, default_year=default_year
         ):
+            if old is not None and new.value_type == "list":
+                merged = _list_evidence(old.value, new.value, old_segments, change.segments)
+                if merged is None:  # 원문으로 보면 빠진 것도 생긴 것도 없다
+                    continue
+                reextracted[name] = replace(new, value=merged)
             real.add(name)
 
     fields = dict(old_fields)

@@ -214,3 +214,25 @@ def test_hyphenated_time_range_is_not_a_timezone():
 )
 def test_coerce_shape(vtype, given, expected):
     assert coerce_shape(vtype, given) == expected
+
+
+def test_list_items_compare_by_document_name_not_by_formatting():
+    from noticedelta.values import list_diff, list_keys
+
+    a = [
+        "[별지 1] 거래실적 총괄표 1부",
+        "장관표창에 대한 동의서",
+        "개인정보 수집 이용 동의서",
+        "중소(중견)기업 확인서",
+    ]
+    b = ["거래실적 총괄표", "장관표창에대한 동의서", "개인정보 수집이용동의서", "중소기업 확인서"]
+    assert values_equal("list", a, b)
+    # 한 줄에 여러 서류, 괄호 안의 "또는"은 나누지 않는다, 짧은 토막은 버린다
+    assert list_keys(["국세 및 지방세 완납증명서 1부"]) == {"지방세완납증명서"}
+    assert list_keys(["경력자(경력증명서 또는 자격득실확인서) 등"]) == {"경력자등"}
+    # 진짜로 생긴 서류는 남는다
+    assert list_diff(["사업계획서"], ["사업계획서", "공급기업 참여확인서(해당 시)"]) == (
+        set(),
+        {"공급기업참여확인서"},
+    )
+    assert not values_equal("list", ["사업계획서"], ["사업계획서", "공급기업 참여확인서"])
