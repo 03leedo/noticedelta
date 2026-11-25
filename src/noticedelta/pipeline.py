@@ -495,6 +495,8 @@ def handle_impact(ctx: Context) -> Handler:
             unknown_lineages=step.unknown,
             app_id=ctx.app.id,
             app_version=ctx.app.version,
+            alert_fields=ctx.app.alert_fields(),
+            verdict_alerts=ctx.app.alerts_on_verdict(),
         )
         _save_fields(ctx, session, pv, res.fields, res.stale)
         trace = Trace.of(job.payload)

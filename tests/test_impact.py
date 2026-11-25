@@ -240,3 +240,22 @@ def test_partial_list_from_changed_segments_is_checked_against_the_full_text():
     assert merged is not None and set(merged) == {"수요처 확약서", *old}
     # 옛 글에 이미 있던 서류는 새로 생긴 것이 아니다(전에 놓친 것)
     assert _list_evidence(["신청서"], ["신청서", "사업계획서"], old_text, old_text) is None
+
+
+def test_app_alert_rules_decide_which_changes_reach_people():
+    deadline = {"deadline": FieldValue("deadline", "datetime", "2026-11-07 18:00", ["L6"])}
+    extended = [OLD_DOC[0].replace("2026년 10월 31일 18:00", "2026년 11월 7일 18:00")]
+    # 앱이 마감 변경을 알리지 않으면 값은 새로 저장하지만 알림은 없다
+    res, _ = run(extended, deadline, alert_fields={"amount"})
+    assert res.real_changes == {"deadline"} and res.alerts == []
+    assert res.fields["deadline"].value == "2026-11-07 18:00"
+    # 판정 알림을 끈 앱은 자격이 바뀌어도 알리지 않는다
+    narrowed = [OLD_DOC[0].replace("창업 7년 이내", "창업 5년 이내")]
+    rules = {"eligibility_rules": FieldValue("eligibility_rules", "rules", RULES_60, ["L3"])}
+    res, _ = run(narrowed, rules, verdict_alerts=False)
+    assert res.real_changes == {"eligibility_rules"} and res.alerts == []
+
+
+def test_grant_app_alerts_deadline_amount_documents_and_verdicts():
+    assert grants.APP.alert_fields() == {"deadline", "amount", "required_documents"}
+    assert grants.APP.alerts_on_verdict()

@@ -3,6 +3,8 @@
     uv run python scripts/replay.py                       # 모든 실행
     uv run python scripts/replay.py --upto 20261117T103910  # 이 실행까지
     uv run python scripts/replay.py --twice               # 두 번 돌려 서로 같은지도 본다(결정성)
+    uv run python scripts/replay.py --save data/replay/baseline.json.gz      # 기준선 남기기
+    uv run python scripts/replay.py --against data/replay/baseline.json.gz   # 코드를 고친 뒤 회귀 시험
 
 파서는 부르지 않고 원래 DB의 파싱 결과를 쓴다. 없으면 "기록 없음"으로 그 작업만 멈춘다.
 원래 DB와 원문 저장소는 읽기만 한다(마이그레이션도 하지 않는다). 재생 DB는 data/replay/에 둔다.
@@ -22,7 +24,13 @@ from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.config import database_url, load_env  # noqa: E402
 from noticedelta.db import make_engine  # noqa: E402
 from noticedelta.flight import platform_rev  # noqa: E402
-from noticedelta.replay import compare, replay  # noqa: E402
+from noticedelta.replay import (  # noqa: E402
+    against_baseline,
+    compare,
+    load_baseline,
+    replay,
+    save_baseline,
+)
 
 
 def main() -> None:
@@ -32,6 +40,8 @@ def main() -> None:
     ap.add_argument("--work", default=str(ROOT / "data" / "replay"))
     ap.add_argument("--twice", action="store_true", help="두 번 돌려 해시가 같은지 본다")
     ap.add_argument("--show", type=int, default=5, help="다른 줄을 몇 개까지 보일까")
+    ap.add_argument("--save", type=Path, help="이번 재생을 기준선으로 남긴다")
+    ap.add_argument("--against", type=Path, help="기준선과 비교한다(플랫폼 회귀 시험)")
     args = ap.parse_args()
     load_env()
     # 원래 DB는 읽기만 한다. open_db()는 최신 스키마로 올리므로 쓰지 않는다
@@ -66,6 +76,23 @@ def main() -> None:
             for line in only_rec[: args.show]:
                 print(f"  - {line[:300]}")
             for line in only_rep[: args.show]:
+                print(f"  + {line[:300]}")
+    if args.save:
+        save_baseline(a, args.save)
+        print(f"\n기준선을 남겼어요: {args.save}")
+    if args.against:
+        base = load_baseline(args.against)
+        changed, new = against_baseline(a, base)
+        print(
+            f"\n회귀 시험: 기준선 판 {base['platform_rev']} → 지금 판 {platform_rev()} · "
+            f"실행 {len(a.runs)}개 중 출력이 달라진 실행 {len(changed)}개"
+            + (f" · 기준선에 없던 실행 {len(new)}개" if new else "")
+        )
+        for reg in changed:
+            print(f"\n{reg.run}: 기준선에만 {len(reg.only_base)}줄, 지금만 {len(reg.only_now)}줄")
+            for line in reg.only_base[: args.show]:
+                print(f"  - {line[:300]}")
+            for line in reg.only_now[: args.show]:
                 print(f"  + {line[:300]}")
     if b is not None:
         for x, y in zip(a.runs, b.runs, strict=True):

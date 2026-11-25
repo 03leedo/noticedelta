@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol
 
@@ -167,7 +167,12 @@ def run_impact(
     unknown_lineages: frozenset[str] | set[str] = frozenset(),
     app_id: str = "",
     app_version: int = 0,
+    alert_fields: Collection[str] | None = None,
+    verdict_alerts: bool = True,
 ) -> ImpactResult:
+    """alert_fields: 값 변경을 구독자에게 알릴 필드(앱 정의의 alerts.rules). None이면 구독한 필드 모두.
+    verdict_alerts: 판정이 바뀐 사람에게 알리는가.
+    """
     # ⓪ 새 버전에서 읽지 못한 첨부에 걸린 필드: 바뀌었는지 모른다. 재추출하지 않고 stale로 둔다.
     unknown_fields = {
         name for name, fv in old_fields.items() if set(fv.sources) & set(unknown_lineages)
@@ -240,7 +245,7 @@ def run_impact(
     rules_fields = {
         n for n in real if fields[n].value_type == "rules"
     }  # 규칙식 필드: 사람별로 다시 판정
-    for rules_field in sorted(rules_fields):
+    for rules_field in sorted(rules_fields) if verdict_alerts else ():
         new_rules = RuleGroup.model_validate(fields[rules_field].value)
         # 판정 기록이 없는 사용자도 본다. 조건이 완화돼 새로 해당하게 된 사람에게도 알려야 한다.
         for person_id in sorted(set(old_judgments) | set(profiles)):
@@ -263,6 +268,8 @@ def run_impact(
                     app_version,
                 )
     for name in sorted(real - rules_fields):
+        if alert_fields is not None and name not in alert_fields:
+            continue  # 값은 새로 저장하지만 이 앱은 이 필드의 변경을 알리지 않는다
         for sub in subscriptions:
             if name in sub.fields:
                 k = _key(sub.person_id, item_id, name, to_version_id, app_id)
