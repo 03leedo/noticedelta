@@ -27,7 +27,14 @@ from noticedelta.evaluation.methods import (
     Outcome,
 )
 from noticedelta.evaluation.metrics import Label, Score, score, wilson
-from noticedelta.evaluation.run import Row, disagreements, evaluate, input_sizes, render
+from noticedelta.evaluation.run import (
+    Row,
+    disagreements,
+    evaluate,
+    input_sizes,
+    render,
+    render_by_field,
+)
 
 __all__ = [
     "DIFF_TEMPLATE",
@@ -49,6 +56,7 @@ __all__ = [
     "load_chains",
     "load_labels",
     "render",
+    "render_by_field",
     "score",
     "split_of",
     "wilson",

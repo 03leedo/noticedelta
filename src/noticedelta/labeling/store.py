@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import json
 import math
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -199,6 +201,34 @@ def save_labels(
     return n
 
 
+# --- 먼저 달 정정 (순서만 정한다) ---
+
+# 평가가 남기는 순서 파일의 묶음. 화면은 묶음 이름만 보이고, 어느 방식이 무엇을 말했는지는 보이지 않는다.
+FOCUS_GROUPS = {
+    "first": "먼저: 방식끼리 판단이 갈린 정정",
+    "rest": "그다음: 개발 세트 나머지",
+    "check": "확인: 다른 라벨러가 단 것 가운데 뽑은 표본 (그 답은 보이지 않음)",
+}
+
+
+def write_focus(path: Path, events: list[tuple[str, str]], *, split: str) -> None:
+    """[(이후 버전 ID, 묶음)]을 순서대로 쓴다. 필드와 값은 쓰지 않는다(라벨은 엔진 결과를 보기 전에)."""
+    bad = {g for _, g in events} - set(FOCUS_GROUPS)
+    if bad:
+        raise ValueError(f"모르는 묶음: {sorted(bad)}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {"version": 1, "split": split, "events": [{"id": e, "group": g} for e, g in events]}
+    path.write_text(json.dumps(body, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def load_focus(path: Path) -> list[tuple[str, str]]:
+    """순서 파일을 읽는다. 없으면 빈 목록(화면은 예전처럼 오래된 순으로 보인다)."""
+    if not path.exists():
+        return []
+    body = json.loads(path.read_text(encoding="utf-8"))
+    return [(e["id"], e["group"]) for e in body["events"] if e["group"] in FOCUS_GROUPS]
+
+
 # --- 2차 표본과 일치도 ---
 
 
@@ -255,3 +285,46 @@ def agreement(session: Session, labeler: str = "me") -> Agreement:
     first, second = [p[0] for p in pairs], [p[1] for p in pairs]
     agree = sum(x == y for x, y in pairs) / len(pairs)
     return Agreement(len(pairs), agree, cohen_kappa(first, second))
+
+
+def check_sample(
+    session: Session,
+    peer: str,
+    *,
+    share: float = SECOND_ROUND_SHARE,
+    seed: str = "noticedelta-check",
+) -> list[str]:
+    """peer가 1차 라벨을 단 정정 가운데 share(올림)를 시드로 고정해 뽑는다. 사람이 다시 달아 비교한다."""
+    ids = sorted(
+        set(
+            session.scalars(
+                sa.select(LabelRow.to_version_id).where(
+                    LabelRow.labeler == peer, LabelRow.round == 1
+                )
+            )
+        )
+    )
+    ids.sort(key=lambda v: hashlib.sha256(f"{seed}:{v}".encode()).hexdigest())
+    return ids[: math.ceil(len(ids) * share)]
+
+
+@dataclass
+class Between:
+    agreement: Agreement
+    differ: list[tuple[str, str, str, str]]  # (이후 버전 ID, 필드, a의 상태, b의 상태)
+
+
+def agreement_between(session: Session, a: str, b: str, round_no: int = 1) -> Between:
+    """두 라벨러가 같은 회차에 단 상태 라벨이 얼마나 같은가 (필드 단위). 둘 다 단 것만 센다."""
+    rows = session.scalars(
+        sa.select(LabelRow).where(LabelRow.round == round_no, LabelRow.labeler.in_((a, b)))
+    ).all()
+    by = {(r.labeler, r.to_version_id, r.field): r.status for r in rows}
+    keys = sorted({(v, f) for (who, v, f) in by if who == a and (b, v, f) in by})
+    pairs = [(by[(a, v, f)], by[(b, v, f)]) for v, f in keys]
+    differ = [(v, f, x, y) for (v, f), (x, y) in zip(keys, pairs, strict=True) if x != y]
+    if not pairs:
+        return Between(Agreement(0, None, None), [])
+    agree = sum(x == y for x, y in pairs) / len(pairs)
+    kappa = cohen_kappa([x for x, _ in pairs], [y for _, y in pairs])
+    return Between(Agreement(len(pairs), agree, kappa), differ)

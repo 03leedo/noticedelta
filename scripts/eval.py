@@ -4,6 +4,9 @@
     uv run python scripts/eval.py --split test          # 시험 세트 (측정 동결 때만 본다)
     uv run python scripts/eval.py --harness personal    # 엔진에 하네스를 켠 줄을 더한다
     uv run python scripts/eval.py --disagreements       # 엔진과 B2가 다르게 본 (이벤트, 필드) 목록
+    uv run python scripts/eval.py --labeler claude --override me   # AI 라벨, 사람이 판정한 칸은 사람 답으로
+    uv run python scripts/eval.py --focus-out data/labels/focus-dev.json
+                                                        # 라벨 화면 순서 파일 (갈린 정정 먼저, 값은 안 씀)
     uv run python scripts/eval.py --mode replay_or_live # 녹화본이 없는 호출은 실제로 부르고 녹화한다
     uv run python scripts/eval.py --provider pickle --mode replay_or_live  # 피클 학교 모델(무료)
     uv run python scripts/eval.py --provider pickle --plan         # 보내지 않고 토큰이 얼마나 들지 센다
@@ -36,8 +39,10 @@ from noticedelta.evaluation import (  # noqa: E402
     load_chains,
     load_labels,
     render,
+    render_by_field,
 )
 from noticedelta.grants import KEYWORDS, META_FIELDS  # noqa: E402
+from noticedelta.labeling.store import write_focus  # noqa: E402
 from noticedelta.llm import (  # noqa: E402
     TOKENS_PER_CHAR,
     Budget,
@@ -66,6 +71,12 @@ def main() -> None:
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.REPLAY.value)
     ap.add_argument("--harness", choices=["public", "personal"], help="하네스를 켠 엔진을 더한다")
     ap.add_argument("--disagreements", action="store_true")
+    ap.add_argument("--labeler", default="me", help="이 이름으로 단 라벨로 채점한다 (예: claude)")
+    ap.add_argument(
+        "--override",
+        help="이 라벨러가 단 칸은 그 답으로 덮어쓴다 (예: --labeler claude --override me)",
+    )
+    ap.add_argument("--focus-out", type=Path, help="라벨 화면 순서 파일을 쓴다 (label.py --focus)")
     ap.add_argument("--provider", choices=["anthropic", "pickle"], help="기본은 .env의 공급자")
     ap.add_argument("--model", help="기본은 공급자의 기본 모델(.env의 PICKLE_MODEL 등)")
     ap.add_argument(
@@ -120,7 +131,11 @@ def main() -> None:
 
     with factory() as s:
         chains = load_chains(s, split=None if args.split == "all" else args.split, meta=api_meta)
-        labels = load_labels(s)
+        labels = load_labels(s, labeler=args.labeler)
+        if args.override:
+            # 사람이 다시 판정한 (이벤트, 필드)는 그 답으로 바꾼다. 없던 칸은 더하지 않는다
+            human = load_labels(s, labeler=args.override)
+            labels |= {k: v for k, v in human.items() if k in labels}
     events = sum(len(c.events) for c in chains)
     labeled = len({e for e, _ in labels} & {ev.event_id for c in chains for ev in c.events})
     print(
@@ -128,17 +143,28 @@ def main() -> None:
     )
     rows = evaluate(chains, methods, labels)
     print(render(rows, input_sizes(chains)))
+    if labeled:
+        print(f"\n필드별 (라벨: {args.labeler}):\n")
+        print(render_by_field(rows, labels))
     if mode is Mode.PLAN:
         n, t = sum(r.planned_calls for r in rows), sum(r.planned_tokens for r in rows)
         print(f"\n미리 세기 합계: 보낼 호출 {n}개, 입력 토큰 어림 {t:,} (토큰/글자 {ratio:.3f})")
     if budget is not None:
         print(f"\n토큰 예산: {budget.limit:,} 중 {budget.spent:,} 씀")
+    by_name = {r.name: r for r in rows}
+    pairs = disagreements(by_name["변경 영향 엔진"], by_name["B2 전체 재추출"])
     if args.disagreements:
-        by_name = {r.name: r for r in rows}
-        pairs = disagreements(by_name["변경 영향 엔진"], by_name["B2 전체 재추출"])
         print(f"\n엔진과 B2가 다르게 본 (이벤트, 필드) {len(pairs)}건")
         for event_id, name in pairs:
             print(f"  {event_id} {name}")
+    if args.focus_out:
+        split = {e for e, _ in pairs}
+        order = [ev.event_id for c in chains for ev in c.events]
+        focus = [(e, "first") for e in order if e in split]
+        focus += [(e, "rest") for e in order if e not in split]
+        write_focus(args.focus_out, focus, split=args.split)
+        first = len(split)
+        print(f"\n라벨 순서 파일: {args.focus_out} (먼저 {first}건, 그다음 {len(order) - first}건)")
 
 
 if __name__ == "__main__":

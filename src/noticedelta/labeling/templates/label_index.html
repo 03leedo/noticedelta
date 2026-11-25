@@ -1,17 +1,32 @@
 {% extends "base.html" %}
 {% block title %}정답 라벨 · NoticeDelta{% endblock %}
-{% block body %}
-<h1>정답 라벨</h1>
-<p class="muted">정정 {{ events | length }}건 · <a href="/round2">2차 라벨 (7일 뒤 30%)</a> · <a href="/agreement">일치도</a></p>
-<p class="note">엔진 결과를 보기 전에 라벨합니다. 지침은 <code>docs/labeling.md</code>에 있습니다.</p>
-{% for e in events %}
+{% macro card(e) %}
 <article class="card">
   <h2><a href="/e/{{ e.to_version.id }}?round=1">{{ e.title }}</a></h2>
   <p class="muted">v{{ e.from_version.version_no }} → v{{ e.to_version.version_no }} ·
   {% if 1 in e.rounds %}1차 완료{% else %}1차 전{% endif %}
   {% if e.to_version.id in due %} · <a href="/e/{{ e.to_version.id }}?round=2">2차 대상</a>{% elif 2 in e.rounds %} · 2차 완료{% endif %}</p>
 </article>
+{% endmacro %}
+{% block body %}
+<h1>정답 라벨</h1>
+<p class="muted">정정 {{ events | length }}건 · <a href="/round2">2차 라벨 (7일 뒤 30%)</a> · <a href="/agreement">일치도</a></p>
+<p class="note">엔진 결과를 보기 전에 라벨합니다. 지침은 <code>docs/labeling.md</code>에 있습니다.</p>
+{% for g, refs in groups.items() %}
+{% set ns = namespace(done=0, todo=none) %}
+{% for e in refs %}{% if 1 in e.rounds %}{% set ns.done = ns.done + 1 %}{% elif ns.todo is none %}{% set ns.todo = e %}{% endif %}{% endfor %}
+<h2>{{ FOCUS_GROUPS[g] }} <span class="muted">{{ ns.done }}/{{ refs | length }} 완료</span></h2>
+{% if ns.todo %}<p><a href="/e/{{ ns.todo.to_version.id }}?round=1">이어서 라벨하기 →</a></p>{% endif %}
+{% for e in refs %}{{ card(e) }}{% endfor %}
+{% endfor %}
+{% if groups %}
+<details>
+<summary>그 밖의 정정 {{ rest | length }}건 (평가에 아직 안 쓰는 것 포함)</summary>
+{% for e in rest %}{{ card(e) }}{% endfor %}
+</details>
 {% else %}
+{% for e in rest %}{{ card(e) }}{% else %}
 <p class="muted">아직 정정이 없습니다.</p>
 {% endfor %}
+{% endif %}
 {% endblock %}
