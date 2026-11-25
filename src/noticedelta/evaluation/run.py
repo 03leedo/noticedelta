@@ -11,6 +11,7 @@ from noticedelta.evaluation.methods import Method
 from noticedelta.evaluation.metrics import Label, Score, score, wilson
 
 TEXT_ONLY = ("body", "attachment")  # API 메타에는 안 보이고 본문·첨부에서만 보이는 변경
+_SUMS = ("calls", "input_chars", "input_tokens", "output_tokens", "planned_calls", "planned_tokens")
 
 
 @dataclass
@@ -20,6 +21,10 @@ class Row:
     judged: int  # 판단한 이벤트 수. 녹화본이 없으면 줄어든다
     calls: int
     input_chars: int
+    input_tokens: int
+    output_tokens: int
+    planned_calls: int  # 미리 세기: 녹화본이 없어 보냈어야 할 호출(처음 추출 포함)
+    planned_tokens: int
     predictions: dict[str, set[str] | None]
     score: Score
     score_meta: Score  # API 메타로 보이는 변경만 양성으로
@@ -35,22 +40,30 @@ def evaluate(
     rows = []
     for name, make in methods.items():
         predictions: dict[str, set[str] | None] = {}
-        calls = chars = 0
+        total = dict.fromkeys(_SUMS, 0)
         for chain in chains:
             method = make()
             method.start(chain.first_segments)
+            first = getattr(method, "start_cost", None)
+            if first is not None:  # 처음 추출은 이벤트 비용이 아니지만 미리 세기에는 든다
+                total["planned_calls"] += first.planned_calls
+                total["planned_tokens"] += first.planned_tokens
             for ev in chain.events:
                 out = method.step(ev)
                 predictions[ev.event_id] = out.changed
-                calls += out.calls
-                chars += out.input_chars
+                for k in _SUMS:
+                    total[k] += getattr(out, k)
         rows.append(
             Row(
                 name=name,
                 events=len(predictions),
                 judged=sum(p is not None for p in predictions.values()),
-                calls=calls,
-                input_chars=chars,
+                calls=total["calls"],
+                input_chars=total["input_chars"],
+                input_tokens=total["input_tokens"],
+                output_tokens=total["output_tokens"],
+                planned_calls=total["planned_calls"],
+                planned_tokens=total["planned_tokens"],
                 predictions=predictions,
                 score=score(predictions, labels),
                 score_meta=score(predictions, labels, visible_in=("api_meta",)),
@@ -103,18 +116,32 @@ def _rate(k: int, n: int) -> str:
 def render(rows: Sequence[Row], sizes: Sequence[Mapping[str, int]] = ()) -> str:
     """마크다운 표. 사람 라벨이 없는 칸은 "라벨 없음", 판단하지 못한 방식은 판단 수가 0이다."""
     lines = [
-        "| 방식 | 이벤트 | 판단함 | 변경 있다고 봄 | LLM 호출 | 입력 글자 | 재현율 | 정밀도 | 가짜 알림률 | 재현율: 메타로 보이는 변경 | 재현율: 본문·첨부에서만 |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| 방식 | 이벤트 | 판단함 | 변경 있다고 봄 | LLM 호출 | 입력 글자 | 입력 토큰 | 출력 토큰 | 재현율 | 정밀도 | 가짜 알림률 | 재현율: 메타로 보이는 변경 | 재현율: 본문·첨부에서만 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         s = r.score
         said = sum(bool(p) for p in r.predictions.values())
         lines.append(
             f"| {r.name} | {r.events} | {r.judged} | {said} | {r.calls} | {r.input_chars:,} "
+            f"| {r.input_tokens:,} | {r.output_tokens:,} "
             f"| {_rate(s.tp, s.tp + s.fn)} | {_rate(s.tp, s.tp + s.fp)} | {_rate(s.fp, s.fp + s.tn)} "
             f"| {_rate(r.score_meta.tp, r.score_meta.tp + r.score_meta.fn)} "
             f"| {_rate(r.score_text.tp, r.score_text.tp + r.score_text.fn)} |"
         )
+    if any(r.planned_calls for r in rows):
+        lines += [
+            "",
+            "미리 세기: 녹화본이 없어 실제로 돌리면 보낼 호출 (같은 요청은 한 번만 센다):",
+            "",
+            "| 방식 | 보낼 호출 | 입력 토큰 어림 |",
+            "|---|---|---|",
+        ]
+        lines += [
+            f"| {r.name} | {r.planned_calls} | {r.planned_tokens:,} |"
+            for r in rows
+            if r.planned_calls
+        ]
     if sizes:
         b2 = [x["b2"] for x in sizes]
         lines += [

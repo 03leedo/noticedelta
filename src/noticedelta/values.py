@@ -159,6 +159,20 @@ def _norm_list(v: Iterable[Any]) -> set[str]:
     return {normalize_text(str(x)) for x in v}
 
 
+def loads_lenient(raw: Any) -> Any:
+    """LLM이 준 value_json을 읽는다. JSON이 아니면 글자 그대로 받는다(모양은 coerce_shape가 맞춘다).
+
+    값을 JSON 문자열로 감싸라고 해도 맨 글자("2026-10-30 17:00")를 넣는 모델이 있다. 버리면
+    있는 마감일을 놓친다(피클 학교 모델, 2026-11-25 추출 틀 비교에서 발견).
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw.strip() or None
+
+
 def coerce_shape(value_type: ValueType, v: Any) -> Any | None:
     """LLM이 준 값을 타입에 맞는 모양으로. 맞출 수 없거나 비었으면 None(값 없음으로 본다).
 

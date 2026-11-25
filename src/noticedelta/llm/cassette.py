@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Protocol
 
@@ -35,3 +36,10 @@ class FileCassetteStore:
         p.write_text(
             json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n"
         )
+
+    def records(self) -> Iterator[dict]:
+        """저장된 녹화본 전부(토큰/글자 비율을 재는 데 쓴다, gateway.calibrate)."""
+        if not self.root.exists():
+            return
+        for p in sorted(self.root.glob("*/*.json")):
+            yield json.loads(p.read_text(encoding="utf-8"))
