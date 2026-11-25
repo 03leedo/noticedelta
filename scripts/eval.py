@@ -40,6 +40,7 @@ from noticedelta.evaluation import (  # noqa: E402
     load_labels,
     render,
     render_by_field,
+    with_meta,
 )
 from noticedelta.grants import KEYWORDS, META_FIELDS  # noqa: E402
 from noticedelta.labeling.store import write_focus  # noqa: E402
@@ -142,6 +143,12 @@ def main() -> None:
         f"모델: {choice.name}/{choice.model} · 틀: {template} · 세트: {args.split} · 사업 {len(chains)}개 · 정정 이벤트 {events}건 · 라벨이 있는 이벤트 {labeled}건\n"
     )
     rows = evaluate(chains, methods, labels)
+    by_name = {r.name: r for r in rows}
+    if "B0 메타 비교" in by_name and "변경 영향 엔진" in by_name and META_FIELDS:
+        # 출처가 구조화해 준 필드(마감)는 출처 값으로, 나머지는 엔진으로 (앱 정의의 from: meta)
+        rows.append(
+            with_meta(by_name["변경 영향 엔진"], by_name["B0 메타 비교"], META_FIELDS, labels)
+        )
     print(render(rows, input_sizes(chains)))
     if labeled:
         print(f"\n필드별 (라벨: {args.labeler}):\n")
