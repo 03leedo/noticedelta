@@ -11,7 +11,7 @@
   table.labels td { padding:4px; vertical-align:top; } table.labels input[type=text] { width:100%; }
   .radios label { display:inline-flex; gap:4px; margin:0 10px 0 0; font-weight:400; }
 </style>
-<p class="muted"><a href="/">목록</a> · {{ round }}차 라벨{% if round == 2 %} (1차 답은 보이지 않습니다){% endif %}</p>
+<p class="muted"><a href="/">목록</a> · {{ round }}차 라벨{% if round == 2 %} (1차 답은 보이지 않습니다){% endif %}{% if pos %} · 순서 {{ pos[0] }}/{{ pos[1] }}{% endif %}</p>
 <h1>{{ v.ref.title }}</h1>
 <p class="muted">v{{ v.ref.from_version.version_no }} → v{{ v.ref.to_version.version_no }}</p>
 
@@ -64,6 +64,6 @@
 </table>
 <label for="note">메모</label>
 <input type="text" id="note" name="note" style="width:100%" value="{{ saved[FIELDS[0]].note if saved.get(FIELDS[0]) and saved[FIELDS[0]].note else '' }}">
-<button type="submit">{{ round }}차 라벨 저장</button>
+<button type="submit">{{ round }}차 라벨 저장{% if pos and round == 1 %}하고 다음{% endif %}</button>
 </form>
 {% endblock %}

@@ -1,6 +1,6 @@
 """정답 라벨 화면 (작업 목록 5a). 내 PC에서만 띄우는 도구다(127.0.0.1).
 
-/                 라벨할 정정 목록과 회차별 진행
+/                 라벨할 정정 목록과 회차별 진행 (순서 파일이 있으면 그 순서로 먼저)
 /e/<버전>?round=1 원문 비교(API 값·본문·첨부 원본)와 필드별 라벨 입력
 /round2           7일 지난 1차 라벨 중 30% 다시 라벨
 /agreement        1차·2차 일치도 (Cohen's kappa)
@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -26,6 +26,7 @@ from noticedelta.blobstore import BlobNotFound, BlobStore
 from noticedelta.db.models import LabelRow
 from noticedelta.labeling.store import (
     FIELDS,
+    FOCUS_GROUPS,
     STATUSES,
     VISIBLE,
     agreement,
@@ -51,7 +52,9 @@ def create_label_app(
     *,
     labeler: str = "me",
     now: Callable[[], datetime] = _now,
+    focus: Sequence[tuple[str, str]] = (),
 ) -> FastAPI:
+    """focus: [(이후 버전 ID, 묶음)]. 이 순서로 먼저 보이고, 1차를 저장하면 다음 것으로 넘어간다."""
     app = FastAPI(title="NoticeDelta 라벨", docs_url=None, redoc_url=None, openapi_url=None)
     env = Environment(
         loader=FileSystemLoader([HERE / "templates", WEB_TEMPLATES]),
@@ -63,14 +66,37 @@ def create_label_app(
         "FIELD_NAMES": FIELD_NAMES,
         "STATUSES": STATUSES,
         "VISIBLE": VISIBLE,
+        "FOCUS_GROUPS": FOCUS_GROUPS,
     }
+    order = [e for e, _ in focus]
+    group = dict(focus)
+
+    def _queue(evs):
+        """(묶음별로 [EventRef], 나머지). 순서 파일에 있지만 DB에 없는 정정은 건너뛴다."""
+        by_id = {e.to_version.id: e for e in evs}
+        groups = {
+            g: [by_id[i] for i in order if i in by_id and group[i] == g] for g in FOCUS_GROUPS
+        }
+        rest = [e for e in evs if e.to_version.id not in group]
+        return {g: refs for g, refs in groups.items() if refs}, rest
+
+    def _live(s) -> tuple[list[str], set[str]]:
+        """(DB에 있는 순서, 1차를 끝낸 것)."""
+        evs = events(s, labeler)
+        have = {e.to_version.id for e in evs}
+        return [i for i in order if i in have], {e.to_version.id for e in evs if 1 in e.rounds}
+
+    def _next(s, current: str) -> str | None:
+        live, done = _live(s)
+        return next((i for i in live if i != current and i not in done), None)
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request):
         with session_factory() as s:
             evs = events(s, labeler)
             due = {e.to_version.id for e in second_round(s, now(), labeler=labeler)}
-        ctx = {**common, "events": evs, "due": due}
+        groups, rest = _queue(evs)
+        ctx = {**common, "events": evs, "groups": groups, "rest": rest, "due": due}
         return templates.TemplateResponse(request, "label_index.html", ctx)
 
     @app.get("/e/{version_id}", response_class=HTMLResponse)
@@ -91,8 +117,10 @@ def create_label_app(
                     )
                 )
             }
+            live, _ = _live(s)
         # 2차에서는 1차 답을 보여 주지 않는다(같은 회차에 저장한 값만 다시 채운다).
-        ctx = {**common, "v": view, "round": round, "saved": saved}
+        pos = (live.index(version_id) + 1, len(live)) if version_id in live else None
+        ctx = {**common, "v": view, "round": round, "saved": saved, "pos": pos}
         return templates.TemplateResponse(request, "label_event.html", ctx)
 
     @app.post("/e/{version_id}")
@@ -112,6 +140,9 @@ def create_label_app(
                 raise HTTPException(404, "없는 정정입니다")
             save_labels(s, view.ref, round=round, labeler=labeler, rows=rows, now=now())
             s.commit()
+            nxt = _next(s, version_id) if round == 1 and version_id in group else None
+        if nxt:
+            return RedirectResponse(f"/e/{nxt}?round=1", status_code=303)
         return RedirectResponse("/" if round == 1 else "/round2", status_code=303)
 
     @app.get("/round2", response_class=HTMLResponse)

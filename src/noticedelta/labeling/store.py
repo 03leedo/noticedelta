@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import json
 import math
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -197,6 +199,30 @@ def save_labels(
         n += 1
     session.flush()
     return n
+
+
+# --- 먼저 달 정정 (순서만 정한다) ---
+
+# 평가가 남기는 순서 파일의 묶음. 화면은 묶음 이름만 보이고, 어느 방식이 무엇을 말했는지는 보이지 않는다.
+FOCUS_GROUPS = {"first": "먼저: 방식끼리 판단이 갈린 정정", "rest": "그다음: 개발 세트 나머지"}
+
+
+def write_focus(path: Path, events: list[tuple[str, str]], *, split: str) -> None:
+    """[(이후 버전 ID, 묶음)]을 순서대로 쓴다. 필드와 값은 쓰지 않는다(라벨은 엔진 결과를 보기 전에)."""
+    bad = {g for _, g in events} - set(FOCUS_GROUPS)
+    if bad:
+        raise ValueError(f"모르는 묶음: {sorted(bad)}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {"version": 1, "split": split, "events": [{"id": e, "group": g} for e, g in events]}
+    path.write_text(json.dumps(body, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def load_focus(path: Path) -> list[tuple[str, str]]:
+    """순서 파일을 읽는다. 없으면 빈 목록(화면은 예전처럼 오래된 순으로 보인다)."""
+    if not path.exists():
+        return []
+    body = json.loads(path.read_text(encoding="utf-8"))
+    return [(e["id"], e["group"]) for e in body["events"] if e["group"] in FOCUS_GROUPS]
 
 
 # --- 2차 표본과 일치도 ---

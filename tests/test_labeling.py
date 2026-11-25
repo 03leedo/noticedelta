@@ -159,3 +159,38 @@ def test_label_screen_round_trip(env):
     assert blob.status_code == 200 and blob.content == b"%PDF-1.7 new"
     assert client.get("/blob/not-a-key").status_code == 400
     assert client.get("/e/nope").status_code == 404
+
+
+def test_focus_order_and_save_then_next(env, tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from noticedelta.labeling.app import create_label_app
+    from noticedelta.labeling.store import load_focus, write_focus
+
+    path = tmp_path / "focus.json"
+    write_focus(path, [("PV32", "first"), ("PV12", "first"), ("PV52", "rest"), ("gone", "rest")], split="dev")  # fmt: skip
+    assert "eligibility" not in path.read_text(encoding="utf-8")  # 필드와 값은 안 쓴다
+    focus = load_focus(path)
+    assert load_focus(tmp_path / "none.json") == []
+    with pytest.raises(ValueError):
+        write_focus(path, [("PV32", "engine_said_changed")], split="dev")
+
+    factory, store = env
+    client = TestClient(
+        create_label_app(factory, store, now=lambda: T0, focus=focus), follow_redirects=False
+    )
+    page = client.get("/").text
+    # 먼저 묶음이 순서 파일 순서대로, 그 밖의 정정은 접힌 칸에
+    assert page.index("(가상) 사업 3") < page.index("(가상) 사업 1") < page.index("(가상) 사업 5")
+    assert page.index("(가상) 사업 5") < page.index("그 밖의 정정") < page.index("(가상) 사업 0")
+    assert "0/2 완료" in page and 'href="/e/PV32?round=1">이어서' in page
+    assert "순서 1/3" in client.get("/e/PV32?round=1").text
+
+    form = {f"{f}.status": "unchanged" for f in ("deadline", "amount", "eligibility_rules", "required_documents", "contact")}  # fmt: skip
+    r = client.post("/e/PV32?round=1", data=form)
+    assert r.headers["location"] == "/e/PV12?round=1"  # 저장하면 다음 것으로
+    assert "1/2 완료" in client.get("/").text
+    assert client.post("/e/PV12?round=1", data=form).headers["location"] == "/e/PV52?round=1"
+    assert client.post("/e/PV52?round=1", data=form).headers["location"] == "/"  # 다 했으면 목록
+    assert client.post("/e/PV02?round=1", data=form).headers["location"] == "/"  # 순서 밖은 그대로
