@@ -4,6 +4,7 @@
     uv run python scripts/eval.py --split test          # 시험 세트 (측정 동결 때만 본다)
     uv run python scripts/eval.py --harness personal    # 엔진에 하네스를 켠 줄을 더한다
     uv run python scripts/eval.py --disagreements       # 엔진과 B2가 다르게 본 (이벤트, 필드) 목록
+    uv run python scripts/eval.py --labeler claude --override me   # AI 라벨, 사람이 판정한 칸은 사람 답으로
     uv run python scripts/eval.py --focus-out data/labels/focus-dev.json
                                                         # 라벨 화면 순서 파일 (갈린 정정 먼저, 값은 안 씀)
     uv run python scripts/eval.py --mode replay_or_live # 녹화본이 없는 호출은 실제로 부르고 녹화한다
@@ -71,6 +72,10 @@ def main() -> None:
     ap.add_argument("--harness", choices=["public", "personal"], help="하네스를 켠 엔진을 더한다")
     ap.add_argument("--disagreements", action="store_true")
     ap.add_argument("--labeler", default="me", help="이 이름으로 단 라벨로 채점한다 (예: claude)")
+    ap.add_argument(
+        "--override",
+        help="이 라벨러가 단 칸은 그 답으로 덮어쓴다 (예: --labeler claude --override me)",
+    )
     ap.add_argument("--focus-out", type=Path, help="라벨 화면 순서 파일을 쓴다 (label.py --focus)")
     ap.add_argument("--provider", choices=["anthropic", "pickle"], help="기본은 .env의 공급자")
     ap.add_argument("--model", help="기본은 공급자의 기본 모델(.env의 PICKLE_MODEL 등)")
@@ -127,6 +132,10 @@ def main() -> None:
     with factory() as s:
         chains = load_chains(s, split=None if args.split == "all" else args.split, meta=api_meta)
         labels = load_labels(s, labeler=args.labeler)
+        if args.override:
+            # 사람이 다시 판정한 (이벤트, 필드)는 그 답으로 바꾼다. 없던 칸은 더하지 않는다
+            human = load_labels(s, labeler=args.override)
+            labels |= {k: v for k, v in human.items() if k in labels}
     events = sum(len(c.events) for c in chains)
     labeled = len({e for e, _ in labels} & {ev.event_id for c in chains for ev in c.events})
     print(
