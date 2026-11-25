@@ -52,6 +52,7 @@ from noticedelta.pipeline import (  # noqa: E402
     flight_config,
     handlers,
 )
+from noticedelta.vault import load_cipher  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 DAILY_TOKENS = int(os.environ.get("NOTICEDELTA_LLM_DAILY_TOKENS", "200000"))
@@ -111,6 +112,7 @@ def main() -> None:
 
     parser = DockerParser()
     ctx = Context(root=root, store=LocalBlobStore(root / "blobs"), parser=parser)
+    ctx.vault = load_cipher(ROOT / "data" / "vault.key")  # 판정 값은 금고에서(동의 안에서)
     budget = None
     if args.extract:
         choice = choose()

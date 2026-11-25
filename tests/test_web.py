@@ -58,8 +58,22 @@ def test_profile_gets_an_unguessable_personal_link(env):
     path = make_profile(client, **BUSAN_FOUNDER)
     token = path.rsplit("/", 1)[-1]
     assert path.startswith("/p/") and len(token) >= 24
+    from datetime import UTC, datetime
+
+    from noticedelta import vault
+
     with factory() as s:
-        attrs = s.get(models.Profile, people.resolve(s, token)).attributes
+        pid = people.resolve(s, token)
+        assert s.get(models.Profile, pid).attributes == {}  # 값은 프로필이 아니라 금고에
+        stored = s.scalars(sa.select(models.VaultValueRow.ciphertext)).all()
+        assert stored and not any("300000000" in c or "2021-01-01" in c for c in stored)  # 암호문
+        consents = {c.purpose for c in s.scalars(sa.select(models.ConsentRow))}
+        assert consents == {"judge", "notify"}  # 선택 동의(연구)는 하지 않았다
+        now = datetime.now(UTC)
+        g = vault.issue(
+            s, pid, "grant-alerts", vault.SELF, vault.keys_of(s, pid), holder="t", now=now
+        )
+        attrs = vault.read(s, vault.load_cipher(), g.id, now=now)
     assert attrs["revenue_krw"] == 300_000_000 and attrs["founded_on"] == "2021-01-01"
 
 

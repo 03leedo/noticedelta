@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 from test_history import DOCS, RULES, ByContent, pdf
 
-from noticedelta import people
+from noticedelta import people, vault
 from noticedelta.blobstore import LocalBlobStore
 from noticedelta.db import make_engine, models
 from noticedelta.jobs import counts, run_worker
@@ -188,8 +188,17 @@ def subscribe_eligible_user(env):
     with env.factory() as s:
         pv = s.scalars(sa.select(models.ItemVersion)).one()
         s.add(models.Person(id="u1"))
-        s.add(models.Profile(person_id="u1", attributes={"business_age_months": 72}))
+        # 프로필 행은 동의 기록만(값은 비어 있음). 구독·판정의 외래 키가 아직 이 표를 가리킨다
+        s.add(models.Profile(person_id="u1", attributes={}))
         s.flush()
+        # 판정에 쓰는 값은 금고에, 판정·알림 동의와 함께(platform-services 4장)
+        env.ctx.vault = vault.load_cipher()
+        at = datetime(2026, 10, 1, tzinfo=UTC)
+        vault.put(s, env.ctx.vault, "u1", {"business_age_months": 72}, source="input", now=at)
+        for purpose in ("judge", "notify"):
+            vault.grant_consent(
+                s, "u1", "grant-alerts", purpose, ["business_age_months"], text_version="t", now=at
+            )
         # 화면 시험용 링크. 토큰은 해시로만 남는다
         people.add_link(s, "u1", at=datetime(2026, 10, 1, tzinfo=UTC), token="u1")
         s.add(

@@ -21,7 +21,7 @@ from typing import Literal
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta import app_registry, flight
+from noticedelta import app_registry, flight, vault
 from noticedelta.appspec import AppDefinition, MetaRef
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
@@ -36,7 +36,6 @@ from noticedelta.db.models import (
     Notice,
     NoticeVersion,
     OutboxAlert,
-    Profile,
     SubscriptionRow,
 )
 from noticedelta.eligibility import Judgment, RuleGroup, judge, ruleset_hash
@@ -89,6 +88,7 @@ class Context:
     # 영향 계산(LLM 추출)을 돌릴 사업: all 모두, changed 정정이 생긴 사업, subscribed 구독자가 있는 사업.
     # 범위에 들어오면 그 사업의 판을 첫 판부터 차례로 계산한다(enqueue_item_impact).
     extract_scope: Literal["all", "changed", "subscribed"] = "all"
+    vault: vault.Cipher | None = None  # 개인정보 금고의 열쇠. 없으면 사람별 판정을 하지 않는다
 
 
 _DETECTORS: dict[tuple[str, int], Callable] = {}
@@ -550,10 +550,21 @@ def handle_impact(ctx: Context) -> Handler:
         ]
         old_judgments = _latest_judgments(session, item_id, ctx.app.id)
         users = {s.person_id for s in subs} | set(old_judgments)
-        profiles = {
-            p.person_id: dict(p.attributes)
-            for p in session.scalars(sa.select(Profile).where(Profile.person_id.in_(users)))
-        }
+        # 판정에 쓰는 값은 금고에서, 판정(judge)에 동의한 사람의 동의한 키만 허가를 받아 꺼낸다
+        profiles = (
+            vault.for_purpose(
+                session,
+                ctx.vault,
+                ctx.app.id,
+                users,
+                purpose="judge",
+                holder="svc:engine",
+                now=ctx.now(),
+                keys=ctx.app.subjects.attributes,
+            )
+            if ctx.vault is not None
+            else {}
+        )
         res = run_impact(
             candidate_detector=_detector(ctx.app),
             item_id=item_id,
