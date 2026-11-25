@@ -14,7 +14,7 @@ import hashlib
 import json
 import math
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -141,8 +141,10 @@ class Gateway:
         *,
         budget: Budget | None = None,
         tokens_per_char: float = TOKENS_PER_CHAR,
+        observer: Callable[[str, LLMRequest, LLMResponse], None] | None = None,
     ):
         self.provider = provider
+        self.observer = observer  # 호출마다 (녹화본 키, 요청, 응답)을 받는다. 비행 기록기가 쓴다
         self.budget = budget
         self.tokens_per_char = tokens_per_char
         self._planned: set[str] = set()
@@ -216,4 +218,6 @@ class Gateway:
         self.usage.cost_usd += resp.cost_usd
         for h in reversed(self.harnesses):
             resp = h.after(resp, trace)
+        if self.observer is not None:
+            self.observer(key, req, resp)
         return resp

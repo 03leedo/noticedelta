@@ -450,6 +450,45 @@ class EventRow(Base):
     payload: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
+class TraceRow(Base):
+    """비행 기록기의 묶음 하나 (platform-services 3.3, flight.py). 수집 실행 하나가 묶음 하나다.
+
+    봉투(event)는 베끼지 않는다. 같은 trace_id로 엮인다. digest는 묶음을 닫을 때 낸 출력의 해시로,
+    재생 결과와 비교한다(3.4 같게 재생).
+    """
+
+    __tablename__ = "trace"
+    id: Mapped[str] = mapped_column(sa.String(26), primary_key=True)  # 첫 봉투의 id와 같다
+    kind: Mapped[str] = mapped_column(sa.String(32))  # collect_run / eval / backtest / ...
+    name: Mapped[str | None] = mapped_column(sa.String(100))  # 수집 실행 이름 등
+    parent_id: Mapped[str | None] = mapped_column(sa.String(26))
+    started_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    platform_rev: Mapped[str] = mapped_column(sa.String(64))
+    app: Mapped[str | None] = mapped_column(sa.String(80))
+    config_hash: Mapped[str] = mapped_column(sa.String(64))
+    config: Mapped[dict] = mapped_column(JSONType, default=dict)  # 해시를 낸 설정(판들)
+    status: Mapped[str] = mapped_column(sa.String(16), default="open")  # open / closed
+    digest: Mapped[str | None] = mapped_column(sa.String(64))
+    events: Mapped[int | None] = mapped_column(sa.Integer)  # 닫을 때 센 봉투 수
+
+
+class RecordRow(Base):
+    """묶음 안에서 결정적이지 않은 경계를 지난 것 하나 (3.2). 큰 내용은 녹화본·원문 저장소에 두고 키만."""
+
+    __tablename__ = "record"
+    __table_args__ = (sa.UniqueConstraint("trace_id", "seq"),)
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    trace_id: Mapped[str] = mapped_column(sa.String(26), index=True)
+    seq: Mapped[int] = mapped_column(sa.Integer)
+    kind: Mapped[str] = mapped_column(sa.String(16))  # parse / llm_call / tool_call / decision
+    at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    ref: Mapped[str] = mapped_column(sa.String(200), index=True)  # "cassette:<키>", "blob:<키>"
+    digest: Mapped[str | None] = mapped_column(sa.String(64))  # 출력의 해시
+    cost: Mapped[int | None] = mapped_column(sa.Integer)  # 토큰 등
+    payload: Mapped[dict] = mapped_column(JSONType, default=dict)  # 작게, 가린 것만
+
+
 class Job(Base):
     """PostgreSQL 작업 큐 (설계 8장). 단계 결과 기록과 다음 작업 등록을 한 트랜잭션으로 묶는다."""
 

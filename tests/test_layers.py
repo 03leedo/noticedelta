@@ -28,6 +28,7 @@ LAYERS: dict[str, list[str]] = {
         "document",
         "drift",  # 출처 형식 변화 감시
         "events",  # 이벤트 봉투, 타입 등록부, 구독 → 작업 큐
+        "flight",  # 비행 기록기: 묶음과 기록, 출력의 정규형과 해시
         "jobs",
         "llm",  # gateway, cassette, harness, anthropic_provider
         "mcp_adapter",  # 등록부의 도구를 MCP로 내놓는다
@@ -71,7 +72,7 @@ LAYERS: dict[str, list[str]] = {
         "sources.bizinfo",
         "sources.kstartup",
     ],
-    "앱": ["demo", "pipeline", "web"],
+    "앱": ["demo", "pipeline", "replay", "web"],  # replay: 같게 재생(파이프라인을 다시 돌린다)
 }
 ORDER = list(LAYERS)
 
