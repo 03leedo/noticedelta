@@ -236,6 +236,12 @@ def draft_with_alert_fields(app: AppDefinition, fields: Sequence[str]) -> AppDef
     return app.model_copy(update={"alerts": alerts, "version": app.version + 1})
 
 
-def same_extraction(a: AppDefinition, b: AppDefinition) -> bool:
-    """두 판의 필드 정의(이름·타입·안내)가 같으면 추출 요청이 같아 녹화본을 함께 쓴다."""
-    return a.value_types() == b.value_types() and a.guides() == b.guides()
+def same_extraction(a: AppDefinition, b: AppDefinition, spec_for=None) -> bool:
+    """두 판의 추출 명세(필드·안내·속성 사전·프롬프트·머리말)가 같으면 요청이 같아 녹화본을 함께 쓴다.
+
+    spec_for: 앱 → 추출 명세(팩이 자기 프롬프트를 주는 경우). 없으면 앱 정의만으로 만든 명세로 본다.
+    """
+    from noticedelta.extraction import spec_for_app
+
+    make = spec_for or spec_for_app
+    return make(a) == make(b)

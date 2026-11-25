@@ -334,6 +334,15 @@ def _meaning_problems(
                 )
 
     sub = app.subjects
+    rulesets = sorted(n for n, f in fields.items() if f.type == "ruleset")
+    if rulesets and (sub.model != "rules" or not sub.attributes):
+        p.append(
+            Problem(
+                f"engine.fields.{rulesets[0]}.type",
+                "ruleset 필드는 속성 사전이 있는 rules 모델에서만 뽑을 수 있다",
+                "subjects.model을 rules로 두고 attributes를 적거나, 필드 타입을 바꾼다",
+            )
+        )
     if sub.model == "rules":
         if sub.rules_field is None:
             p.append(
