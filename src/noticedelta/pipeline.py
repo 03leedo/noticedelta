@@ -20,7 +20,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta import app_registry
+from noticedelta import app_registry, flight
 from noticedelta.appspec import AppDefinition
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
@@ -79,6 +79,22 @@ class Context:
     app: AppDefinition = field(
         default_factory=lambda: APP
     )  # 결과(필드 값, 판정, 알림)에 이 앱의 id와 판을 단다
+
+
+def parser_id(parser: Parser) -> str:
+    """설정 해시에 넣을 파서의 판. 감싼 것은 벗긴다."""
+    inner = getattr(parser, "inner", parser)
+    return getattr(inner, "version", None) or type(inner).__name__
+
+
+def flight_config(ctx: Context) -> dict:
+    """수집 실행 묶음의 설정: 이것이 같아야 같게 재생을 기대한다(platform-services 3.4)."""
+    return {
+        "app": app_ref(ctx.app.id, ctx.app.version),
+        "matcher": MATCHER_VERSION,
+        "parser": parser_id(ctx.parser),
+        "extractor": ctx.extractor_name or None,
+    }
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -176,6 +192,16 @@ def handle_load(ctx: Context) -> Handler:
             now=ctx.now(),
         )
         trace = Trace(env.trace_id if env else None, env.id if env else None)
+        if env is not None:
+            flight.open_trace(
+                session,
+                env.trace_id,
+                kind=flight.COLLECT_RUN,
+                name=pending[0],
+                started_at=_parse_time(run.get("started_at")) or ctx.now(),
+                config=flight_config(ctx),
+                app=app_ref(ctx.app.id, ctx.app.version),
+            )
         for pv_id in summary.new_version_ids:
             pv = session.get(ItemVersion, pv_id)
             v = emit(
@@ -206,9 +232,13 @@ def handle_parse(ctx: Context) -> Handler:
         if pv is None:
             raise PermanentError("사업 버전이 없음")
         try:
-            outcomes = parse_attachments(
-                session, pv.notice_version_id, parser=ctx.parser, store=ctx.store
-            )
+            with flight.bound(session, Trace.of(job.payload).trace, ctx.now):
+                outcomes = parse_attachments(
+                    session,
+                    pv.notice_version_id,
+                    parser=flight.RecordingParser(ctx.parser),
+                    store=ctx.store,
+                )
         except ParserUnavailable as e:
             raise TransientError("파서 컨테이너를 쓸 수 없음") from e
         env = emit(
@@ -396,7 +426,7 @@ def _latest_judgments(session: Session, item_id: str, app_id: str) -> dict[str, 
 
 
 def handle_impact(ctx: Context) -> Handler:
-    def handle(session: Session, job: Job) -> None:
+    def _work(session: Session, job: Job) -> None:
         if ctx.extractor is None:
             raise TransientError("추출기가 설정되지 않음")
         pv = session.get(ItemVersion, job.payload["item_version_id"])
@@ -546,6 +576,11 @@ def handle_impact(ctx: Context) -> Handler:
                 note(
                     session, row, "held", reason=row.held_reason, trace=trace, producer="svc:engine"
                 )
+
+    def handle(session: Session, job: Job) -> None:
+        # 추출기의 게이트웨이에 flight.llm_observer를 달면 이 작업의 LLM 호출이 묶음에 기록된다
+        with flight.bound(session, Trace.of(job.payload).trace, ctx.now):
+            _work(session, job)
 
     return handle
 

@@ -18,12 +18,14 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.drift import pending  # noqa: E402
+from noticedelta.flight import close_finished  # noqa: E402
 from noticedelta.jobs import counts, run_worker  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
 from noticedelta.pipeline import (  # noqa: E402
@@ -75,8 +77,12 @@ def main() -> None:
         max_jobs=args.max_jobs,
     )
     with factory() as s:
+        # 남은 작업이 없는 수집 실행 묶음을 닫고 출력 해시를 적는다(scripts/replay.py가 비교한다)
+        closed = close_finished(s, datetime.now(UTC))
+        s.commit()
         print(
             f"완료 {stats.done}, 재시도 예정 {stats.retried}, 실패 {stats.dead} · 작업 상태: {counts(s)}"
+            + (f" · 닫은 묶음 {len(closed)}" if closed else "")
         )
 
 
