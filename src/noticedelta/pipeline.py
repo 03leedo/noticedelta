@@ -91,12 +91,12 @@ class Context:
     extract_scope: Literal["all", "changed", "subscribed"] = "all"
 
 
-_DETECTORS: dict[tuple[str, int], Callable] = {}
+_DETECTORS: dict[tuple[str, int, str], Callable] = {}
 
 
 def _detector(app: AppDefinition) -> Callable:
     """앱의 필드 낱말로 만든 후보 탐지기(impact.keyword_detector). 판마다 한 번 만든다."""
-    key = (app.id, app.version)
+    key = (app.id, app.version, app.content_hash())  # 같은 판 번호에 다른 내용이 와도 섞이지 않게
     if key not in _DETECTORS:
         _DETECTORS[key] = keyword_detector(app.keyword_patterns(), app.value_types())
     return _DETECTORS[key]
@@ -710,6 +710,17 @@ def handle_notify(ctx: Context) -> Handler:
 
 
 def handlers(ctx: Context) -> dict[str, Handler]:
+    spec = getattr(
+        ctx.extractor, "spec", None
+    )  # 추출 명세가 있는 추출기라면 앱과 필드가 맞아야 한다
+    if spec is not None:
+        meta_only = {n for n, f in ctx.app.engine.fields.items() if not f.extracts}
+        missing = set(ctx.app.value_types()) - meta_only - set(spec.types)
+        if missing:
+            raise ValueError(
+                f"추출기가 앱 {ctx.app.id}@{ctx.app.version}의 필드 {sorted(missing)}를 모른다. "
+                "spec_for(ctx.app)으로 만든다"
+            )
     return {
         LOAD: handle_load(ctx),
         PARSE: handle_parse(ctx),
