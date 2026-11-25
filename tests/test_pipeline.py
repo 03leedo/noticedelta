@@ -311,9 +311,11 @@ def test_change_only_in_keys_the_app_does_not_read_carries_values_without_llm(en
         by_name = {}
         for r in rows:
             by_name.setdefault(r.name, []).append(r.value)
-        # 판마다 두 필드(자격, 출처 값 마감), 둘째 판은 앞 판의 값을 그대로 옮겼다
+        # 판마다 두 필드. 자격은 앞 판 값을 옮겼고(이 앱은 본문을 읽지 않는다), 마감은 출처 값이
+        # 바뀌어 새 값이다(읽는 키 밖에서 바뀌어도 출처 값 필드는 본다)
         assert {n: len(v) for n, v in by_name.items()} == {"deadline": 2, "eligibility_rules": 2}
-        assert all(v[0] == v[1] for v in by_name.values())
+        assert by_name["eligibility_rules"][0] == by_name["eligibility_rules"][1]
+        assert sorted(by_name["deadline"]) == ["2026-11-07", "2026-11-14"]
         assert s.scalar(sa.select(sa.func.count()).select_from(models.OutboxAlert)) == 0
         detected = s.scalars(
             sa.select(models.EventRow).where(models.EventRow.type == "change.detected")
@@ -345,7 +347,7 @@ def test_extract_scope_spends_llm_only_on_items_in_scope(env):
     with env.factory() as s:
         item_id = s.scalar(sa.select(models.Item.id))
         assert enqueue_item_impact(s, item_id, now=env.clock()) == 2
-        assert enqueue_item_impact(s, item_id, now=env.clock()) == 2  # 다시 넣어도 작업은 한 번
+        assert enqueue_item_impact(s, item_id, now=env.clock()) == 0  # 다시 넣어도 새 작업은 없다
         assert s.scalar(sa.select(sa.func.count()).where(models.Job.kind == IMPACT)) == 2
         s.commit()
     env.work()
@@ -362,3 +364,34 @@ def test_changed_scope_starts_at_the_first_correction(env):
     env.work()
     first, second = env.ctx.extractor.calls  # 정정이 생기자 첫 판부터
     assert second == ["eligibility_rules"] and not env.jobs().get("dead")
+
+
+def test_catching_up_fills_values_without_alerting_old_changes(env):
+    from noticedelta.pipeline import enqueue_scope_backlog
+
+    env.ctx.extractor = RulesFromText()
+    env.ctx.extract_scope = "subscribed"
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))  # 업력 72개월은 비해당이 된다
+    env.work()
+    with env.factory() as s:  # 두 판이 지난 뒤에 구독한 사람
+        item_id = s.scalar(sa.select(models.Item.id))
+        s.add(models.Person(id="u1"))
+        s.add(models.Profile(person_id="u1", attributes={"business_age_months": 72}))
+        s.flush()
+        s.add(models.SubscriptionRow(app_id="grant-alerts", app_version=1, person_id="u1", item_id=item_id,
+                                     fields=["eligibility_rules", "deadline"]))  # fmt: skip
+        assert enqueue_scope_backlog(s, env.ctx, env.clock()) == 2
+        s.commit()
+    env.work()
+    with env.factory() as s:
+        # 지난 정정(마감 연장, 자격 7년 → 5년)은 지금 구독자에게 새로 알리지 않는다. 값·판정은 채운다
+        assert s.scalar(sa.select(sa.func.count()).select_from(models.OutboxAlert)) == 0
+        assert s.scalar(sa.select(sa.func.count()).select_from(models.FieldValueRow)) == 4
+    env.collect(
+        "2026-11-21", pdf(RULES.replace("7년", "5년"), DOCS)
+    )  # 구독한 뒤의 새 정정: 마감 연장
+    env.work()
+    with env.factory() as s:
+        alerts = s.scalars(sa.select(models.OutboxAlert)).all()
+        assert [(a.person_id, a.payload["field"]) for a in alerts] == [("u1", "deadline")]

@@ -33,6 +33,14 @@ class TransientError(Exception):
     """다시 하면 될 수 있는 실패 (네트워크, 429·5xx, 파서 컨테이너를 못 띄움)."""
 
 
+class Deferred(Exception):
+    """지금은 할 수 없어 미룬다(예: 오늘 LLM 한도를 다 씀). 시도 횟수를 쓰지 않고 delay 뒤에 다시 꺼낸다."""
+
+    def __init__(self, message: str, delay: timedelta = timedelta(hours=1)):
+        super().__init__(message)
+        self.delay = delay
+
+
 class PermanentError(Exception):
     """다시 해도 같은 실패 (설정 오류, 형식이 맞지 않는 입력). 바로 dead로 보낸다."""
 
@@ -146,6 +154,12 @@ def complete(session: Session, job: Job, *, now: datetime | None = None) -> None
 
 def fail(session: Session, job: Job, error: BaseException, *, now: datetime | None = None) -> None:
     now = now or _now()
+    if isinstance(error, Deferred):  # 실패가 아니다: 꺼낼 때 쓴 시도 횟수를 돌려주고 미룬다
+        job.status, job.attempts = "retry", max(job.attempts - 1, 0)
+        job.run_after, job.lease_until = now + error.delay, None
+        job.last_error = f"미룸: {error}"[:2000]
+        session.flush()
+        return
     permanent = isinstance(error, PermanentError)
     job.error_class = "permanent" if permanent else "transient"
     job.last_error = f"{type(error).__name__}: {error}"[:2000]

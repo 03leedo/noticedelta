@@ -72,9 +72,11 @@ class Budget:
 
     limit: int
     spent: int = 0
+    blocked: bool = False  # 한 번이라도 넘어 막힌 적이 있다(워커가 더 꺼내지 않는다)
 
     def check(self, estimate: int) -> None:
         if self.spent + estimate > self.limit:
+            self.blocked = True
             raise BudgetExceeded(
                 f"토큰 예산 {self.limit:,} 중 {self.spent:,} 씀, 이번 호출 어림 {estimate:,}"
             )

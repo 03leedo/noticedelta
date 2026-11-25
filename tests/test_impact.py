@@ -272,3 +272,10 @@ def test_source_value_fields_change_without_asking_the_llm():
     same = {"deadline": FieldValue("deadline", "datetime", "2026. 10. 31. 18:00", [])}
     res, ex = run([OLD_DOC[0]], {}, meta_fields=same)
     assert res.real_changes == set() and ex.calls == []
+
+
+def test_a_date_only_source_value_equals_the_same_day_with_time():
+    # 앞 판은 LLM 값(시각 포함), 이번 판은 출처 값(날짜만): 같은 날이면 바뀐 것이 아니다
+    meta = {"deadline": FieldValue("deadline", "datetime", "2026-10-31", [])}
+    res, ex = run([OLD_DOC[0]], {}, meta_fields=meta)
+    assert res.real_changes == set() and ex.calls == []

@@ -20,6 +20,7 @@ from noticedelta.values import (
     find_datetimes,
     list_diff,
     list_keys,
+    same_value,
     squash,
     values_equal,
 )
@@ -197,13 +198,14 @@ def run_impact(
         if seg.lineage_id in removed:
             affected |= candidate_detector(seg)
 
+    unknown_fields -= set(meta)  # 출처 값으로 다시 읽었으니 모르는 필드가 아니다
     affected -= unknown_fields
     affected -= set(meta)  # 출처 값으로 읽는 필드는 LLM에 묻지 않는다
     meta_real = {
         name
         for name, fv in meta.items()
         if name not in old_fields
-        or not values_equal(
+        or not same_value(
             fv.value_type, old_fields[name].value, fv.value, default_year=default_year
         )
     }
