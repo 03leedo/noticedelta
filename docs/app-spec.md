@@ -277,7 +277,7 @@ labels:
 | `eligibility.rules.ATTRIBUTES`, `SIDO` | 앱 `subjects.attributes` |
 | `eligibility.temporal`의 업력·나이 계산 | 플랫폼 파생 함수(`months_since`, `age`), 앱은 `derive`로 이름만 고른다 |
 | `impact._KEYWORDS`, `RULES_FIELD` | 앱 `engine.fields[].keywords`, `subjects.rules_field` |
-| `llm.extract`의 `FIELD_TYPES`, `FIELD_GUIDE` | 앱 `engine.fields[].type`, `guide`. 프롬프트 틀은 플랫폼에 남는다 |
+| `llm.extract`의 `FIELD_TYPES`, `FIELD_GUIDE` | 앱 `engine.fields[].type`, `guide`. 프롬프트 틀은 플랫폼(`extraction.py`)에 남는다. 2026-11-25 완료 |
 | `names`의 표시 이름 | 앱 `labels` |
 | `notify.MASS_IMPACT`, `impact.REVIEW_THRESHOLD` | 앱 `alerts.hold` |
 | 어댑터 `to_record`의 본문 키 목록 | 앱 `sources[].read` |
@@ -298,6 +298,15 @@ labels:
 
 - 실제 DB(첫 판을 뺀 변경 60건, `scripts/change_keys.py`): 앱이 읽지 않는 키만 바뀐 판 4건(기업마당 `hashtags` 3, `printFileNm` 1), 조각이 하나도 안 바뀐 판 5건(제목만, 표기만). 9건 모두 영향 계산에서 LLM을 부르지 않는다. 앞서 문제였던 K-Startup 빈 버전 200개는 형식 변화 감시(source-catalog 5장)가 먼저 붙잡아 지금 DB에는 없다. 새 키(`eval_method`, `support_ctnt`)를 받아들여도 이 앱은 읽지 않으므로 변경이 아니다.
 - 남은 것: 본문 조각마다 원본 키를 적기(`locator.keys`). 지금은 앱이 하나이고 본문이 그 앱이 읽는 키로만 만들어져 판 단위로 충분하다. 두 앱이 같은 출처의 다른 키를 읽게 되면, 엔진이 자기 키의 조각만 보도록 조각 단위로 내려가야 한다.
+
+2026-11-25: 추출을 앱 정의로 만든다(`extraction.py`, 엔진 층). 이전까지 추출기는 지원사업 팩의 전역값(필드 타입·안내, 시스템 프롬프트, 자격 속성 사전)에 묶여 있어 두 번째 앱이 추출할 길이 없었다.
+
+- 추출에 필요한 것을 `ExtractSpec` 하나에 담는다: 필드 타입·안내, 규칙 속성 사전, 틀별 시스템 프롬프트, 조각 머리말.
+- `spec_for_app(app)`은 앱 정의만으로 일반 프롬프트를 만든다. 분야·머리말·참고 줄은 선택 칸 `engine.prompt`에서 읽고, 없으면 앱 제목을 분야로 쓴다. 규칙 필드가 없는 앱은 자격 규칙 안내를 넣지 않는다. 출처 값으로만 읽는 필드는 LLM에 묻지 않는다.
+- 지원사업 팩(`llm.extract`)은 자기 프롬프트를 글자 그대로 준다. 일반 생성기가 같은 글자를 내는지는 불러올 때와 시험으로 확인한다. 평가 표가 리팩터링 전과 한 글자도 같았다(녹화본 그대로, 토큰 0).
+- 파이프라인은 지원사업 전역값 대신 켠 앱(`ctx.app`)에서 필드 목록, 낱말 탐지기, 규칙 필드, 붙잡기 기준을 읽는다. 지원사업 팩에서 가져오는 것은 운영하는 앱의 기본값(`APP`) 하나다.
+- 미리 돌려 보기는 앱마다 추출기를 만든다. 필드 안내를 바꾼 초안은 요청이 달라져 녹화본이 없다. `--plan`으로 비용을 센다. 금액 안내 한 줄을 고친 초안은 개발 세트를 다시 돌리는 데 호출 59개, 입력 토큰 약 62만이 든다. 안내는 모든 추출 요청에 들어가므로, 한 줄을 고쳐도 녹화본이 모두 무효가 된다.
+- 시험: 약국 앱(5장)이 지원사업 코드 없이 자기 정의로 요청을 만든다(`tests/test_extraction.py`).
 - 출처가 다른 게시물로 이어진 판(다른 출처로 옮겨 간 항목), 예전 기록처럼 무엇이 바뀌었는지 모르면 받는다. 놓치는 것보다 낫다.
 
 ## 13. 만드는 순서 (초안)

@@ -1,33 +1,64 @@
-"""LLM 필드 추출기 (설계 7.5). impact.Extractor 구현.
+"""지원사업 팩의 필드 추출(설계 7.5): 플랫폼 추출기(extraction)에 이 앱의 프롬프트를 준다.
 
-조각을 한 줄씩 넘기고, 값마다 근거 조각을 함께 받는다.
-받은 값은 인용 검증을 통과해야 신뢰도 1.0을 유지한다.
+추출기 본체는 extraction.py(엔진 층)에 있다. 이 모듈은 지원사업 앱의 ExtractSpec을 만들고, 예전 이름
+(LLMExtractor, build_request, TEMPLATE_V1 …)을 그대로 내보낸다.
 
-틀(template)은 둘이다. 녹화본 키에 틀 이름이 들어가므로 v1의 요청은 한 글자도 바꾸지 않는다.
+녹화본 키가 요청 글자에 걸리므로 v1의 요청은 한 글자도 바꾸지 않는다. 그래서 SYSTEM_PROMPT를 글자
+그대로 두고, 일반 생성기(extraction.system_prompt)가 같은 글자를 내는지 불러올 때 확인한다.
 - extract-v1: `[lineage_id] 텍스트`. 12자리 ID가 입력 토큰의 절반 가까이를 먹었다(녹화본 60개 분석).
-- extract-v2(기본): 요청 안에서만 쓰는 짧은 번호 `[1] 텍스트`, 빈 조각은 뺀다. 답의 번호를
-  lineage_id로 되돌리므로 바깥(엔진·인용 검증·저장)은 달라지는 것이 없다.
+- extract-v2(기본): 요청 안에서만 쓰는 짧은 번호 `[1] 텍스트`, 빈 조각은 뺀다.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic import ValidationError
-
-from noticedelta.citation import verify_citation, verify_rule
-from noticedelta.eligibility import Rule, RuleGroup
-from noticedelta.grants import ATTRIBUTES, FIELD_GUIDE, FIELD_TYPES, RULES_CONTEXT
-from noticedelta.impact import FieldValue
+from noticedelta.appspec import AppDefinition
+from noticedelta.extraction import (
+    LOW_CONFIDENCE,
+    TEMPLATE_V1,
+    TEMPLATE_V2,
+    TEMPLATE_VERSION,
+    TEMPLATES,
+    ExtractSpec,
+    SpecExtractor,
+    _label,
+    _schema,
+    labeled,
+    spec_for_app,
+    system_prompt,
+)
+from noticedelta.extraction import build_request as _build_request
+from noticedelta.grants import APP, ATTRIBUTES, FIELD_GUIDE, FIELD_TYPES
 from noticedelta.llm.anthropic_provider import DEFAULT_MODEL
 from noticedelta.llm.gateway import Gateway, LLMRequest
 from noticedelta.segments import Segment
-from noticedelta.values import coerce_shape, loads_lenient
 
-TEMPLATE_V1 = "extract-v1"
-TEMPLATE_V2 = "extract-v2"
-TEMPLATE_VERSION = TEMPLATE_V2  # 새로 부르는 추출의 기본 틀
-LOW_CONFIDENCE = 0.3
+__all__ = [
+    "DIFF_SYSTEM",
+    "FIELD_GUIDE",
+    "FIELD_TYPES",
+    "LOW_CONFIDENCE",
+    "SYSTEM_PROMPT",
+    "SYSTEM_PROMPT_V2",
+    "TEMPLATE_V1",
+    "TEMPLATE_V2",
+    "TEMPLATE_VERSION",
+    "GRANTS_SPEC",
+    "LLMExtractor",
+    "build_request",
+    "grants_spec",
+    "labeled",
+    "spec_for",
+    "_label",
+    "_schema",
+]
+
+DOMAIN = "한국 정부 지원사업 공고"
+HEADING = "공고 조각"
+NOTES = [
+    "business_age_months는 개월 수(7년 이내 → <= 84), ceo_age는 만 나이, revenue_krw는 원 단위."
+]
 
 SYSTEM_PROMPT = f"""너는 한국 정부 지원사업 공고에서 정해진 필드만 뽑는 추출기다.
 입력의 각 줄은 `[조각ID] 원문`이다. 요청된 필드만 뽑고, 값마다 근거가 된 조각ID를 sources에 적는다.
@@ -47,51 +78,34 @@ SYSTEM_PROMPT_V2 = SYSTEM_PROMPT.replace(
     "입력의 각 줄은 `[조각ID] 원문`이다. 요청된 필드만 뽑고, 값마다 근거가 된 조각ID를 sources에 적는다.",
     "입력의 각 줄은 `[번호] 원문`이다. 요청된 필드만 뽑고, 값마다 근거가 된 줄의 번호를 sources에 적는다.",
 )
-assert SYSTEM_PROMPT_V2 != SYSTEM_PROMPT
 _SYSTEM = {TEMPLATE_V1: SYSTEM_PROMPT, TEMPLATE_V2: SYSTEM_PROMPT_V2}
+# 일반 생성기가 이 앱의 프롬프트를 글자 그대로 내야 녹화본을 그대로 쓴다
+assert all(system_prompt(DOMAIN, t, list(ATTRIBUTES), NOTES) == _SYSTEM[t] for t in TEMPLATES)
 
 
-# 평가의 B3(바뀐 조각만 주고 무엇이 바뀌었는지 묻는 방식)에 쓰는 지시문
 DIFF_SYSTEM = """너는 한국 정부 지원사업 정정공고에서 무엇이 바뀌었는지 판단한다.
 입력에는 정정 전 필드 값과, 바뀐 조각의 이전 글과 이후 글이 있다.
 필드마다 값이 실제로 바뀌었는지 판단하고, 바뀌었으면 새 값을 value_json에 JSON 문자열로 넣는다.
 문구만 바뀌고 값이 같으면 changed는 false다. 조각에 근거가 없는 필드는 출력하지 않는다."""
 
 
-def _schema(fields: list[str], template: str = TEMPLATE_V1) -> dict:
-    # v2의 근거는 정수 줄 번호. 문자열로 두면 학교 모델이 따옴표 없는 숫자를 쓰려다 형식에 막혀
-    # 공백만 끝없이 내다 출력 한도에 걸렸다(2026-11-25, 작은 공고 하나로 재현).
-    source = {"type": "integer"} if template == TEMPLATE_V2 else {"type": "string"}
-    return {
-        "type": "object",
-        "properties": {
-            "fields": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "enum": fields},
-                        "value_json": {"type": "string"},
-                        "sources": {"type": "array", "items": source},
-                    },
-                    "required": ["name", "value_json", "sources"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["fields"],
-        "additionalProperties": False,
+def grants_spec(app: AppDefinition = APP) -> ExtractSpec:
+    """지원사업 앱(또는 그 초안)의 추출 명세: 이 팩의 분야·머리말·참고 줄에 그 판의 필드와 속성."""
+    base = spec_for_app(app)
+    attributes = base.attributes
+    system = {
+        t: system_prompt(DOMAIN, t, list(attributes) if attributes else None, NOTES)
+        for t in TEMPLATES
     }
+    return ExtractSpec(base.types, base.guides, system, attributes, HEADING)
 
 
-def labeled(segments: Sequence[Segment], template: str = TEMPLATE_VERSION) -> dict[str, Segment]:
-    """프롬프트의 줄 표시 → 조각. v1은 lineage_id, v2는 1부터 센 번호(빈 조각은 뺀다)."""
-    if template == TEMPLATE_V1:
-        return {s.lineage_id: s for s in segments}
-    if template != TEMPLATE_V2:
-        raise ValueError(f"모르는 추출 틀: {template}")
-    kept = [s for s in segments if s.text.strip()]
-    return {str(i): s for i, s in enumerate(kept, 1)}
+GRANTS_SPEC = grants_spec()
+
+
+def spec_for(app: AppDefinition) -> ExtractSpec:
+    """앱의 추출 명세. 지원사업 앱은 이 팩의 프롬프트로, 다른 앱은 앱 정의만으로 만든다."""
+    return grants_spec(app) if app.id == APP.id and app.engine.prompt is None else spec_for_app(app)
 
 
 def build_request(
@@ -100,36 +114,14 @@ def build_request(
     *,
     model: str = DEFAULT_MODEL,
     template: str = TEMPLATE_VERSION,
+    spec: ExtractSpec = GRANTS_SPEC,
 ) -> LLMRequest:
-    names = sorted(f for f in fields if f in FIELD_TYPES)
-    guide = "\n".join(f"- {n}: {FIELD_GUIDE[n]}" for n in names)
-    if template == TEMPLATE_V1:  # 녹화본 키가 그대로이도록 예전 그대로 만든다
-        lines = "\n".join(f"[{s.lineage_id}] {s.text}" for s in segments)
-    else:
-        lines = "\n".join(f"[{k}] {s.text}" for k, s in labeled(segments, template).items())
-    return LLMRequest(
-        model=model,
-        template_version=template,
-        system=_SYSTEM[template],
-        input=f"추출할 필드:\n{guide}\n\n공고 조각:\n{lines}",
-        output_schema=_schema(names, template),
-    )
+    return _build_request(spec, fields, segments, model=model, template=template)
 
 
-def _label(source) -> str:
-    """답의 근거 표시를 줄 표시로. 모델이 "[3]"이나 숫자 3으로 주기도 한다."""
-    return str(source).strip().strip("[]").strip()
+class LLMExtractor(SpecExtractor):
+    """지원사업 앱의 추출기(예전 이름). spec을 주면 다른 앱·초안에도 쓴다."""
 
-
-def _iter_rules(group: RuleGroup):
-    for node in group.rules:
-        if isinstance(node, RuleGroup):
-            yield from _iter_rules(node)
-        else:
-            yield node
-
-
-class LLMExtractor:
     def __init__(
         self,
         gateway: Gateway,
@@ -137,55 +129,6 @@ class LLMExtractor:
         model: str = DEFAULT_MODEL,
         default_year: int | None = None,
         template: str = TEMPLATE_VERSION,
+        spec: ExtractSpec = GRANTS_SPEC,
     ):
-        self.gateway = gateway
-        self.model = model
-        self.default_year = default_year
-        self.template = template
-
-    def __call__(self, fields: set[str], segments: Sequence[Segment]) -> dict[str, FieldValue]:
-        wanted = {f for f in fields if f in FIELD_TYPES}
-        by_label = labeled(segments, self.template)
-        if not wanted or not by_label:
-            return {}
-        req = build_request(wanted, segments, model=self.model, template=self.template)
-        resp = self.gateway.complete(req)
-
-        out: dict[str, FieldValue] = {}
-        for item in resp.output.get("fields", []):
-            name = item.get("name")
-            if name not in wanted or name in out:
-                continue
-            value = loads_lenient(item.get("value_json"))
-            keys = item.get("sources", [])
-            if self.template != TEMPLATE_V1:  # v1의 재생 결과가 바뀌지 않게 v1은 예전 그대로 맞춘다
-                keys = map(_label, keys)
-            hits = [by_label[k] for k in keys if k in by_label]
-            sources = [h.lineage_id for h in hits]
-            cited = [h.text for h in hits]
-            fv = self._to_field(name, value, sources, cited)
-            if fv is not None:
-                out[name] = fv
-        return out
-
-    def _to_field(
-        self, name: str, value, sources: list[str], cited: list[str]
-    ) -> FieldValue | None:
-        vtype = FIELD_TYPES[name]
-        value = coerce_shape(vtype, value)
-        if value is None:
-            return None
-        if vtype == "rules":
-            try:
-                group = RuleGroup.model_validate(value, context=RULES_CONTEXT)
-            except ValidationError:
-                return None
-            for rule in _iter_rules(group):
-                rule: Rule
-                if not verify_rule(rule, cited, ATTRIBUTES):
-                    rule.confidence = min(rule.confidence, LOW_CONFIDENCE)
-            # 규칙이 하나도 없으면 믿지 않는다. 판정기도 빈 그룹을 확인 필요로 본다.
-            confs = [r.confidence for r in _iter_rules(group)] or [LOW_CONFIDENCE]
-            return FieldValue(name, vtype, group.model_dump(), sources, min(confs))
-        ok = bool(cited) and verify_citation(vtype, value, cited, default_year=self.default_year)
-        return FieldValue(name, vtype, value, sources, 1.0 if ok else LOW_CONFIDENCE)
+        super().__init__(gateway, spec, model=model, default_year=default_year, template=template)

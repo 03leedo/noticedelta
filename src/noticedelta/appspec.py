@@ -78,9 +78,18 @@ class FieldSpec(_Strict):
         return self.from_ == "extract" or self.else_ == "extract"
 
 
+class PromptSpec(_Strict):
+    """추출 프롬프트의 앱별 부분(extraction.spec_for_app). 없으면 앱 제목을 분야로 쓴다."""
+
+    domain: str = Field(min_length=1)  # "너는 {domain}에서 정해진 필드만 뽑는 추출기다"
+    heading: str = "문서 조각"  # 입력에서 조각 목록 앞의 머리말
+    notes: list[str] = []  # 규칙 속성의 단위 같은 참고 줄(규칙 필드가 있을 때)
+
+
 class Engine(_Strict):
     kind: Literal["change_impact@1"]
     fields: dict[Name, FieldSpec] = Field(min_length=1)
+    prompt: PromptSpec | None = None
 
 
 class AttributeSpec(_Strict):
@@ -325,6 +334,15 @@ def _meaning_problems(
                 )
 
     sub = app.subjects
+    rulesets = sorted(n for n, f in fields.items() if f.type == "ruleset")
+    if rulesets and (sub.model != "rules" or not sub.attributes):
+        p.append(
+            Problem(
+                f"engine.fields.{rulesets[0]}.type",
+                "ruleset 필드는 속성 사전이 있는 rules 모델에서만 뽑을 수 있다",
+                "subjects.model을 rules로 두고 attributes를 적거나, 필드 타입을 바꾼다",
+            )
+        )
     if sub.model == "rules":
         if sub.rules_field is None:
             p.append(
