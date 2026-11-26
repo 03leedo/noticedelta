@@ -56,6 +56,9 @@ class Tool:
     allow: Callable[..., Collection[str]] | None = None  # external: (db, 인자) → 받는 쪽 허용 목록
     form: tuple[str, ...] = ()  # external: 서식 칸. 있으면 전이 때 이 칸만으로 다시 만든다(split)
     max_calls: int | None = None  # 세션 하나에서 부를 수 있는 수
+    validate: Callable[[dict], str | None] | None = (
+        None  # 인자 검사. 문제가 있으면 그 이유(요청 때 본다)
+    )
 
     def __post_init__(self) -> None:
         caps = set(self.capabilities)

@@ -12,19 +12,44 @@ from collections.abc import Callable, Collection, Sequence
 from datetime import date
 from pathlib import Path
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.appspec import AppDefinition
+from noticedelta.db.models import Notice, NoticeVersion
 from noticedelta.doc_tools import doc_tools
 from noticedelta.grants import APP
 from noticedelta.item_tools import item_tools
+from noticedelta.mail_tools import FileOutbox, Outbox, inquiry_tool
 from noticedelta.parsing import Parser
 from noticedelta.person_tools import person_tools
-from noticedelta.programs import api_meta
+from noticedelta.programs import api_contacts, api_meta
 from noticedelta.tool_gateway import ToolGateway
 from noticedelta.tooling import Tool
 from noticedelta.usage import UsageLog, feedback_tool
 from noticedelta.vault import Cipher
+
+ROOT = Path(__file__).resolve().parents[2]
+OUTBOX = ROOT / "data" / "outbox"  # 개발용: 메일을 보내지 않고 .eml로 쓴다
+INQUIRY_KINDS = {
+    "deadline": "접수 기간과 마감",
+    "documents": "제출 서류",
+    "eligibility": "신청 자격",
+    "other": "내용",
+}
+
+
+def item_contacts(db: Session, args: dict) -> set[str]:
+    """항목의 게시물들이 출처 API의 문의처 칸에 적은 주소(받는 쪽 허용 목록)."""
+    rows = db.execute(
+        sa.select(Notice.source_id, NoticeVersion.raw)
+        .join(NoticeVersion, NoticeVersion.notice_id == Notice.id)
+        .where(Notice.item_id == str(args.get("item_id")))
+    ).all()
+    out: set[str] = set()
+    for source, raw in rows:
+        out |= api_contacts(source, raw or {})
+    return out
 
 
 def agent_tools(
@@ -35,11 +60,15 @@ def agent_tools(
     usage: UsageLog | None = None,
     app: AppDefinition = APP,
     today: Callable[[], date] = date.today,
+    outbox: Outbox | None = None,
 ) -> list[Tool]:
     tools = [
         *doc_tools(parser, roots),
         *item_tools(factory, meta=api_meta),
         *person_tools(factory, app, today=today),
+        inquiry_tool(
+            factory, outbox or FileOutbox(OUTBOX), allow=item_contacts, kinds=INQUIRY_KINDS
+        ),
     ]
     if usage is not None:
         tools.append(feedback_tool(usage))
@@ -56,8 +85,11 @@ def build_gateway(
     app: AppDefinition = APP,
     chosen: Collection[str] | None = None,
     today: Callable[[], date] = date.today,
+    outbox: Outbox | None = None,
 ) -> ToolGateway:
-    tools = agent_tools(factory, parser=parser, roots=roots, usage=usage, app=app, today=today)
+    tools = agent_tools(
+        factory, parser=parser, roots=roots, usage=usage, app=app, today=today, outbox=outbox
+    )
     return ToolGateway(
         tools,
         chosen=[t.name for t in tools] if chosen is None else chosen,

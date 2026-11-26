@@ -43,6 +43,8 @@ from noticedelta.db.models import (
 )
 from noticedelta.sources import NoticeRecord, bizinfo, kstartup
 from noticedelta.sources.base import stable_url
+from noticedelta.sources.bizinfo import html_to_text
+from noticedelta.tool_gateway import reachable
 
 TO_RECORD = {"kstartup": kstartup.to_record, "bizinfo": bizinfo.to_record}
 DROP_PARAMS = {"bizinfo": bizinfo.DROP_PARAMS}  # 옛 실행 파일의 첨부 주소에서 뗄 값
@@ -122,6 +124,19 @@ def api_meta(source: str, raw: dict) -> dict:
     rec = to_record(raw)
     deadline = CLOSED if closed_by_title(rec) else rec.apply_end
     return {"deadline": deadline, "apply_start": rec.apply_start}
+
+
+# 출처 API의 문의처 칸. 기관이 API에 직접 넣는 값이라, 에이전트가 메일을 보낼 받는 쪽의 허용 목록으로
+# 쓴다(도구 게이트웨이 5.4의 4번). 공고 본문·첨부의 글이나 LLM이 뽑은 값은 쓰지 않는다
+CONTACT_KEYS = {"bizinfo": ("refrncNm",), "kstartup": ("prch_cnpl_no",)}
+
+
+def api_contacts(source: str, raw: dict) -> set[str]:
+    """출처 API의 문의처 칸에 적힌 메일 주소·전화번호(정규화한 것)."""
+    out: set[str] = set()
+    for key in CONTACT_KEYS.get(source, ()):
+        out |= reachable(html_to_text(str(raw.get(key) or "")))
+    return out
 
 
 def composite_hash(rec: NoticeRecord, blob_keys: list[str | None]) -> str:

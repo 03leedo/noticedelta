@@ -255,6 +255,10 @@ class ToolGateway:
             inspect.signature(tool.handler).bind(**probe)
         except TypeError as e:
             reason = f"인자가 도구와 맞지 않는다: {e}"[:300]
+        else:
+            reason = tool.validate(dict(args)) if tool.validate is not None else None
+        if reason is not None:
+            reason = reason[:300]
             self._decide(db, s, name, "error", "declare", reason, before, before, now)
             db.commit()
             return {"error": reason}
@@ -519,6 +523,8 @@ class ToolGateway:
             raise ValueError(f"서식으로 다시 만든 효과는 서식 칸만 고친다: {sorted(tool.form)}")
         merged = {**a.arguments, **arguments}
         inspect.signature(tool.handler).bind(**merged)  # 맞지 않으면 TypeError
+        if tool.validate is not None and (why := tool.validate(dict(merged))):
+            raise ValueError(why)
         s = db.get(AgentSessionRow, a.session_id)
         a.arguments = merged
         a.marks = self._marks(db, s, tool, merged)  # 사람이 고쳐도 표시는 남긴다

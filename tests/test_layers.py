@@ -61,6 +61,7 @@ LAYERS: dict[str, list[str]] = {
         "impact",
         "ingest",
         "item_tools",  # 항목·변경을 조회하는 읽기 도구
+        "mail_tools",  # 항목에 대해 묻는 메일(C), 개발용 outbox
         "matching",
         "person_tools",  # 사람의 정보를 쓰는 도구(B): 내 정보, 자격 확인, 근거 설명
         "segments",

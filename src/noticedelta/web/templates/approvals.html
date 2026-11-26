@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}승인함 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>승인함</h1>
+<p class="muted"><a href="/p/{{ token }}">내 지원사업으로</a> · <a href="/p/{{ token }}/alerts">알림함</a></p>
+<p class="muted">내 링크로 연결한 AI 에이전트가 메일처럼 밖으로 나가는 일을 하려 하면 여기에 붙잡아 둡니다. 승인해도 보류 시간 동안은 취소할 수 있습니다.</p>
+
+{% if not cards %}
+<p class="muted">기다리는 요청이 없습니다.</p>
+{% endif %}
+{% for c in cards %}
+<article class="card">
+  <p><strong>{{ c.what }}</strong></p>
+  <p class="muted">{{ STATUS_NAMES.get(c.status, c.status) }} · 에이전트 {{ c.agent }}
+    {% if c.commit_after %} · {{ c.commit_after[:16].replace("T", " ") }}(UTC)에 나감{% elif c.decide_by %} · {{ c.decide_by[:16].replace("T", " ") }}(UTC)까지 승인하지 않으면 버림{% endif %}</p>
+  <table>
+    {% for k, v in c.to.items() %}<tr><th>받는 쪽</th><td>{{ v }}</td></tr>{% endfor %}
+    {% for k, v in c.arguments.items() %}{% if k not in c.to %}<tr><th>{{ k }}</th><td style="white-space: pre-wrap">{{ v }}</td></tr>{% endif %}{% endfor %}
+  </table>
+  {% for m in c.marks %}
+  <p class="note" role="alert">{% if m.mark == "from_untrusted" %}받는 쪽({{ m.arg }})이 에이전트가 읽은 외부 글에만 있던 값입니다. 공격일 수 있습니다.{% else %}받는 쪽({{ m.arg }})이 출처가 알려 준 문의처가 아닙니다.{% endif %}</p>
+  {% endfor %}
+  {% if c.dropped %}<p class="muted">서식으로 다시 만들며 뺀 칸: {{ c.dropped | join(", ") }}</p>{% endif %}
+  <p class="muted">왜 붙잡았나: {{ c.reason }}</p>
+  {% if c.evidence %}
+  <details><summary>이 에이전트가 본 외부 글 {{ c.evidence | length }}개</summary>
+    <ul>{% for e in c.evidence %}<li>{{ e.at[:16].replace("T", " ") }} · {{ e.tool }} {% for k, v in e.args.items() %}{{ k }}={{ v }} {% endfor %}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  <form method="post" action="/p/{{ token }}/approvals/{{ c.id }}">
+    {% if c.status == "held" %}
+    <button type="submit" name="do" value="approve">승인</button>
+    <button type="submit" name="do" value="reject">거절</button>
+    {% else %}
+    <button type="submit" name="do" value="cancel">취소</button>
+    {% endif %}
+  </form>
+  {% if c.status == "held" and "body" in c.arguments %}
+  <details><summary>고치기</summary>
+    <form method="post" action="/p/{{ token }}/approvals/{{ c.id }}">
+      <textarea name="body" rows="5">{{ c.arguments.body }}</textarea>
+      <button type="submit" name="do" value="edit">고친 내용으로 두기(다시 승인 필요)</button>
+    </form>
+  </details>
+  {% endif %}
+</article>
+{% endfor %}
+
+<h2>연결된 에이전트</h2>
+{% if not sessions %}<p class="muted">연결된 에이전트가 없습니다.</p>{% endif %}
+{% for s in sessions %}
+<article class="card">
+  <p><strong>{{ s.agent }}</strong> · 마지막 사용 {{ s.last_seen_at.strftime("%Y-%m-%d %H:%M") }}</p>
+  <p class="muted">{% for f in s.flags %}{{ FLAG_NAMES.get(f, f) }}{% if not loop.last %} · {% endif %}{% else %}아직 아무것도 읽지 않음{% endfor %}</p>
+  <form method="post" action="/p/{{ token }}/sessions/{{ s.id }}/close">
+    <button type="submit">이 세션 닫기(기다리는 요청도 버림)</button>
+  </form>
+</article>
+{% endfor %}
+
+{% if done %}
+<h2>지난 요청</h2>
+<ul>
+{% for a in done %}<li>{{ a.requested_at.strftime("%Y-%m-%d %H:%M") }} · {{ a.tool }} · {{ STATUS_NAMES.get(a.status, a.status) }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}
