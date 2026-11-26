@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Callable, Collection, Mapping
 from datetime import UTC, datetime
 from email.message import EmailMessage
@@ -45,9 +46,12 @@ class FileOutbox:
         msg["Message-ID"] = make_msgid(domain="noticedelta.local")
         msg.set_content(body)
         self.folder.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
-        path = self.folder / f"{stamp}.eml"
-        path.write_bytes(bytes(msg))
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        path = (
+            self.folder / f"{stamp}-{uuid.uuid4().hex[:12]}.eml"
+        )  # 시계 해상도와 무관하게 한 통에 한 파일
+        with path.open("xb") as f:
+            f.write(bytes(msg))
         return {"message_id": msg["Message-ID"], "file": path.name}
 
 
@@ -61,12 +65,15 @@ def inquiry_tool(
     """kinds: 문의 종류 → 본문에 들어갈 문구(예: {"documents": "제출 서류"})."""
 
     def validate(args: dict) -> str | None:
-        if args.get("kind") not in kinds:
+        kind, to, body = args.get("kind"), args.get("to"), args.get("body", "")
+        if not isinstance(kind, str) or kind not in kinds:
             return f"문의 종류는 {sorted(kinds)} 가운데 하나다"
-        if not _EMAIL.fullmatch(str(args.get("to", "")).strip()):
+        if not isinstance(to, str) or not _EMAIL.fullmatch(to.strip()):
             return "받는 쪽은 메일 주소 하나다"
-        if len(args.get("body") or "") > MAX_BODY:
-            return f"본문은 {MAX_BODY}자까지다"
+        if not isinstance(args.get("item_id"), str):
+            return "item_id는 글자다"
+        if not isinstance(body, str) or len(body) > MAX_BODY:
+            return f"본문은 {MAX_BODY}자까지의 글이다"
         return None
 
     def send_inquiry(item_id: str, to: str, kind: str, body: str = "") -> dict:
@@ -78,7 +85,8 @@ def inquiry_tool(
         if body.strip():
             text += f"\n\n{body.strip()}"
         text += "\n\n— NoticeDelta를 통해 보낸 문의입니다."
-        return outbox.send(to.strip(), f"[문의] {title}", text)
+        subject = " ".join(f"[문의] {title}".split())[:150]  # 머리글은 한 줄로
+        return outbox.send(to.strip(), subject, text)
 
     return Tool(
         "send_inquiry",

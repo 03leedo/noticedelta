@@ -145,3 +145,53 @@ def test_others_cannot_touch_my_requests_and_closing_drops_them(web):
     with factory() as s:
         assert s.get(models.ToolActionRow, aid).status == "discarded"
         assert s.get(models.AgentSessionRow, sid).status == "closed"
+
+
+def test_cancel_loses_to_a_worker_that_already_took_the_effect(web):
+    client, (factory, gate, pid, token, _, _) = web
+    _, aid = held_request(factory, gate, pid)
+    client.post(f"/p/{token}/approvals/{aid}", data={"do": "approve"})
+    with factory() as s:  # 워커가 막 차지했다(보내는 중)
+        s.get(models.ToolActionRow, aid).status = "committing"
+        s.commit()
+    assert client.post(f"/p/{token}/approvals/{aid}", data={"do": "cancel"}).status_code == 409
+    with factory() as s:
+        assert s.get(models.ToolActionRow, aid).status == "committing"  # 덮어쓰지 않는다
+
+
+def test_expired_approval_is_closed_and_deleting_me_drops_my_requests(web, env):
+    client, (factory, gate, pid, token, outbox, _) = web
+    _, aid = held_request(factory, gate, pid)
+    with factory() as s:
+        s.get(models.ToolActionRow, aid).decide_by = T0 - timedelta(minutes=1)
+        s.commit()
+    assert client.post(f"/p/{token}/approvals/{aid}", data={"do": "approve"}).status_code == 409
+    with factory() as s:
+        assert s.get(models.ToolActionRow, aid).status == "expired"
+    _, aid2 = held_request(factory, gate, pid)
+    assert client.post(f"/p/{token}/delete").status_code == 303
+    with factory() as s:
+        a = s.get(models.ToolActionRow, aid2)
+        assert a.status == "discarded" and a.arguments == {}  # 본문에 넣은 글도 지운다
+        gate.commit_due(s, now=T0 + timedelta(days=2))
+    assert not outbox.exists() or not list(outbox.glob("*.eml"))
+
+
+def test_outbox_keeps_every_mail_and_odd_arguments_are_reasons(env, tmp_path):
+    from noticedelta.mail_tools import FileOutbox
+    from noticedelta.programs import api_contacts
+
+    box = FileOutbox(tmp_path / "box")
+    for _ in range(5):
+        box.send("a@b.kr", "제목", "본문")
+    assert len(list((tmp_path / "box").glob("*.eml"))) == 5
+    assert api_contacts("kstartup", {"aply_mthd_eml_rcpt_istc": "접수: apply@k.or.kr"}) == {
+        "apply@k.or.kr"
+    }
+    factory, gate, pid, *_ = env
+    with factory() as s:
+        sid = gate.open_session(s, app_id=APP.id, agent="odd", person_id=pid, now=T0).id
+        s.commit()
+    for bad in ({"kind": ["x"]}, {"body": 5}, {"to": None}):
+        args = {"item_id": ITEM, "to": AGENCY, "kind": "other", **bad}
+        assert "error" in call(factory, gate, sid, "send_inquiry", **args)

@@ -126,9 +126,14 @@ def api_meta(source: str, raw: dict) -> dict:
     return {"deadline": deadline, "apply_start": rec.apply_start}
 
 
-# 출처 API의 문의처 칸. 기관이 API에 직접 넣는 값이라, 에이전트가 메일을 보낼 받는 쪽의 허용 목록으로
-# 쓴다(도구 게이트웨이 5.4의 4번). 공고 본문·첨부의 글이나 LLM이 뽑은 값은 쓰지 않는다
-CONTACT_KEYS = {"bizinfo": ("refrncNm",), "kstartup": ("prch_cnpl_no",)}
+# 출처 API의 문의처·신청 방법 칸. 기관이 API에 직접 넣는 값이라, 에이전트가 메일을 보낼 받는 쪽의 허용
+# 목록으로 쓴다(도구 게이트웨이 5.4의 4번). 공고 본문·첨부의 글이나 LLM이 뽑은 값은 쓰지 않는다.
+# 2026-11-26 dev.db: 기업마당 2,156건 중 문의처 칸만이면 849건(39%), 신청 방법 칸까지 1,288건(60%)에
+# 메일 주소가 있다. K-Startup 482건은 문의처 칸(전화번호)만이면 0건, 이메일 접수 칸까지 118건(24%)
+CONTACT_KEYS = {
+    "bizinfo": ("refrncNm", "reqstMthPapersCn"),
+    "kstartup": ("prch_cnpl_no", "aply_mthd_eml_rcpt_istc"),
+}
 
 
 def api_contacts(source: str, raw: dict) -> set[str]:

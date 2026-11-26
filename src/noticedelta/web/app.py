@@ -229,7 +229,11 @@ def create_app(
     def delete(token: str):
         with session_factory() as s:
             person_id = people.resolve(s, token)
-            if person_id is None or not consent.delete_user(s, person_id, at=now()):
+            if person_id is None:
+                raise HTTPException(404, "없는 링크입니다")
+            # 에이전트 세션을 닫고 나가지 않은 효과를 버린다. 효과에 남은 인자(본문의 내 정보)도 지운다
+            gate.forget_person(s, person_id, now=now())
+            if not consent.delete_user(s, person_id, at=now()):
                 raise HTTPException(404, "없는 링크입니다")
             people.forget(s, person_id, at=now())
             s.commit()
@@ -314,7 +318,7 @@ def create_app(
                 else:
                     raise HTTPException(400, "모르는 결정입니다")
             except (ValueError, TypeError) as e:
-                s.rollback()
+                s.rollback()  # 기한이 지나 닫은 것은 게이트웨이가 이미 커밋했다
                 raise HTTPException(409, str(e)) from e
             s.commit()
         return RedirectResponse(f"/p/{token}/approvals", status_code=303)
