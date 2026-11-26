@@ -626,7 +626,9 @@ class ToolActionRow(Base):
     requested_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
     decide_by: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     decided_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
-    decided_by: Mapped[str | None] = mapped_column(sa.String(64))
+    decided_by: Mapped[str | None] = mapped_column(sa.String(64))  # 마지막 결정(승인·거절·취소)
+    approved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    approved_by: Mapped[str | None] = mapped_column(sa.String(64))  # 사람 또는 policy:pass·split
     commit_after: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     committed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     result: Mapped[dict | None] = mapped_column(JSONType)
@@ -638,10 +640,8 @@ class ToolDecisionRow(Base):
     """게이트웨이의 판단 하나 (5.4의 5번 기록). 인자 값은 남기지 않는다."""
 
     __tablename__ = "tool_decision"
-    __table_args__ = (sa.UniqueConstraint("session_id", "seq"),)
-    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)  # 순서
     session_id: Mapped[str] = mapped_column(sa.String(26), index=True)
-    seq: Mapped[int] = mapped_column(sa.Integer)
     at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
     tool: Mapped[str] = mapped_column(sa.String(64))
     decision: Mapped[str] = mapped_column(sa.String(16))  # pass / held / approved / block / error

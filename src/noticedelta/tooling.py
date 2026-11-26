@@ -72,7 +72,7 @@ class Tool:
             raise ValueError(f"{self.name}: B 도구는 금고의 용도(purpose)와 키(keys)를 선언한다")
         if {"B", "C"} <= caps:
             raise ValueError(f"{self.name}: 민감 데이터(B)와 외부 효과(C)를 한 도구에 두지 않는다")
-        external_only = self.hold or self.targets or self.allow or self.form
+        external_only = self.hold is not None or self.targets or self.allow or self.form
         if external_only and self.effect != "external":
             raise ValueError(f"{self.name}: hold·targets·allow·form은 external 도구의 칸이다")
         if self.targets and self.allow is None:

@@ -64,6 +64,8 @@ def upgrade() -> None:
         sa.Column("decide_by", TS, nullable=True),
         sa.Column("decided_at", TS, nullable=True),
         sa.Column("decided_by", sa.String(length=64), nullable=True),
+        sa.Column("approved_at", TS, nullable=True),
+        sa.Column("approved_by", sa.String(length=64), nullable=True),
         sa.Column("commit_after", TS, nullable=True),
         sa.Column("committed_at", TS, nullable=True),
         sa.Column("result", JSON, nullable=True),
@@ -77,7 +79,6 @@ def upgrade() -> None:
         "tool_decision",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("session_id", sa.String(length=26), nullable=False),
-        sa.Column("seq", sa.Integer(), nullable=False),
         sa.Column("at", TS, nullable=False),
         sa.Column("tool", sa.String(length=64), nullable=False),
         sa.Column("decision", sa.String(length=16), nullable=False),
@@ -87,7 +88,6 @@ def upgrade() -> None:
         sa.Column("flags_after", JSON, nullable=False),
         sa.Column("action_id", sa.String(length=26), nullable=True),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("session_id", "seq"),
     )
     op.create_index("ix_tool_decision_session_id", "tool_decision", ["session_id"], unique=False)
 

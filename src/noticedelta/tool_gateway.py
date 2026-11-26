@@ -21,8 +21,8 @@
 
 효과(5.5): external은 바로 실행하지 않고 tool_action으로 둔다.
 
-    held(승인 기다림) → approved(보류 시간 기다림, 이때도 취소할 수 있다) → committed
-    또는 discarded(거절·취소) · expired(승인 기한 지남) · blocked · failed
+    held(승인 기다림) → approved(보류 시간 기다림, 이때도 취소할 수 있다) → committing → committed
+    또는 discarded(거절·취소·세션 닫음) · expired(승인 기한 지남) · blocked · failed
 
 internal(플랫폼 안의 되돌릴 수 있는 상태)은 바로 반영하고, 도구가 결과에 넣은 undo 정보를 남겨
 되돌릴 수 있게 한다. 상태가 바뀔 때마다 action.* 봉투를 낸다.
@@ -61,11 +61,12 @@ MAX_SEEN = 5000
 MAX_SOURCES = 50
 ALL = frozenset("ABC")
 
-# 받는 쪽으로 쓰일 수 있는 값: 메일 주소, 웹 주소, 전화번호
+# 받는 쪽으로 쓰일 수 있는 값: 메일 주소, 웹 주소, 전화번호. ASCII만 잡는다(바로 붙은 한글 조사를
+# 주소에 넣지 않게: "help@evil.example로")
 _REACHABLE = re.compile(
-    r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
-    r"|https?://[^\s<>\"')\]]+"
-    r"|0\d{1,2}[-. ]?\d{3,4}[-. ]?\d{4}"
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"
+    r"|https?://[A-Za-z0-9\-._~:/?#@!$&*+,;=%]+"
+    r"|(?:\+82[-. ]?|0)\d{1,2}[-. ]?\d{3,4}[-. ]?\d{4}"
 )
 
 
@@ -78,9 +79,10 @@ def _aware(t: datetime | None) -> datetime | None:
 
 
 def normalize(value: Any) -> str:
-    v = str(value).strip().lower().rstrip(".,;")
-    if re.fullmatch(r"[\d\-. ()]+", v):  # 전화번호는 숫자만
-        v = re.sub(r"\D", "", v)
+    v = str(value).strip().lower().rstrip(".,;:/")
+    if re.fullmatch(r"\+?[\d\-. ()]+", v):  # 전화번호는 숫자만, 국가번호(+82)는 0으로
+        digits = re.sub(r"\D", "", v)
+        v = "0" + digits[2:] if v.startswith("+82") else digits
     return v
 
 
@@ -127,6 +129,15 @@ class ToolGateway:
                 raise ValueError(
                     f"{tool.name}: 금고 값은 B 도구만 {INJECTED} 인자로 받는다(게이트웨이가 넣는다)"
                 )
+            required = {
+                n
+                for n, prm in params.items()
+                if prm.default is inspect.Parameter.empty
+                and prm.kind not in (prm.VAR_POSITIONAL, prm.VAR_KEYWORD)
+            }
+            if tool.form and not required <= set(tool.form):
+                missing = sorted(required - set(tool.form))
+                raise ValueError(f"{tool.name}: 서식(form)에 꼭 받아야 하는 인자가 없다: {missing}")
             self.tools[tool.name] = tool
         unknown = set(chosen) - set(self.tools)
         if unknown:
@@ -150,6 +161,9 @@ class ToolGateway:
         now: datetime,
     ) -> AgentSessionRow:
         """(사람, 앱, 에이전트)의 열린 세션을 잇는다. 없으면 연다. 켜진 속성은 다시 접속해도 그대로다."""
+        agent = agent[
+            :64
+        ]  # 저장하는 길이로 찾는다(긴 이름으로 새 세션을 열어 속성을 비우지 못하게)
         who = (
             AgentSessionRow.person_id.is_(None)
             if person_id is None
@@ -171,7 +185,7 @@ class ToolGateway:
                 id=events.new_ulid(now),
                 person_id=person_id,
                 app_id=app_id,
-                agent=agent[:64],
+                agent=agent,
                 flags=[],
                 seen=[],
                 sources=[],
@@ -185,11 +199,24 @@ class ToolGateway:
             db.flush()
         return row
 
-    def close_session(self, db: Session, session_id: str, *, now: datetime) -> None:
-        """세션을 닫는다(사람·운영자가). 다음 접속은 속성이 빈 새 세션이 된다."""
+    def close_session(
+        self, db: Session, session_id: str, *, now: datetime, by: str = "operator"
+    ) -> None:
+        """세션을 닫는다(사람·운영자가). 아직 나가지 않은 효과는 버린다. 다음 접속은 속성이 빈 새 세션이다."""
         row = db.get(AgentSessionRow, session_id)
-        if row is not None and row.status == "open":
-            row.status, row.closed_at = "closed", now
+        if row is None or row.status != "open":
+            return
+        row.status, row.closed_at = "closed", now
+        pending = db.scalars(
+            sa.select(ToolActionRow).where(
+                ToolActionRow.session_id == session_id,
+                ToolActionRow.status.in_(("held", "approved")),
+            )
+        ).all()
+        for a in pending:
+            a.decided_at, a.decided_by = now, by[:64]
+            a.reason = f"{a.reason or ''} / 세션을 닫아 버렸다"[-300:]
+            self._close(db, a, "discarded", now)
 
     # --- 호출 (5.4) ---
 
@@ -382,7 +409,7 @@ class ToolGateway:
             reason = f"세션의 속성이 {have}라 그대로 통과한다(보류 시간 뒤 실행)"
         if "unlisted" in kinds and status == "held":
             reason += ". 받는 쪽이 허용 목록에 없어 승인을 받는다"
-        hold = tool.hold or self.hold
+        hold = self._hold(tool)
         approved = status == "approved"
         a = ToolActionRow(
             id=events.new_ulid(now),
@@ -400,6 +427,8 @@ class ToolGateway:
             decide_by=now + self.decide_within if status == "held" else None,
             decided_at=now if approved else None,
             decided_by=f"policy:{policy}" if approved else None,
+            approved_at=now if approved else None,
+            approved_by=f"policy:{policy}" if approved else None,
             commit_after=now + hold if approved else None,
         )
         db.add(a)
@@ -440,9 +469,11 @@ class ToolGateway:
         if a.decide_by is not None and _aware(a.decide_by) <= now:
             self._close(db, a, "expired", now)
             raise ValueError("승인 기한이 지났다")
-        tool = self.tools.get(a.tool)
+        if any(m["mark"] == "from_untrusted" for m in a.marks):
+            raise ValueError("외부 글에서 본 받는 쪽으로는 승인할 수 없다")
         a.status, a.decided_at, a.decided_by = "approved", now, by[:64]
-        a.commit_after = now + ((tool.hold if tool else None) or self.hold)
+        a.approved_at, a.approved_by = now, by[:64]
+        a.commit_after = now + self._hold(self.tools.get(a.tool))
         self._emit(db, a, db.get(AgentSessionRow, a.session_id), "approved", now)
         return a
 
@@ -467,16 +498,27 @@ class ToolGateway:
         if a.status != "held":
             raise ValueError(f"고칠 수 없는 상태: {a.status}")
         tool = self.tools[a.tool]
+        if a.policy == "split" and not set(arguments) <= set(tool.form):
+            raise ValueError(f"서식으로 다시 만든 효과는 서식 칸만 고친다: {sorted(tool.form)}")
         merged = {**a.arguments, **arguments}
         inspect.signature(tool.handler).bind(**merged)  # 맞지 않으면 TypeError
         s = db.get(AgentSessionRow, a.session_id)
         a.arguments = merged
         a.marks = self._marks(db, s, tool, merged)  # 사람이 고쳐도 표시는 남긴다
         a.reason = f"{a.reason or ''} / {by[:40]}가 고쳤다"[-300:]
+        if any(m["mark"] == "from_untrusted" for m in a.marks):
+            a.reason = f"{a.reason} / 받는 쪽이 외부 글에서 본 값이라 막았다"[-300:]
+            a.decided_at, a.decided_by = now, by[:64]
+            self._close(db, a, "blocked", now)
         return a
 
     def commit_due(self, db: Session, *, now: datetime) -> list[ToolActionRow]:
-        """승인 기한이 지난 효과를 닫고, 보류 시간이 지난 승인된 효과를 실행한다."""
+        """승인 기한이 지난 효과를 닫고, 보류 시간이 지난 승인된 효과를 실행한다.
+
+        스스로 커밋한다. 실행하기 전에 효과를 committing으로 차지해 커밋하므로, 워커가 둘이거나
+        실행 뒤 커밋이 실패해도 같은 효과가 두 번 나가지 않는다(많아야 한 번). 실행하다 멈춰
+        committing에 남은 효과는 운영자가 본다. 다른 트랜잭션 안에서 부르지 않는다.
+        """
         late = db.scalars(
             sa.select(ToolActionRow).where(
                 ToolActionRow.status == "held", ToolActionRow.decide_by <= now
@@ -484,30 +526,45 @@ class ToolGateway:
         ).all()
         for a in late:
             self._close(db, a, "expired", now)
+        db.commit()
         due = db.scalars(
-            sa.select(ToolActionRow)
+            sa.select(ToolActionRow.id)
             .where(ToolActionRow.status == "approved", ToolActionRow.commit_after <= now)
             .order_by(ToolActionRow.commit_after)
         ).all()
         done = []
-        for a in due:
+        for action_id in due:
+            took = db.execute(
+                sa.update(ToolActionRow)
+                .where(ToolActionRow.id == action_id, ToolActionRow.status == "approved")
+                .values(status="committing")
+                .execution_options(synchronize_session=False)
+            )
+            db.commit()
+            if took.rowcount != 1:
+                continue  # 다른 워커가 먼저 차지했다
+            a = self._action(db, action_id)
             s = db.get(AgentSessionRow, a.session_id)
             tool = self.tools.get(a.tool)
-            try:
-                if tool is None:
-                    raise LookupError(f"등록되지 않은 도구: {a.tool}")
-                with db.begin_nested():
-                    result = tool.handler(**a.arguments)
-            except Exception as e:
-                a.result = {"error": f"{type(e).__name__}: {e}"[:300]}
+            if s is None or s.status != "open":
+                a.reason = f"{a.reason or ''} / 세션이 닫혀 실행하지 않았다"[-300:]
+                self._close(db, a, "discarded", now)
+            elif tool is None:
+                a.result = {"error": f"등록되지 않은 도구: {a.tool}"}
                 self._close(db, a, "failed", now)
-                continue
-            a.result = result if isinstance(result, dict) else {"value": result}
-            a.committed_at = now
-            s.flags = _flags([*s.flags, "C"])  # C는 효과가 확정될 때 켜진다
-            self._close(db, a, "committed", now)
-            done.append(a)
-        db.flush()
+            else:
+                try:
+                    result = tool.handler(**a.arguments)
+                except Exception as e:
+                    a.result = {"error": f"{type(e).__name__}: {e}"[:300]}
+                    self._close(db, a, "failed", now)
+                else:
+                    a.result = result if isinstance(result, dict) else {"value": result}
+                    a.committed_at = now
+                    s.flags = _flags([*s.flags, "C"])  # C는 효과가 확정될 때 켜진다
+                    self._close(db, a, "committed", now)
+                    done.append(a)
+            db.commit()
         return done
 
     def undo(self, db: Session, action_id: str, *, by: str, now: datetime) -> ToolActionRow:
@@ -516,7 +573,8 @@ class ToolGateway:
         if a.effect != "internal" or a.status != "committed" or a.undo is None:
             raise ValueError("되돌릴 수 있는 효과가 아니다")
         self.tools[a.tool].undo(**a.undo)
-        a.undone_at, a.decided_by = now, by[:64]
+        a.undone_at = now
+        a.reason = f"{a.reason or ''} / {by[:40]}가 되돌렸다"[-300:]
         self._close(db, a, "undone", now)
         return a
 
@@ -566,11 +624,14 @@ class ToolGateway:
             "actions": dict(Counter(a.status for a in actions)),
             "asked": sum(1 for a in actions if a.decide_by is not None),
             "approved_by_person": sum(
-                1 for a in actions if a.decided_by and not a.decided_by.startswith("policy:")
+                1 for a in actions if a.approved_by and not a.approved_by.startswith("policy:")
             ),
         }
 
     # --- 안쪽 ---
+
+    def _hold(self, tool: Tool | None) -> timedelta:
+        return tool.hold if tool is not None and tool.hold is not None else self.hold
 
     @staticmethod
     def _action(db: Session, action_id: str) -> ToolActionRow:
@@ -631,13 +692,9 @@ class ToolGateway:
         now: datetime,
         action_id: str | None = None,
     ) -> None:
-        seq = db.scalar(
-            sa.select(sa.func.max(ToolDecisionRow.seq)).where(ToolDecisionRow.session_id == s.id)
-        )
         db.add(
             ToolDecisionRow(
                 session_id=s.id,
-                seq=(seq or 0) + 1,
                 at=now,
                 tool=tool[:64],
                 decision=decision,
