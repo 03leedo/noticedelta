@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.appspec import AppDefinition
-from noticedelta.db.models import AppDefinitionRow
+from noticedelta.db.models import AppDefinitionRow, AppMemberRow
 from noticedelta.events import Ref, app_ref, emit
 
 
@@ -96,3 +96,47 @@ def enabled(session: Session) -> list[AppDefinition]:
         .order_by(AppDefinitionRow.app_id)
     ).all()
     return [a for a in (current(session, i) for i in ids) if a is not None]
+
+
+# --- 사람과 역할 (app-spec 6장) ---
+
+OWNER, MANAGER = "owner", "manager"
+
+
+def add_member(session: Session, app_id: str, person_id: str, role: str, *, at: datetime) -> None:
+    if role not in (OWNER, MANAGER):
+        raise ValueError(f"모르는 역할: {role}")
+    row = session.get(AppMemberRow, (app_id, person_id, role))
+    if row is None:
+        session.add(AppMemberRow(app_id=app_id, person_id=person_id, role=role, added_at=at))
+    elif row.removed_at is not None:
+        row.added_at, row.removed_at = at, None
+    session.flush()
+
+
+def roles_of(session: Session, app_id: str, person_id: str | None) -> set[str]:
+    if person_id is None:
+        return set()
+    return set(
+        session.scalars(
+            sa.select(AppMemberRow.role).where(
+                AppMemberRow.app_id == app_id,
+                AppMemberRow.person_id == person_id,
+                AppMemberRow.removed_at.is_(None),
+            )
+        ).all()
+    )
+
+
+def exists(session: Session, app_id: str) -> bool:
+    return session.scalar(sa.select(sa.func.count()).where(AppDefinitionRow.app_id == app_id)) > 0
+
+
+def drop_draft(session: Session, app_id: str, version: int) -> bool:
+    """켜지 않은 판을 지운다(초안 저장 되돌리기). 켠 판은 지우지 않는다."""
+    row = session.get(AppDefinitionRow, (app_id, version))
+    if row is None or row.enabled_at is not None:
+        return False
+    session.delete(row)
+    session.flush()
+    return True

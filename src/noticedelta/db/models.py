@@ -652,3 +652,18 @@ class ToolDecisionRow(Base):
     flags_before: Mapped[list] = mapped_column(JSONType, default=list)
     flags_after: Mapped[list] = mapped_column(JSONType, default=list)
     action_id: Mapped[str | None] = mapped_column(sa.String(26))
+
+
+class AppMemberRow(Base):
+    """앱의 사람과 역할 (app-spec 6장): 소유자(owner)는 정의를 고치고 켜고 예산을 정한다.
+
+    구독자는 동의·구독으로 드러나므로 따로 적지 않는다. 지원사업 앱처럼 운영자가 저장소에서 넣은 앱은
+    소유자 행이 없다(에이전트가 고칠 수 없다).
+    """
+
+    __tablename__ = "app_member"
+    app_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    person_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    role: Mapped[str] = mapped_column(sa.String(16), primary_key=True)  # owner / manager
+    added_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    removed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

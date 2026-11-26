@@ -15,6 +15,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from noticedelta.app_tools import Preview, app_tools, backtest_preview
 from noticedelta.appspec import AppDefinition
 from noticedelta.db.models import Notice, NoticeVersion
 from noticedelta.doc_tools import doc_tools
@@ -31,6 +32,7 @@ from noticedelta.vault import Cipher
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTBOX = ROOT / "data" / "outbox"  # 개발용: 메일을 보내지 않고 .eml로 쓴다
+CASSETTES = ROOT / "data" / "cassettes"
 INQUIRY_KINDS = {
     "deadline": "접수 기간과 마감",
     "documents": "제출 서류",
@@ -61,6 +63,7 @@ def agent_tools(
     app: AppDefinition = APP,
     today: Callable[[], date] = date.today,
     outbox: Outbox | None = None,
+    preview: Preview | None = None,
 ) -> list[Tool]:
     tools = [
         *doc_tools(parser, roots),
@@ -69,6 +72,7 @@ def agent_tools(
         inquiry_tool(
             factory, outbox or FileOutbox(OUTBOX), allow=item_contacts, kinds=INQUIRY_KINDS
         ),
+        *app_tools(factory, preview=preview or backtest_preview(CASSETTES)),
     ]
     if usage is not None:
         tools.append(feedback_tool(usage))
@@ -86,9 +90,17 @@ def build_gateway(
     chosen: Collection[str] | None = None,
     today: Callable[[], date] = date.today,
     outbox: Outbox | None = None,
+    preview: Preview | None = None,
 ) -> ToolGateway:
     tools = agent_tools(
-        factory, parser=parser, roots=roots, usage=usage, app=app, today=today, outbox=outbox
+        factory,
+        parser=parser,
+        roots=roots,
+        usage=usage,
+        app=app,
+        today=today,
+        outbox=outbox,
+        preview=preview,
     )
     return ToolGateway(
         tools,

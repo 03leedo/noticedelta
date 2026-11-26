@@ -54,6 +54,7 @@ ACTION_STATUS_NAMES = {
     "expired": "기한 지남",
     "blocked": "막힘",
     "failed": "실패",
+    "undoing": "되돌리는 중",
     "undone": "되돌림",
 }
 
