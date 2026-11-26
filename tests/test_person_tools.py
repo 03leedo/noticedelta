@@ -10,6 +10,7 @@ from noticedelta import vault
 from noticedelta.agent import build_gateway
 from noticedelta.db import make_engine, models
 from noticedelta.grants import APP
+from noticedelta.usage import UsageLog
 from noticedelta.web.demo import seed_demo
 
 TODAY = date(2026, 10, 30)
@@ -31,7 +32,9 @@ def env(tmp_path):
         vault.grant_consent(s, "p1", APP.id, "assist", ["founded_on", "ceo_birth_date", "region_sido"],
                             text_version="v", now=T0)  # fmt: skip
         s.commit()
-    gate = build_gateway(factory, cipher=cipher, today=lambda: TODAY)
+    gate = build_gateway(
+        factory, cipher=cipher, today=lambda: TODAY, usage=UsageLog(factory, client="test")
+    )
     with factory() as s:
         sid = gate.open_session(s, app_id=APP.id, agent="test", person_id="p1", now=T0).id
         s.commit()
@@ -92,3 +95,33 @@ def test_mcp_tools_hide_the_injected_profile_and_go_through_the_gateway(env):
         decisions = s.query(models.ToolDecisionRow).filter_by(session_id=sid).all()
         assert [d.tool for d in decisions] == ["check"]
     assert build_gateway_server(gate, factory, sid) is not None
+
+
+def test_usage_is_logged_without_waiting_for_the_gateway_lock(env):
+    call(env, "check", item_id="demo-youth")
+    call(env, "get_profile")
+    factory, _, _ = env
+    with factory() as s:
+        tools = [r.tool for r in s.query(models.ToolCallRow).order_by(models.ToolCallRow.id)]
+    assert tools == ["check", "get_profile"]
+
+
+def test_closed_items_say_so_and_have_no_next_change(env):
+    factory, _, _ = env
+    gate = build_gateway(factory, cipher=env[1].cipher, today=lambda: date(2027, 6, 1))
+    with factory() as s:
+        sid = gate.open_session(s, app_id=APP.id, agent="later", person_id="p1", now=T0).id
+        out = gate.call(s, sid, "explain", {"item_id": "demo-youth"}, now=T0)
+    assert out["closed"] is True and out["next_change"] is None and out["dates"]
+
+
+def test_a_closed_session_answers_blocked_over_mcp(env):
+    pytest.importorskip("mcp")
+    from noticedelta.mcp_adapter import gateway_call
+
+    factory, gate, sid = env
+    with factory() as s:
+        gate.close_session(s, sid, now=T0)
+        s.commit()
+    fn = gateway_call(gate, factory, sid, gate.tools["get_profile"], lambda: T0)
+    assert fn()["blocked"]["step"] == "session"

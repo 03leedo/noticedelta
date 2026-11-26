@@ -40,7 +40,7 @@
       <tr><th>받는 정보</th><td>{{ CONSENT.ITEMS }} (모두 선택 입력). 이름·연락처는 받지 않습니다.</td></tr>
       <tr><th>쓰는 곳</th><td>지원사업 자격 판정과 정정공고 알림</td></tr>
       <tr><th>보관 기간</th><td>직접 지울 때까지. 베타가 끝나면({{ CONSENT.KEEP_UNTIL }}) 모두 지웁니다.</td></tr>
-      <tr><th>밖으로 보내는지</th><td>보내지 않습니다. AI에도 보내지 않고, 서버 안의 코드로만 판정합니다.</td></tr>
+      <tr><th>밖으로 보내는지</th><td>보내지 않습니다. AI에도 보내지 않고, 서버 안의 코드로만 판정합니다. (나중에 에이전트 도우미를 직접 켜시면 그 에이전트에게만 보냅니다)</td></tr>
     </table>
     <label class="check"><input type="checkbox" name="agree" required> (필수) 위 내용에 동의합니다</label>
     <label class="check"><input type="checkbox" name="research_ok" {% if research_ok %}checked{% endif %}> (선택) 서비스 개선과 연구에 쓰는 데 동의합니다</label>

@@ -5,6 +5,7 @@
 
 - get_profile: 동의한 내 정보(B).
 - check(item_id): 항목의 지금 규칙으로 판정한 결과와 이유(A·B). 규칙의 값은 외부 글에서 뽑은 것이다.
+  끝난 항목(게시물이 모두 닫혔거나 날짜 필드가 모두 지남)은 closed로 알린다.
 - explain(item_id): check에 더해 규칙의 근거 조각(원문 발췌), 날짜 필드(마감 등), 다음에 판정이
   바뀌는 날(A·B).
 """
@@ -19,7 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.appspec import AppDefinition
-from noticedelta.db.models import FieldValueRow, Item, ItemVersion, SegmentRow
+from noticedelta.db.models import FieldValueRow, Item, ItemVersion, Notice, SegmentRow
 from noticedelta.eligibility import RuleGroup, derive_profile, eligibility_timeline, judge
 from noticedelta.tooling import Tool
 
@@ -84,14 +85,29 @@ def person_tools(
         if found is None:
             return {"item_id": item_id, "title": item.title, "error": "아직 규칙을 뽑지 않은 항목"}
         pv, fields = found
-        rules = RuleGroup.model_validate(fields[rules_field].value)
+        try:
+            rules = RuleGroup.model_validate(fields[rules_field].value)
+        except ValueError:
+            return {"item_id": item_id, "title": item.title, "error": "규칙을 읽지 못한 항목"}
         on = today()
         j = judge(rules, derive_profile(profile, on, attributes))
+        dates = {
+            n: d
+            for n in date_fields
+            if n in fields and (d := _as_date(fields[n].value)) is not None
+        }
+        posted = s.scalars(sa.select(Notice.status).where(Notice.item_id == item_id)).all()
+        # 끝난 항목: 게시물이 모두 닫혔거나, 날짜 필드(마감 등)가 모두 오늘 전이다(웹 화면은 숨긴다)
+        closed = (bool(posted) and "open" not in posted) or (
+            bool(dates) and all(d < on for d in dates.values())
+        )
         return {
             "item_id": item_id,
             "title": item.title,
             "version": pv.version_no,
             "on": on.isoformat(),
+            "closed": closed,
+            "dates": {k: v.isoformat() for k, v in sorted(dates.items())},
             "result": j.result,
             "reasons": [
                 {"rule": r.rule_id, "outcome": r.outcome, "detail": r.detail, "source": r.source}
@@ -101,6 +117,7 @@ def person_tools(
             "_pv": pv,
             "_fields": fields,
             "_rules": rules,
+            "_dates": dates,
         }
 
     def public(out: dict) -> dict:
@@ -140,25 +157,21 @@ def person_tools(
                 if lids
                 else {}
             )
-            # 앱의 날짜 필드(마감 등) 가운데 오늘 이후로 가장 이른 날까지 판정이 바뀌는 날을 찾는다
-            on = today()
-            dates = {
-                n: d
-                for n in date_fields
-                if n in fields and (d := _as_date(fields[n].value)) is not None
-            }
-            until = min((d for d in dates.values() if d >= on), default=None)
-            timeline = eligibility_timeline(
-                rules, profile, attributes=attributes, start=on, until=until
-            )
-            nxt = timeline.next_change
             out["sources"] = {k: _clip(v) for k, v in sorted(texts.items())}
-            out["dates"] = {k: v.isoformat() for k, v in sorted(dates.items())}
-            out["next_change"] = (
-                {"on": nxt.on.isoformat(), "before": nxt.before, "after": nxt.after}
-                if nxt is not None
-                else None
-            )
+            out["next_change"] = None
+            if not out["closed"]:
+                # 날짜 필드(마감 등) 가운데 오늘 이후로 가장 이른 날까지 판정이 바뀌는 날을 찾는다
+                on = today()
+                until = min((d for d in out["_dates"].values() if d >= on), default=None)
+                nxt = eligibility_timeline(
+                    rules, profile, attributes=attributes, start=on, until=until
+                ).next_change
+                if nxt is not None:
+                    out["next_change"] = {
+                        "on": nxt.on.isoformat(),
+                        "before": nxt.before,
+                        "after": nxt.after,
+                    }
             return public(out)
 
     b = {"purpose": PURPOSE, "keys": keys}

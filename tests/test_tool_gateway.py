@@ -300,3 +300,52 @@ def test_zero_hold_and_form_must_cover_required_arguments(env):
                targets=("to",), allow=lambda db, a: [], form=("to",))  # fmt: skip
     with pytest.raises(ValueError, match="꼭 받아야"):
         ToolGateway([bad], chosen=["f"])
+
+
+def test_flags_set_meanwhile_are_kept_and_errors_are_recorded(env):
+    db, _, _, _, _, cipher = env
+    other = sessionmaker(db.get_bind())
+
+    def meanwhile():
+        # 실행하는 동안 다른 접속이 같은 세션에 A를 켰다
+        with other() as o:
+            o.get(models.AgentSessionRow, sid).flags = ["A"]
+            o.commit()
+        return {"ok": True}
+
+    def boom():
+        raise RuntimeError("터짐")
+
+    tools = [Tool("slow", "느린 도구", meanwhile), Tool("boom", "터지는 도구", boom)]
+    gate = ToolGateway(tools, chosen=["slow", "boom"], cipher=cipher)
+    sid = gate.open_session(db, app_id=APP, agent="t", person_id="p1", now=T0).id
+    db.commit()
+    gate.call(db, sid, "slow", now=T0)
+    assert db.get(models.AgentSessionRow, sid).flags == ["A"]  # 덮어써 지우지 않는다
+    with pytest.raises(RuntimeError):
+        gate.call(db, sid, "boom", now=T0)
+    db.rollback()  # 부른 쪽이 되돌려도 오류 판단은 남는다
+    errors = db.scalars(
+        sa.select(models.ToolDecisionRow).where(models.ToolDecisionRow.decision == "error")
+    ).all()
+    assert [e.tool for e in errors] == ["boom"]
+
+
+def test_effects_run_without_holding_the_transaction(env):
+    db, _, _, _, _, cipher = env
+    other = sessionmaker(db.get_bind())
+
+    def write_elsewhere(to):
+        with other() as o:  # 효과가 자기 DB 세션으로 쓴다(SQLite에서 잠기지 않아야)
+            o.add(models.Source(id="mailed", name=to))
+            o.commit()
+        return {"sent": True}
+
+    tool = Tool("mail", "메일", write_elsewhere, frozenset({"C"}), effect="external",
+                targets=("to",), allow=lambda db, a: [AGENCY], hold=timedelta(0))  # fmt: skip
+    gate = ToolGateway([tool], chosen=["mail"], cipher=cipher)
+    sid = gate.open_session(db, app_id=APP, agent="t", person_id="p1", now=T0).id
+    out = gate.call(db, sid, "mail", {"to": AGENCY}, now=T0)["action"]
+    gate.commit_due(db, now=T0)
+    assert db.get(models.ToolActionRow, out["id"]).status == "committed"
+    assert db.get(models.Source, "mailed") is not None

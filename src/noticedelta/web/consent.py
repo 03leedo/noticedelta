@@ -112,7 +112,7 @@ def delete_user(session: Session, person_id: str, *, at: datetime | None = None)
     emit(
         session,
         "consent.withdrawn",
-        {"purpose": [*PURPOSES, "research"], "text_version": VERSION},
+        {"purpose": [*PURPOSES, "research", ASSIST], "text_version": VERSION},
         producer="svc:web",
         key=f"{person_id}:all",
         ref=Ref(app=app_ref(APP.id, APP.version), subject=f"person:{person_id}"),

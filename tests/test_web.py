@@ -292,6 +292,10 @@ def test_assist_consent_is_optional_and_follows_the_values(env):
     client.post(f"{path}/edit", data={"region_sido": "부산", "assist_ok": "on"})  # 값을 줄였다
     with factory() as s:
         assert "revenue_krw" not in vault.active_consent(s, pid, consent.APP.id, "assist").keys
-    client.post(f"{path}/edit", data=BUSAN_FOUNDER)  # 끄고 저장
+    with factory() as s:
+        rows = s.query(models.ConsentRow).filter_by(person_id=pid, purpose="assist").count()
+    client.post(f"{path}/edit", data={"region_sido": "서울"})  # 값을 바꾸며 끄고 저장
     with factory() as s:
         assert not consent.assist_on(s, pid)
+        # 끄는 동의에 새 키를 다시 적지 않는다(동의 이력에 하지 않은 부여가 남지 않게)
+        assert s.query(models.ConsentRow).filter_by(person_id=pid, purpose="assist").count() == rows

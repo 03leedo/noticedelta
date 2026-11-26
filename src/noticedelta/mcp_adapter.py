@@ -18,7 +18,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from sqlalchemy.orm import Session
 
-from noticedelta.tool_gateway import INJECTED, ToolGateway
+from noticedelta.tool_gateway import INJECTED, SessionClosed, ToolGateway
 from noticedelta.tooling import Registry, Tool
 
 INSTRUCTIONS = """이 서버는 문서를 다루는 공통 기능과, 수집해 둔 항목(공고 등)과 변경 이력 조회를 도구로 준다.
@@ -79,9 +79,10 @@ def gateway_call(
 ) -> Callable[..., dict]:
     def call(**arguments):
         with factory() as db:
-            out = gate.call(db, session_id, tool.name, arguments, now=clock())
-            db.commit()
-            return out
+            try:
+                return gate.call(db, session_id, tool.name, arguments, now=clock())
+            except SessionClosed as e:  # 사람이 세션을 닫았다: 다시 접속하면 새 세션이 열린다
+                return {"blocked": {"step": "session", "reason": str(e)}}
 
     sig, ann = _shown(tool)
     call.__name__ = tool.name
