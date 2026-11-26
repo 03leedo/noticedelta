@@ -43,6 +43,8 @@ from noticedelta.db.models import (
 )
 from noticedelta.sources import NoticeRecord, bizinfo, kstartup
 from noticedelta.sources.base import stable_url
+from noticedelta.sources.bizinfo import html_to_text
+from noticedelta.tool_gateway import reachable
 
 TO_RECORD = {"kstartup": kstartup.to_record, "bizinfo": bizinfo.to_record}
 DROP_PARAMS = {"bizinfo": bizinfo.DROP_PARAMS}  # 옛 실행 파일의 첨부 주소에서 뗄 값
@@ -122,6 +124,24 @@ def api_meta(source: str, raw: dict) -> dict:
     rec = to_record(raw)
     deadline = CLOSED if closed_by_title(rec) else rec.apply_end
     return {"deadline": deadline, "apply_start": rec.apply_start}
+
+
+# 출처 API의 문의처·신청 방법 칸. 기관이 API에 직접 넣는 값이라, 에이전트가 메일을 보낼 받는 쪽의 허용
+# 목록으로 쓴다(도구 게이트웨이 5.4의 4번). 공고 본문·첨부의 글이나 LLM이 뽑은 값은 쓰지 않는다.
+# 2026-11-26 dev.db: 기업마당 2,156건 중 문의처 칸만이면 849건(39%), 신청 방법 칸까지 1,288건(60%)에
+# 메일 주소가 있다. K-Startup 482건은 문의처 칸(전화번호)만이면 0건, 이메일 접수 칸까지 118건(24%)
+CONTACT_KEYS = {
+    "bizinfo": ("refrncNm", "reqstMthPapersCn"),
+    "kstartup": ("prch_cnpl_no", "aply_mthd_eml_rcpt_istc"),
+}
+
+
+def api_contacts(source: str, raw: dict) -> set[str]:
+    """출처 API의 문의처 칸에 적힌 메일 주소·전화번호(정규화한 것)."""
+    out: set[str] = set()
+    for key in CONTACT_KEYS.get(source, ()):
+        out |= reachable(html_to_text(str(raw.get(key) or "")))
+    return out
 
 
 def composite_hash(rec: NoticeRecord, blob_keys: list[str | None]) -> str:

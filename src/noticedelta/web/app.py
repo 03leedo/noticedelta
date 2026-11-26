@@ -23,6 +23,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -30,16 +31,31 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
 from noticedelta import people, vault
+from noticedelta.agent import build_gateway
 from noticedelta.config import ROOT
-from noticedelta.db.models import Profile
+from noticedelta.db.models import AgentSessionRow, Profile, ToolActionRow
 from noticedelta.grants import SIDO
 from noticedelta.metrics import collect, prometheus_text
 from noticedelta.names import FIELD_NAMES, RESULT_NAMES
 from noticedelta.notify import inbox
+from noticedelta.tool_gateway import ToolGateway
 from noticedelta.web import consent
 from noticedelta.web.history_views import alert_evidence, program_detail
 from noticedelta.web.ics import calendar
 from noticedelta.web.views import GROUP_NAMES, GROUPS, OUTCOME_NAMES, humanize, my_programs
+
+FLAG_NAMES = {"A": "외부 글을 읽음", "B": "내 정보를 읽음", "C": "밖으로 보낸 적 있음"}
+ACTION_STATUS_NAMES = {
+    "held": "승인 기다림",
+    "approved": "보류 중(취소 가능)",
+    "committing": "보내는 중",
+    "committed": "보냄",
+    "discarded": "거절·취소함",
+    "expired": "기한 지남",
+    "blocked": "막힘",
+    "failed": "실패",
+    "undone": "되돌림",
+}
 
 TEMPLATES = Path(__file__).parent / "templates"
 
@@ -83,9 +99,14 @@ def create_app(
     contact: str | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     cipher: vault.Cipher | None = None,
+    gateway: ToolGateway | None = None,
 ) -> FastAPI:
-    """cipher: 개인정보 금고의 열쇠. 없으면 NOTICEDELTA_VAULT_KEY, 그것도 없으면 개발용 열쇠 파일."""
+    """cipher: 개인정보 금고의 열쇠. 없으면 NOTICEDELTA_VAULT_KEY, 그것도 없으면 개발용 열쇠 파일.
+
+    gateway: 승인함이 쓰는 도구 게이트웨이. 없으면 에이전트 도구를 모아 만든다(효과는 워커가 실행한다).
+    """
     cipher = cipher or vault.load_cipher(ROOT / "data" / "vault.key")
+    gate = gateway or build_gateway(session_factory, cipher=cipher)
     app = FastAPI(title="NoticeDelta", docs_url=None, redoc_url=None, openapi_url=None)
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html"]))
     env.filters["human"] = humanize
@@ -208,7 +229,11 @@ def create_app(
     def delete(token: str):
         with session_factory() as s:
             person_id = people.resolve(s, token)
-            if person_id is None or not consent.delete_user(s, person_id, at=now()):
+            if person_id is None:
+                raise HTTPException(404, "없는 링크입니다")
+            # 에이전트 세션을 닫고 나가지 않은 효과를 버린다. 효과에 남은 인자(본문의 내 정보)도 지운다
+            gate.forget_person(s, person_id, now=now())
+            if not consent.delete_user(s, person_id, at=now()):
                 raise HTTPException(404, "없는 링크입니다")
             people.forget(s, person_id, at=now())
             s.commit()
@@ -238,6 +263,76 @@ def create_app(
                 raise HTTPException(404, "없는 알림입니다")
             ctx = {**common, "token": token, "ev": ev}
             return templates.TemplateResponse(request, "evidence.html", ctx)
+
+    # --- 승인함: 에이전트가 요청한 효과를 승인·거절·고치기·취소하고, 세션을 닫는다 (5.5) ---
+
+    def own_action(s: Session, person_id: str, action_id: str) -> ToolActionRow:
+        a = s.get(ToolActionRow, action_id)
+        owner = s.get(AgentSessionRow, a.session_id) if a is not None else None
+        if owner is None or owner.person_id != person_id:
+            raise HTTPException(404, "없는 요청입니다")
+        return a
+
+    @app.get("/p/{token}/approvals", response_class=HTMLResponse)
+    def approvals(request: Request, token: str):
+        with session_factory() as s:
+            person_id = load(s, token).person_id
+            cards = gate.inbox(s, person_id=person_id)
+            sessions = s.scalars(
+                sa.select(AgentSessionRow)
+                .where(AgentSessionRow.person_id == person_id, AgentSessionRow.status == "open")
+                .order_by(AgentSessionRow.last_seen_at.desc())
+            ).all()
+            done = s.scalars(
+                sa.select(ToolActionRow)
+                .join(AgentSessionRow, AgentSessionRow.id == ToolActionRow.session_id)
+                .where(
+                    AgentSessionRow.person_id == person_id,
+                    ToolActionRow.status.not_in(("held", "approved")),
+                )
+                .order_by(ToolActionRow.requested_at.desc())
+                .limit(20)
+            ).all()
+            ctx = {**common, "token": token, "cards": cards, "sessions": sessions, "done": done}
+            ctx["FLAG_NAMES"] = FLAG_NAMES
+            ctx["STATUS_NAMES"] = ACTION_STATUS_NAMES
+            return templates.TemplateResponse(request, "approvals.html", ctx)
+
+    @app.post("/p/{token}/approvals/{action_id}")
+    async def decide(request: Request, token: str, action_id: str):
+        form = dict(await request.form())
+        do = form.get("do")
+        with session_factory() as s:
+            person_id = load(s, token).person_id
+            own_action(s, person_id, action_id)
+            by = f"person:{person_id}"
+            try:
+                if do == "approve":
+                    gate.approve(s, action_id, by=by, now=now())
+                elif do in ("reject", "cancel"):
+                    why = "사람이 거절했다" if do == "reject" else "사람이 보류 중에 취소했다"
+                    gate.discard(s, action_id, by=by, now=now(), why=why)
+                elif do == "edit":
+                    edits = {k: form[k] for k in ("body", "kind") if k in form}
+                    gate.edit(s, action_id, edits, by=by, now=now())
+                else:
+                    raise HTTPException(400, "모르는 결정입니다")
+            except (ValueError, TypeError) as e:
+                s.rollback()  # 기한이 지나 닫은 것은 게이트웨이가 이미 커밋했다
+                raise HTTPException(409, str(e)) from e
+            s.commit()
+        return RedirectResponse(f"/p/{token}/approvals", status_code=303)
+
+    @app.post("/p/{token}/sessions/{session_id}/close")
+    def close_session(token: str, session_id: str):
+        with session_factory() as s:
+            person_id = load(s, token).person_id
+            row = s.get(AgentSessionRow, session_id)
+            if row is None or row.person_id != person_id:
+                raise HTTPException(404, "없는 세션입니다")
+            gate.close_session(s, session_id, now=now(), by=f"person:{person_id}")
+            s.commit()
+        return RedirectResponse(f"/p/{token}/approvals", status_code=303)
 
     @app.get("/programs/{item_id}", response_class=HTMLResponse)
     def program(request: Request, item_id: str):

@@ -218,9 +218,30 @@ class ToolGateway:
             )
         ).all()
         for a in pending:
-            a.decided_at, a.decided_by = now, by[:64]
-            a.reason = f"{a.reason or ''} / 세션을 닫아 버렸다"[-300:]
-            self._close(db, a, "discarded", now)
+            if self._take(db, a.id, ("held", "approved"), "discarded"):
+                a = self._action(db, a.id)
+                a.decided_at, a.decided_by = now, by[:64]
+                a.reason = f"{a.reason or ''} / 세션을 닫아 버렸다"[-300:]
+                self._emit(db, a, row, "discarded", now)
+
+    def forget_person(self, db: Session, person_id: str, *, now: datetime) -> int:
+        """사람이 자기 정보를 지울 때: 그 사람의 세션을 닫고(나가지 않은 효과는 버린다), 효과에 남은
+        인자·결과(본문에 넣은 내 정보 등)를 지운다. 지운 효과 수."""
+        sessions = db.scalars(
+            sa.select(AgentSessionRow).where(AgentSessionRow.person_id == person_id)
+        ).all()
+        for s in sessions:
+            self.close_session(db, s.id, now=now, by="person:forget")
+        ids = [s.id for s in sessions]
+        if not ids:
+            return 0
+        took = db.execute(
+            sa.update(ToolActionRow)
+            .where(ToolActionRow.session_id.in_(ids))
+            .values(arguments={}, result=None, undo=None)
+            .execution_options(synchronize_session=False)
+        )
+        return took.rowcount
 
     # --- 호출 (5.4) ---
 
@@ -255,6 +276,13 @@ class ToolGateway:
             inspect.signature(tool.handler).bind(**probe)
         except TypeError as e:
             reason = f"인자가 도구와 맞지 않는다: {e}"[:300]
+        else:
+            try:
+                reason = tool.validate(dict(args)) if tool.validate is not None else None
+            except Exception as e:  # 검사가 깨져도 이유로 남긴다
+                reason = f"인자를 검사하지 못했다: {type(e).__name__}"
+        if reason is not None:
+            reason = reason[:300]
             self._decide(db, s, name, "error", "declare", reason, before, before, now)
             db.commit()
             return {"error": reason}
@@ -484,11 +512,16 @@ class ToolGateway:
         if a.status != "held":
             raise ValueError(f"승인할 수 없는 상태: {a.status}")
         if a.decide_by is not None and _aware(a.decide_by) <= now:
-            self._close(db, a, "expired", now)
+            if self._take(db, action_id, ("held",), "expired"):
+                self._emit(db, self._action(db, action_id), None, "expired", now)
+                db.commit()  # 기한이 지난 것은 닫아 둔다(승인함에 다시 보이지 않게)
             raise ValueError("승인 기한이 지났다")
         if any(m["mark"] == "from_untrusted" for m in a.marks):
             raise ValueError("외부 글에서 본 받는 쪽으로는 승인할 수 없다")
-        a.status, a.decided_at, a.decided_by = "approved", now, by[:64]
+        if not self._take(db, action_id, ("held",), "approved"):
+            raise ValueError("그 사이 상태가 바뀌었다")
+        a = self._action(db, action_id)
+        a.decided_at, a.decided_by = now, by[:64]
         a.approved_at, a.approved_by = now, by[:64]
         a.commit_after = now + self._hold(self.tools.get(a.tool))
         self._emit(db, a, db.get(AgentSessionRow, a.session_id), "approved", now)
@@ -498,13 +531,15 @@ class ToolGateway:
         self, db: Session, action_id: str, *, by: str, now: datetime, why: str | None = None
     ) -> ToolActionRow:
         """거절하거나(held), 승인한 뒤 보류 시간 안에 취소한다(approved)."""
+        # 조건부로 바꾼다: 워커가 그 사이 committing으로 차지했으면(이미 나가는 중) 취소는 실패다
+        if not self._take(db, action_id, ("held", "approved"), "discarded"):
+            status = self._action(db, action_id).status
+            raise ValueError(f"거절·취소할 수 없는 상태: {status}")
         a = self._action(db, action_id)
-        if a.status not in ("held", "approved"):
-            raise ValueError(f"거절·취소할 수 없는 상태: {a.status}")
         a.decided_at, a.decided_by = now, by[:64]
         if why:
             a.reason = f"{a.reason or ''} / {why}"[-300:]
-        self._close(db, a, "discarded", now)
+        self._emit(db, a, db.get(AgentSessionRow, a.session_id), "discarded", now)
         return a
 
     def edit(
@@ -519,6 +554,8 @@ class ToolGateway:
             raise ValueError(f"서식으로 다시 만든 효과는 서식 칸만 고친다: {sorted(tool.form)}")
         merged = {**a.arguments, **arguments}
         inspect.signature(tool.handler).bind(**merged)  # 맞지 않으면 TypeError
+        if tool.validate is not None and (why := tool.validate(dict(merged))):
+            raise ValueError(why)
         s = db.get(AgentSessionRow, a.session_id)
         a.arguments = merged
         a.marks = self._marks(db, s, tool, merged)  # 사람이 고쳐도 표시는 남긴다
@@ -655,6 +692,20 @@ class ToolGateway:
         }
 
     # --- 안쪽 ---
+
+    @staticmethod
+    def _take(db: Session, action_id: str, frm: tuple[str, ...], to: str) -> bool:
+        """상태를 조건부로 바꾼다(한 문장). 그 사이 다른 쪽이 바꿨으면 False."""
+        took = db.execute(
+            sa.update(ToolActionRow)
+            .where(ToolActionRow.id == action_id, ToolActionRow.status.in_(frm))
+            .values(status=to)
+            .execution_options(synchronize_session=False)
+        )
+        if took.rowcount == 1:
+            db.expire_all()
+            return True
+        return False
 
     def _hold(self, tool: Tool | None) -> timedelta:
         return tool.hold if tool is not None and tool.hold is not None else self.hold
