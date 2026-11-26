@@ -427,3 +427,117 @@ def test_people_whose_values_cannot_be_read_are_not_rejudged(env):
     with env.factory() as s:
         # 빈 속성으로 다시 판정해 "해당 → 확인 필요" 같은 거짓 알림을 내지 않는다
         assert s.scalar(sa.select(sa.func.count()).select_from(models.OutboxAlert)) == 0
+
+
+def other_app():
+    """두 번째 앱(다른 소유자가 만들었다고 본다): 지원사업 앱과 같은 출처를 읽고 같은 필드를 뽑는다."""
+    from noticedelta.appspec import AppDefinition
+    from noticedelta.grants import APP
+
+    data = APP.model_dump(mode="json", by_alias=True, exclude_none=True)
+    data.update(id="rules-watch", title="(가상) 남이 만든 자격 지킴이")
+    return AppDefinition.model_validate(data)
+
+
+def subscribe(env, person_id, app_id, age_months):
+    with env.factory() as s:
+        pv = s.scalars(sa.select(models.ItemVersion)).one()
+        s.add(models.Person(id=person_id))
+        s.add(models.Profile(person_id=person_id, attributes={}))
+        s.flush()
+        at = datetime(2026, 10, 1, tzinfo=UTC)
+        vault.put(s, env.ctx.vault, person_id, {"business_age_months": age_months}, source="input",
+                  now=at)  # fmt: skip
+        for purpose in ("judge", "notify"):
+            vault.grant_consent(s, person_id, app_id, purpose, ["business_age_months"],
+                                text_version="t", now=at)  # fmt: skip
+        s.add(models.SubscriptionRow(app_id=app_id, app_version=1, person_id=person_id,
+                                     item_id=pv.item_id, fields=["eligibility_rules"]))  # fmt: skip
+        s.add(models.JudgmentRow(app_id=app_id, app_version=1, person_id=person_id,
+                                 item_id=pv.item_id, item_version_id=pv.id, ruleset_hash="v1",
+                                 result="eligible"))  # fmt: skip
+        s.commit()
+
+
+def test_another_owners_app_runs_beside_ours_without_mixing(env):
+    """플랫폼 8번의 완료 기준: 다른 사람이 만든 앱이 내 앱과 섞이지 않고 돈다."""
+    other = other_app()
+    ours, theirs = RulesFromText(), RulesFromText()
+    env.ctx.extractor, env.ctx.extra_apps = ours, (other,)
+    env.ctx.extractor_for = lambda app: theirs
+    env.ctx.vault = vault.load_cipher()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    with env.factory() as s:
+        apps = sorted({r.app_id for r in s.scalars(sa.select(models.FieldValueRow))})
+        keys = sorted(j.dedupe_key for j in s.scalars(sa.select(models.Job)) if j.kind == "impact")
+    assert apps == ["grant-alerts", "rules-watch"]  # 앱마다 자기 값을 뽑는다
+    assert keys[0].startswith("impact:") and keys[1].endswith(":rules-watch")  # 우리 키는 그대로
+    subscribe(env, "u1", "grant-alerts", 72)
+    subscribe(env, "u2", "rules-watch", 72)
+
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    env.work()
+    with env.factory() as s:
+        alerts = {a.person_id: a for a in s.scalars(sa.select(models.OutboxAlert))}
+        judged = {(j.person_id, j.app_id) for j in s.scalars(sa.select(models.JudgmentRow))}
+    assert set(alerts) == {"u1", "u2"}
+    assert (alerts["u1"].app_id, alerts["u2"].app_id) == ("grant-alerts", "rules-watch")
+    assert alerts["u2"].idempotency_key.startswith("rules-watch:u2:")
+    assert all(a.status == "sent" for a in alerts.values())  # 앱마다 따로 알림 작업이 돌았다
+    # 판정도 자기 앱 안에서만: u1은 우리 앱, u2는 남의 앱으로만 판정됐다
+    assert ("u1", "rules-watch") not in judged and ("u2", "grant-alerts") not in judged
+    assert len(ours.calls) == len(theirs.calls) == 2
+
+
+def test_an_app_that_reads_other_sources_gets_no_impact_jobs(env):
+    other = other_app().model_copy(update={"id": "kstartup-only"})
+    data = other.model_dump(mode="json", by_alias=True, exclude_none=True)
+    data["sources"] = [u for u in data["sources"] if u["id"] == "kstartup"]
+    from noticedelta.appspec import AppDefinition
+
+    env.ctx.extractor, env.ctx.extra_apps = RulesFromText(), (AppDefinition.model_validate(data),)
+    env.ctx.extractor_for = lambda app: RulesFromText()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    with env.factory() as s:
+        apps = {r.app_id for r in s.scalars(sa.select(models.FieldValueRow))}
+    assert apps == {"grant-alerts"}  # 기업마당 공고는 K-Startup만 읽는 앱의 일이 아니다
+
+
+def test_an_app_with_only_its_own_subscribers_keeps_its_own_chain(env):
+    """범위 subscribed에서 남의 앱 구독만 있는 사업: 그 앱의 앞 판을 보고 다음 판으로 간다."""
+    other = other_app()
+    theirs = RulesFromText()
+    env.ctx.extractor, env.ctx.extra_apps = RulesFromText(), (other,)
+    env.ctx.extractor_for = lambda app: theirs
+    env.ctx.extract_scope = "subscribed"
+    env.ctx.vault = vault.load_cipher()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    subscribe(env, "u2", "rules-watch", 72)
+    with env.factory() as s:
+        from noticedelta.pipeline import enqueue_scope_backlog
+
+        enqueue_scope_backlog(s, env.ctx.for_app("rules-watch"))
+        s.commit()
+    env.work()
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    env.work()
+    with env.factory() as s:
+        alerts = s.scalars(sa.select(models.OutboxAlert)).all()
+        apps = {r.app_id for r in s.scalars(sa.select(models.FieldValueRow))}
+    assert apps == {"rules-watch"}  # 우리 앱은 구독이 없어 돌지 않았다
+    assert [(a.person_id, a.app_id) for a in alerts] == [("u2", "rules-watch")]
+
+
+def test_a_worker_reads_unknown_apps_from_the_registry_or_defers(env):
+    from noticedelta import app_registry
+    from noticedelta.jobs import Deferred
+
+    with env.factory() as s:
+        with pytest.raises(Deferred):
+            env.ctx.for_app("rules-watch", s)  # 켠 적 없는 앱: 미룬다
+        app_registry.register(s, other_app(), at=datetime(2026, 10, 1, tzinfo=UTC))
+        app_registry.enable(s, "rules-watch", 1, at=datetime(2026, 10, 1, tzinfo=UTC))
+        assert env.ctx.for_app("rules-watch", s).app.id == "rules-watch"

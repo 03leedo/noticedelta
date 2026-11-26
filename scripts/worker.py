@@ -32,7 +32,7 @@ from pathlib import Path
 import sqlalchemy as sa
 
 ROOT = Path(__file__).resolve().parents[1]
-from noticedelta import flight  # noqa: E402
+from noticedelta import app_registry, flight  # noqa: E402
 from noticedelta.agent import build_gateway  # noqa: E402
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.config import load_env, open_db  # noqa: E402
@@ -140,6 +140,14 @@ def main() -> None:
         ctx.extractor = LLMExtractor(gateway, model=choice.model, spec=spec_for(ctx.app))
         ctx.extractor_name = f"{choice.name}/{choice.model}"
         ctx.extract_scope = args.scope
+        # 소유자가 켠 다른 앱도 함께 돈다(영향 계산·알림은 앱마다 따로, 같은 하루 한도를 나눠 쓴다)
+        with factory() as s:
+            ctx.extra_apps = tuple(a for a in app_registry.enabled(s) if a.id != ctx.app.id)
+        ctx.extractor_for = lambda app: LLMExtractor(
+            gateway, model=choice.model, spec=spec_for(app)
+        )
+        if ctx.extra_apps:
+            print("함께 도는 앱: " + ", ".join(f"{a.id}@{a.version}" for a in ctx.extra_apps))
         print(
             f"추출: {ctx.extractor_name} · 범위 {args.scope} · 오늘 쓴 토큰 {spent:,} / "
             f"한도 {daily:,} · 남은 {budget.limit:,}"
@@ -156,7 +164,7 @@ def main() -> None:
                 config=flight_config(ctx),
                 app=app_ref,
             )
-            backlog = enqueue_scope_backlog(s, ctx, now)
+            backlog = sum(enqueue_scope_backlog(s, ctx.for_app(a.id), now) for a in ctx.apps())
             if backlog:
                 print(
                     f"범위 안인데 계산하지 않은 사업의 판 {backlog}개를 따라잡기로 넣었습니다(알림 없음)"
@@ -164,7 +172,11 @@ def main() -> None:
             if args.extract_items:
                 items = _recent_corrected(s, args.extract_items)
                 carry = {"trace": usage_trace}
-                n = sum(enqueue_item_impact(s, i, carry, now) for i in items)
+                n = sum(
+                    enqueue_item_impact(s, i, carry, now, app_id=a.id)
+                    for i in items
+                    for a in ctx.apps()
+                )
                 print(
                     f"최근 정정된 사업 {len(items)}개의 판 {n}개를 새로 넣었습니다(따라잡기, 알림 없음)"
                 )

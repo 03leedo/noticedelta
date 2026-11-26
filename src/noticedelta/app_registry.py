@@ -85,3 +85,14 @@ def _current_row(session: Session, app_id: str) -> AppDefinitionRow | None:
 def current(session: Session, app_id: str) -> AppDefinition | None:
     row = _current_row(session, app_id)
     return AppDefinition.model_validate(row.body) if row is not None else None
+
+
+def enabled(session: Session) -> list[AppDefinition]:
+    """켠 판이 있는 앱마다 그 판의 정의(app_id 순)."""
+    ids = session.scalars(
+        sa.select(AppDefinitionRow.app_id)
+        .where(AppDefinitionRow.enabled_at.is_not(None))
+        .distinct()
+        .order_by(AppDefinitionRow.app_id)
+    ).all()
+    return [a for a in (current(session, i) for i in ids) if a is not None]

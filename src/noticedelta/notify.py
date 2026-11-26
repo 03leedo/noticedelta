@@ -107,13 +107,19 @@ def _key(a: OutboxAlert) -> tuple[str, str, str, str]:
 
 
 def prepare(
-    session: Session, item_id: str, *, mass_impact: int = MASS_IMPACT, trace: Trace | None = None
+    session: Session,
+    item_id: str,
+    *,
+    mass_impact: int = MASS_IMPACT,
+    trace: Trace | None = None,
+    app_id: str | None = None,
 ) -> Prepared:
-    """사업 하나의 pending 알림에 정책을 적용한다."""
+    """사업 하나의 pending 알림에 정책을 적용한다. app_id를 주면 그 앱의 알림만 본다."""
     out = Prepared()
-    unsent = session.scalars(
-        sa.select(OutboxAlert).where(OutboxAlert.item_id == item_id, OutboxAlert.status.in_(UNSENT))
-    ).all()
+    q = sa.select(OutboxAlert).where(OutboxAlert.item_id == item_id, OutboxAlert.status.in_(UNSENT))
+    if app_id is not None:
+        q = q.where(OutboxAlert.app_id == app_id)
+    unsent = session.scalars(q).all()
     if not any(a.status == "pending" for a in unsent):
         return out
     by_key: dict[tuple, list[OutboxAlert]] = defaultdict(list)
@@ -212,11 +218,14 @@ def deliver(
     now: Callable[[], datetime] = _now,
     labels: Mapping[str, str] | None = None,
     trace: Trace | None = None,
+    app_id: str | None = None,
 ) -> int:
     """ready 알림을 보낸다. 본문을 payload에 남기고 sent로 바꾼다. 보낸 수를 준다."""
     q = sa.select(OutboxAlert).where(OutboxAlert.status == "ready")
     if item_id is not None:
         q = q.where(OutboxAlert.item_id == item_id)
+    if app_id is not None:
+        q = q.where(OutboxAlert.app_id == app_id)
     sent = 0
     for a in session.scalars(q.order_by(OutboxAlert.created_at)).all():
         item = session.get(Item, a.item_id)

@@ -90,6 +90,39 @@ class Context:
     # 범위에 들어오면 그 사업의 판을 첫 판부터 차례로 계산한다(enqueue_item_impact).
     extract_scope: Literal["all", "changed", "subscribed"] = "all"
     vault: vault.Cipher | None = None  # 개인정보 금고의 열쇠. 없으면 사람별 판정을 하지 않는다
+    # 함께 도는 다른 앱(소유자가 켠 앱, app-spec 6장). 수집·파싱·변경 기록은 출처 단위로 한 번이고,
+    # 영향 계산과 알림은 앱마다 따로 돈다(작업 키와 결과에 앱이 붙는다). 주 앱(app)의 작업 키는 그대로다
+    extra_apps: tuple[AppDefinition, ...] = ()
+    extractor_for: Callable[[AppDefinition], Extractor] | None = None  # 다른 앱의 추출기
+    _per_app: dict = field(default_factory=dict, repr=False)
+
+    def apps(self) -> list[AppDefinition]:
+        return [self.app, *(a for a in self.extra_apps if a.id != self.app.id)]
+
+    def for_app(self, app_id: str | None, session: Session | None = None) -> Context:
+        """그 앱으로 도는 Context. 주 앱이면 자기 자신이다.
+
+        함께 도는 앱이 아니면 등록부에서 켠 판을 읽는다(session이 있을 때). 그래도 없으면 미룬다.
+        """
+        if app_id is None or app_id == self.app.id:
+            return self
+        if app_id not in self._per_app:
+            other = next((a for a in self.extra_apps if a.id == app_id), None)
+            if other is None and session is not None:
+                other = app_registry.current(session, app_id)
+            if other is None:
+                raise Deferred(f"이 워커가 모르는 앱: {app_id}", delay=timedelta(hours=1))
+            extractor = self.extractor_for(other) if self.extractor_for is not None else None
+            _check_spec(other, extractor)
+            self._per_app[app_id] = replace(
+                self,
+                app=other,
+                extra_apps=(),
+                extractor=extractor,
+                labels={**other.labels.fields, **other.labels.results},
+                _per_app={},
+            )
+        return self._per_app[app_id]
 
 
 _DETECTORS: dict[tuple[str, int, str], Callable] = {}
@@ -111,12 +144,15 @@ def parser_id(parser: Parser) -> str:
 
 def flight_config(ctx: Context) -> dict:
     """수집 실행 묶음의 설정: 이것이 같아야 같게 재생을 기대한다(platform-services 3.4)."""
-    return {
+    out = {
         "app": app_ref(ctx.app.id, ctx.app.version),
         "matcher": MATCHER_VERSION,
         "parser": parser_id(ctx.parser),
         "extractor": ctx.extractor_name or None,
     }
+    if ctx.extra_apps:  # 함께 도는 앱이 있을 때만(없는 실행의 설정 해시는 예전 그대로)
+        out["apps"] = sorted(app_ref(a.id, a.version) for a in ctx.extra_apps)
+    return out
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -325,10 +361,21 @@ def handle_diff(ctx: Context) -> Handler:
                 trace=trace,
                 now=ctx.now(),
             )
-            if ctx.extractor is not None and _in_scope(session, ctx, item_id, r.event):
-                enqueue_item_impact(
-                    session, item_id, trace.carry(env), ctx.now(), r.event.to_version_id
-                )
+            for app in ctx.apps():  # 영향 계산은 앱마다 따로(앱이 읽는 출처·범위 안에서)
+                actx = ctx.for_app(app.id)
+                if actx.extractor is None:
+                    continue
+                if app.id != ctx.app.id and not _reads_source(session, app, item_id):
+                    continue  # 주 앱은 예전과 같게 둔다
+                if _in_scope(session, actx, item_id, r.event):
+                    enqueue_item_impact(
+                        session,
+                        item_id,
+                        trace.carry(env),
+                        ctx.now(),
+                        r.event.to_version_id,
+                        app_id=app.id,
+                    )
         waiting = next((r for r in results if r.status == "waiting"), None)
         if waiting is None:
             return
@@ -371,8 +418,10 @@ def _for_app(app: AppDefinition, event: ChangeEvent) -> bool:
 # --- 영향 계산 (설계 7.7) ---
 
 
-def _impact_key(pv_id: str) -> str:
-    return f"{IMPACT}:{pv_id}:{TEMPLATE_VERSION}"
+def _impact_key(pv_id: str, app_id: str | None = None) -> str:
+    """주 앱(지원사업)은 예전 키 그대로, 다른 앱은 앱 이름을 붙인다(같은 판도 앱마다 한 번씩)."""
+    base = f"{IMPACT}:{pv_id}:{TEMPLATE_VERSION}"
+    return base if app_id is None or app_id == APP.id else f"{base}:{app_id}"
 
 
 def _meta_fields(
@@ -411,7 +460,7 @@ def enqueue_scope_backlog(session: Session, ctx: Context, now: datetime | None =
     items = session.scalars(
         sa.select(SubscriptionRow.item_id).where(SubscriptionRow.app_id == ctx.app.id).distinct()
     ).all()
-    return sum(enqueue_item_impact(session, i, None, now) for i in items)
+    return sum(enqueue_item_impact(session, i, None, now, app_id=ctx.app.id) for i in items)
 
 
 def _in_scope(session: Session, ctx: Context, item_id: str, event: ChangeEvent) -> bool:
@@ -435,6 +484,7 @@ def enqueue_item_impact(
     carry: dict[str, str] | None = None,
     now: datetime | None = None,
     live_version: str | None = None,
+    app_id: str | None = None,
 ) -> int:
     """사업의 비교가 끝난 판을 첫 판부터 영향 계산에 넣는다. 이미 넣은 판은 건너뛴다(멱등). 새로 넣은 수를 준다.
 
@@ -451,7 +501,7 @@ def enqueue_item_impact(
     n = 0
     for pv_id in ids:
         extra = {**(carry or {}), **({"catchup": True} if pv_id != live_version else {})}
-        n += _enqueue_impact(session, item_id, pv_id, extra, now) is not None
+        n += _enqueue_impact(session, item_id, pv_id, extra, now, app_id) is not None
     return n
 
 
@@ -461,12 +511,14 @@ def _enqueue_impact(
     pv_id: str,
     carry: dict | None = None,
     now: datetime | None = None,
+    app_id: str | None = None,
 ) -> Job | None:
+    other = app_id is not None and app_id != APP.id
     return enqueue(
         session,
         IMPACT,
-        {"item_version_id": pv_id, **(carry or {})},
-        dedupe_key=_impact_key(pv_id),
+        {"item_version_id": pv_id, **(carry or {}), **({"app": app_id} if other else {})},
+        dedupe_key=_impact_key(pv_id, app_id),
         concurrency_key=f"item:{item_id}",
         priority=70,
         now=now,
@@ -541,7 +593,21 @@ def _latest_judgments(session: Session, item_id: str, app_id: str) -> dict[str, 
     return {r.person_id: Judgment(r.result) for r in rows}  # 뒤의 것이 앞의 것을 덮는다
 
 
-def handle_impact(ctx: Context) -> Handler:
+def handle_impact(root: Context) -> Handler:
+    per_app: dict[str, Handler] = {}
+
+    def handle(session: Session, job: Job) -> None:
+        # 작업에 적힌 앱의 Context로 돈다(없으면 주 앱). 앱마다 필드·규칙·알림이 섞이지 않는다
+        ctx = root.for_app(job.payload.get("app"), session)
+        if ctx.app.id not in per_app:
+            # 루트 앱(코드가 준 정의)만 등록부에 씨앗으로 넣는다. 다른 앱은 등록부에서 왔다
+            per_app[ctx.app.id] = _impact_handler(ctx, seed=ctx is root)
+        per_app[ctx.app.id](session, job)
+
+    return handle
+
+
+def _impact_handler(ctx: Context, *, seed: bool = True) -> Handler:
     def _work(session: Session, job: Job) -> None:
         if ctx.extractor is None:
             raise TransientError("추출기가 설정되지 않음")
@@ -549,7 +615,8 @@ def handle_impact(ctx: Context) -> Handler:
         step = next((s for s in replay(session, pv.item_id) if s.to_version.id == pv.id), None)
         if step is None:
             raise PermanentError("변경 이벤트가 없음")
-        app_registry.seed(session, ctx.app, at=ctx.now())  # 결과가 가리킬 앱 정의가 DB에 있게
+        if seed:  # 결과가 가리킬 앱 정의가 DB에 있게(루트 앱은 코드·저장소의 씨앗)
+            app_registry.seed(session, ctx.app, at=ctx.now())
 
         meta = _meta_fields(session, ctx.app, pv.notice_version_id)
         if step.from_version is None:
@@ -560,7 +627,9 @@ def handle_impact(ctx: Context) -> Handler:
             return
 
         prev = session.scalar(
-            sa.select(Job.status).where(Job.dedupe_key == _impact_key(step.from_version.id))
+            sa.select(Job.status).where(
+                Job.dedupe_key == _impact_key(step.from_version.id, ctx.app.id)
+            )  # 이 앱의 앞 판(앱마다 사슬이 따로다)
         )
         if prev != "done":
             raise TransientError(f"v{step.from_version.version_no} 영향 계산이 아직 안 끝남")
@@ -738,41 +807,72 @@ def _short(value, limit: int = 500):
     return value if len(text) <= limit else None
 
 
+def _env_app(env) -> str | None:
+    """봉투의 앱("app:<id>@<판>")에서 id."""
+    return env.app.removeprefix("app:").rsplit("@", 1)[0] if env.app else None
+
+
+def _notify_key(env) -> str:
+    base = f"{NOTIFY}:{env.payload['to_version_id']}"
+    app_id = _env_app(env)
+    return base if app_id in (None, APP.id) else f"{base}:{app_id}"
+
+
+def _reads_source(session: Session, app: AppDefinition, item_id: str) -> bool:
+    """앱이 그 항목의 출처를 하나라도 읽는가(다른 출처만 읽는 앱은 영향 계산을 넣지 않는다)."""
+    sources = set(
+        session.scalars(sa.select(Notice.source_id).where(Notice.item_id == item_id)).all()
+    )
+    return not sources or any(u.id in sources for u in app.sources)
+
+
 # 알림 발송은 알림이 생겼다는 봉투를 받아 돈다(platform-services 2.5). 항목 판 하나에 한 번.
 NOTIFY_ON_ALERT = EventSubscription(
     name="notify",
     pattern="alert.created",
     job=NOTIFY,
-    dedupe=lambda env: f"{NOTIFY}:{env.payload['to_version_id']}",
+    dedupe=lambda env: _notify_key(env),
     concurrency=lambda env: env.item,
-    payload=lambda env: {"item_id": (env.item or "").removeprefix("item:")},
+    payload=lambda env: {
+        "item_id": (env.item or "").removeprefix("item:"),
+        **({"app": a} if (a := _env_app(env)) not in (None, APP.id) else {}),
+    },
     priority=80,
 )
 subscribe(NOTIFY_ON_ALERT)
 
 
-def handle_notify(ctx: Context) -> Handler:
+def handle_notify(root: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         item_id = job.payload["item_id"]
         trace = Trace.of(job.payload)
-        prepare(session, item_id, mass_impact=ctx.app.alerts.hold.mass_impact, trace=trace)
-        deliver(session, ctx.channel, item_id=item_id, now=ctx.now, labels=ctx.labels, trace=trace)
+        ctx = root.for_app(job.payload.get("app"), session)
+        # 늘 그 앱의 알림만, 그 앱의 붙잡기 기준과 표시 이름으로(다른 앱의 알림과 섞지 않는다)
+        prepare(session, item_id, mass_impact=ctx.app.alerts.hold.mass_impact, trace=trace,
+                app_id=ctx.app.id)  # fmt: skip
+        deliver(session, ctx.channel, item_id=item_id, now=ctx.now, labels=ctx.labels,
+                trace=trace, app_id=ctx.app.id)  # fmt: skip
 
     return handle
 
 
-def handlers(ctx: Context) -> dict[str, Handler]:
-    spec = getattr(
-        ctx.extractor, "spec", None
-    )  # 추출 명세가 있는 추출기라면 앱과 필드가 맞아야 한다
+def _check_spec(app: AppDefinition, extractor) -> None:
+    """추출 명세가 있는 추출기라면 앱과 필드가 맞아야 한다."""
+    spec = getattr(extractor, "spec", None)
     if spec is not None:
-        meta_only = {n for n, f in ctx.app.engine.fields.items() if not f.extracts}
-        missing = set(ctx.app.value_types()) - meta_only - set(spec.types)
+        meta_only = {n for n, f in app.engine.fields.items() if not f.extracts}
+        missing = set(app.value_types()) - meta_only - set(spec.types)
         if missing:
             raise ValueError(
-                f"추출기가 앱 {ctx.app.id}@{ctx.app.version}의 필드 {sorted(missing)}를 모른다. "
+                f"추출기가 앱 {app.id}@{app.version}의 필드 {sorted(missing)}를 모른다. "
                 "spec_for(ctx.app)으로 만든다"
             )
+
+
+def handlers(ctx: Context) -> dict[str, Handler]:
+    _check_spec(ctx.app, ctx.extractor)
+    for other in ctx.extra_apps:
+        ctx.for_app(other.id)  # 다른 앱의 추출기도 미리 맞춰 본다
     return {
         LOAD: handle_load(ctx),
         PARSE: handle_parse(ctx),
