@@ -236,9 +236,28 @@ def test_long_text_is_clipped(factory):
 def test_registry_only_exposes_tools_within_the_allowed_capabilities():
     r = Registry(allowed=("A",))
     r.add(Tool("read_docs", "문서 읽기", lambda: {"ok": True}, frozenset({"A"})))
-    r.add(Tool("get_profile", "프로필 읽기", lambda: {"name": "…"}, frozenset({"B"})))
-    r.add(Tool("send_mail", "메일 보내기", lambda: {"sent": True}, frozenset({"A", "C"})))
-    assert list(r.tools) == ["read_docs"] and sorted(r.withheld) == ["get_profile", "send_mail"]
+    r.add(
+        Tool(
+            "get_profile",
+            "프로필 읽기",
+            lambda profile: profile,
+            frozenset({"B"}),
+            purpose="assist",
+            keys=("region",),
+        )
+    )
+    r.add(
+        Tool(
+            "send_mail",
+            "메일 보내기",
+            lambda: {"sent": True},
+            frozenset({"A", "C"}),
+            effect="external",
+        )
+    )
+    r.add(Tool("tick", "체크", lambda: {"undo": {}}, effect="internal", undo=lambda: None))
+    assert list(r.tools) == ["read_docs"]
+    assert sorted(r.withheld) == ["get_profile", "send_mail", "tick"]  # 효과가 있으면 A가 없어도
     with pytest.raises(KeyError, match="게이트웨이 없이는"):
         r.call("send_mail")
     with pytest.raises(KeyError, match="없는 도구"):
@@ -247,6 +266,34 @@ def test_registry_only_exposes_tools_within_the_allowed_capabilities():
         Tool("x", "x", dict, frozenset({"Z"}))
     with pytest.raises(ValueError):
         r.add(Tool("read_docs", "또", dict, frozenset({"A"})))
+    with pytest.raises(ValueError, match="게이트웨이"):
+        Registry(allowed=("A", "B"))  # B·C는 등록부로 내놓을 수 없다
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"capabilities": frozenset({"C"})},  # C인데 효과 선언이 없다
+        {"effect": "external"},  # 밖으로 나가는데 C가 없다
+        {"effect": "internal"},  # 되돌리는 함수가 없다
+        {"capabilities": frozenset({"B"})},  # 금고 용도·키가 없다
+        {
+            "capabilities": frozenset({"B", "C"}),
+            "effect": "external",
+            "purpose": "assist",
+            "keys": ("a",),
+        },
+        {
+            "capabilities": frozenset({"C"}),
+            "effect": "external",
+            "targets": ("to",),
+        },  # 허용 목록 없음
+        {"form": ("to",)},  # external이 아닌데 서식
+    ],
+)
+def test_tool_declaration_is_checked(kwargs):
+    with pytest.raises(ValueError):
+        Tool("t", "t", dict, **kwargs)
 
 
 def test_guard_walks_nested_results():
