@@ -18,7 +18,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from sqlalchemy.orm import Session
 
-from noticedelta.tool_gateway import INJECTED, SessionClosed, ToolGateway
+from noticedelta.tool_gateway import GATE_ARGS, SessionClosed, ToolGateway
 from noticedelta.tooling import Registry, Tool
 
 INSTRUCTIONS = """이 서버는 문서를 다루는 공통 기능과, 수집해 둔 항목(공고 등)과 변경 이력 조회를 도구로 준다.
@@ -62,7 +62,7 @@ def _shown(tool: Tool) -> tuple[inspect.Signature, dict]:
     params = [
         p.replace(annotation=hints.get(p.name, p.annotation))
         for p in inspect.signature(tool.handler).parameters.values()
-        if p.name != INJECTED
+        if p.name not in GATE_ARGS
     ]
     ann = {p.name: p.annotation for p in params if p.annotation is not inspect.Parameter.empty}
     if "return" in hints:

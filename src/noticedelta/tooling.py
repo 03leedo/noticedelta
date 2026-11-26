@@ -56,9 +56,11 @@ class Tool:
     allow: Callable[..., Collection[str]] | None = None  # external: (db, 인자) → 받는 쪽 허용 목록
     form: tuple[str, ...] = ()  # external: 서식 칸. 있으면 전이 때 이 칸만으로 다시 만든다(split)
     max_calls: int | None = None  # 세션 하나에서 부를 수 있는 수
-    validate: Callable[[dict], str | None] | None = (
-        None  # 인자 검사. 문제가 있으면 그 이유(요청 때 본다)
-    )
+    # 인자 검사. 문제가 있으면 그 이유(요청 때 본다)
+    validate: Callable[[dict], str | None] | None = None
+    # (db, 사람 id 또는 None, 인자) → 이 사람이 이 일을 해도 되는가. 안 되면 그 이유(예: 앱의 소유자만)
+    authorize: Callable[..., str | None] | None = None
+    confirm: bool = False  # external: 전이가 아니어도 늘 사람의 확인을 받는다(앱 켜기, 예산 올리기)
 
     def __post_init__(self) -> None:
         caps = set(self.capabilities)
@@ -75,9 +77,13 @@ class Tool:
             raise ValueError(f"{self.name}: B 도구는 금고의 용도(purpose)와 키(keys)를 선언한다")
         if {"B", "C"} <= caps:
             raise ValueError(f"{self.name}: 민감 데이터(B)와 외부 효과(C)를 한 도구에 두지 않는다")
-        external_only = self.hold is not None or self.targets or self.allow or self.form
+        external_only = (
+            self.hold is not None or self.targets or self.allow or self.form or self.confirm
+        )
         if external_only and self.effect != "external":
-            raise ValueError(f"{self.name}: hold·targets·allow·form은 external 도구의 칸이다")
+            raise ValueError(
+                f"{self.name}: hold·targets·allow·form·confirm은 external 도구의 칸이다"
+            )
         if self.targets and self.allow is None:
             raise ValueError(f"{self.name}: 받는 쪽(targets)이 있으면 허용 목록(allow)도 둔다")
         if self.form and not set(self.targets) <= set(self.form):

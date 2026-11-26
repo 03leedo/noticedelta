@@ -56,7 +56,9 @@ PRODUCER = "tool_gateway"
 HOLD = timedelta(minutes=10)  # external 효과의 기본 보류 시간
 DECIDE_WITHIN = timedelta(hours=24)  # 승인 기한. 지나면 expired
 MAX_EFFECTS = 5  # 세션 하나가 요청할 수 있는 external 효과 수
-INJECTED = "profile"  # 게이트웨이가 B 도구에 넣는 인자
+INJECTED = "profile"  # 게이트웨이가 B 도구에 넣는 인자(금고에서 꺼낸 값)
+ACTOR = "actor"  # 게이트웨이가 넣는 인자: 부른 사람("person:<id>" 또는 None)
+GATE_ARGS = frozenset({INJECTED, ACTOR})  # 에이전트가 줄 수 없는 인자
 MAX_SEEN = 5000
 MAX_SOURCES = 50
 ALL = frozenset("ABC")
@@ -271,6 +273,9 @@ class ToolGateway:
         why = self._undeclared(s, name, tool, args)
         if why is not None:
             return self._refuse(db, s, name, tool, args, "declare", why, before, now)
+        params = inspect.signature(tool.handler).parameters
+        if ACTOR in params:  # 부른 사람은 게이트웨이가 넣는다(효과라면 인자와 함께 남는다)
+            args[ACTOR] = f"person:{s.person_id}" if s.person_id else None
         probe = {**args, INJECTED: {}} if "B" in tool.capabilities else args
         try:
             inspect.signature(tool.handler).bind(**probe)
@@ -286,6 +291,13 @@ class ToolGateway:
             self._decide(db, s, name, "error", "declare", reason, before, before, now)
             db.commit()
             return {"error": reason}
+        if tool.authorize is not None:
+            try:
+                why = tool.authorize(db, s.person_id, dict(args))
+            except Exception as e:
+                why = f"권한을 확인하지 못했다: {type(e).__name__}"
+            if why is not None:
+                return self._refuse(db, s, name, tool, args, "authorize", why, before, now)
         s.calls = {**s.calls, name: s.calls.get(name, 0) + 1}
         if tool.effect == "external":
             return self._request(db, s, tool, args, before, now)
@@ -342,8 +354,8 @@ class ToolGateway:
             return f"이 세션에서 부를 수 있는 수({tool.max_calls}회)를 넘었다"
         if tool.effect == "external" and s.effects >= self.max_effects:
             return f"이 세션의 외부 효과 한도({self.max_effects}건)를 넘었다"
-        if INJECTED in args:
-            return f"{INJECTED}는 게이트웨이가 금고에서 꺼내 넣는 칸이다"
+        if GATE_ARGS & set(args):
+            return f"{', '.join(sorted(GATE_ARGS & set(args)))}는 게이트웨이가 넣는 칸이다"
         return None
 
     def _read_vault(
@@ -452,6 +464,9 @@ class ToolGateway:
             reason = f"세션의 속성이 {have}라 그대로 통과한다(보류 시간 뒤 실행)"
         if "unlisted" in kinds and status == "held":
             reason += ". 받는 쪽이 허용 목록에 없어 승인을 받는다"
+        if tool.confirm and status == "approved":
+            status = "held"
+            reason += ". 사람의 확인이 꼭 필요한 일이라 승인을 받는다"
         hold = self._hold(tool)
         approved = status == "approved"
         a = ToolActionRow(
@@ -550,6 +565,8 @@ class ToolGateway:
         if a.status != "held":
             raise ValueError(f"고칠 수 없는 상태: {a.status}")
         tool = self.tools[a.tool]
+        if GATE_ARGS & set(arguments):
+            raise ValueError("게이트웨이가 넣은 칸은 고칠 수 없다")
         if a.policy == "split" and not set(arguments) <= set(tool.form):
             raise ValueError(f"서식으로 다시 만든 효과는 서식 칸만 고친다: {sorted(tool.form)}")
         merged = {**a.arguments, **arguments}
@@ -631,14 +648,29 @@ class ToolGateway:
         return done
 
     def undo(self, db: Session, action_id: str, *, by: str, now: datetime) -> ToolActionRow:
-        """플랫폼 안의 효과(internal)를 되돌린다."""
+        """플랫폼 안의 효과(internal)를 되돌린다. 스스로 커밋한다.
+
+        undoing으로 차지해 커밋한 뒤 되돌린다(되돌리는 함수가 자기 DB 세션을 열 수 있게, 두 번 되돌리지
+        않게). 되돌리다 실패하면 committed로 돌려 둔다.
+        """
         a = self._action(db, action_id)
         if a.effect != "internal" or a.status != "committed" or a.undo is None:
             raise ValueError("되돌릴 수 있는 효과가 아니다")
-        self.tools[a.tool].undo(**a.undo)
+        info, tool = dict(a.undo), self.tools[a.tool]
+        if not self._take(db, action_id, ("committed",), "undoing"):
+            raise ValueError("그 사이 상태가 바뀌었다")
+        db.commit()
+        try:
+            tool.undo(**info)
+        except Exception:
+            self._take(db, action_id, ("undoing",), "committed")
+            db.commit()
+            raise
+        a = self._action(db, action_id)
         a.undone_at = now
         a.reason = f"{a.reason or ''} / {by[:40]}가 되돌렸다"[-300:]
         self._close(db, a, "undone", now)
+        db.commit()
         return a
 
     # --- 승인함과 요약 ---
