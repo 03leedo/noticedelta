@@ -176,8 +176,10 @@ def create_app(
         with session_factory() as s:
             profile = load(s, token)
             attrs, research_ok = attrs_of(s, profile.person_id), profile.research_ok
+            assist_ok = consent.assist_on(s, profile.person_id)
             s.commit()
         ctx = {**common, "attrs": attrs, "token": token, "research_ok": research_ok}
+        ctx["assist_ok"] = assist_ok
         return templates.TemplateResponse(request, "form.html", ctx)
 
     @app.post("/p/{token}/edit")
@@ -189,8 +191,10 @@ def create_app(
             gone = {k: None for k in vault.keys_of(s, profile.person_id) - set(new)}
             vault.put(s, cipher, profile.person_id, {**gone, **new}, source="input", now=now())
             profile.attributes = {}  # 옮기기 전의 옛 값이 남아 있었다면 지운다(금고가 원본)
-            consent.update_keys(s, profile, list(new), at=now())
+            # 선택 동의를 먼저 바꾼다: 끄는 동의에 새 키를 다시 적었다가 곧바로 거두지 않게
             consent.set_research(s, profile, form.get("research_ok") == "on", at=now())
+            consent.set_assist(s, profile, form.get("assist_ok") == "on", at=now())
+            consent.update_keys(s, profile, list(new), at=now())
             s.commit()
         return RedirectResponse(f"/p/{token}", status_code=303)
 

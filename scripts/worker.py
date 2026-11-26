@@ -33,6 +33,7 @@ import sqlalchemy as sa
 
 ROOT = Path(__file__).resolve().parents[1]
 from noticedelta import flight  # noqa: E402
+from noticedelta.agent import build_gateway  # noqa: E402
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.config import load_env, open_db  # noqa: E402
 from noticedelta.db.models import ChangeEvent, ItemVersion  # noqa: E402
@@ -225,6 +226,11 @@ def main() -> None:
         log_usage()
         note = " · 한도에 닿아 나머지는 다음 실행으로 미룸" if budget.blocked else ""
         print(f"이번에 보낸 LLM 토큰 {gateway.usage.live_tokens:,}{note}")
+    with factory() as s:
+        # 에이전트가 요청하고 보류 시간이 지난 효과를 실행한다(도구 게이트웨이, 많아야 한 번)
+        acted = build_gateway(factory, cipher=ctx.vault).commit_due(s, now=datetime.now(UTC))
+        if acted:
+            print(f"보류가 끝나 실행한 에이전트 효과 {len(acted)}건")
     with factory() as s:
         # 남은 작업이 없는 수집 실행 묶음을 닫고 출력 해시를 적는다(scripts/replay.py가 비교한다)
         closed = flight.close_finished(s, datetime.now(UTC))

@@ -74,6 +74,10 @@ class Blocked(Exception):
     """게이트웨이가 막은 호출(사용 기록에 남길 때 쓴다)."""
 
 
+class SessionClosed(KeyError):
+    """없거나 닫힌 세션으로 불렀다."""
+
+
 def _aware(t: datetime | None) -> datetime | None:
     return t.replace(tzinfo=UTC) if t is not None and t.tzinfo is None else t
 
@@ -229,10 +233,14 @@ class ToolGateway:
         *,
         now: datetime,
     ) -> dict:
-        """도구 하나를 부른다. 막으면 {"blocked": …}, 밖으로 나가는 효과는 {"action": …}를 돌려준다."""
-        s = db.get(AgentSessionRow, session_id)
+        """도구 하나를 부른다. 막으면 {"blocked": …}, 밖으로 나가는 효과는 {"action": …}를 돌려준다.
+
+        스스로 커밋한다: 도구를 실행하기 직전(여기까지의 판단과 금고 접근 기록)과 끝날 때. 사용 기록
+        관찰자는 커밋한 뒤에 부른다(관찰자가 자기 DB 세션으로 써도 잠기지 않게). 세션 행은 잠가 읽는다.
+        """
+        s = db.get(AgentSessionRow, session_id, with_for_update=True)
         if s is None or s.status != "open":
-            raise KeyError(f"열린 세션이 아니다: {session_id}")
+            raise SessionClosed(f"열린 세션이 아니다: {session_id}")
         s.last_seen_at = now
         args = dict(arguments or {})
         before = set(s.flags)
@@ -248,6 +256,7 @@ class ToolGateway:
         except TypeError as e:
             reason = f"인자가 도구와 맞지 않는다: {e}"[:300]
             self._decide(db, s, name, "error", "declare", reason, before, before, now)
+            db.commit()
             return {"error": reason}
         s.calls = {**s.calls, name: s.calls.get(name, 0) + 1}
         if tool.effect == "external":
@@ -260,20 +269,25 @@ class ToolGateway:
                 return self._refuse(db, s, name, tool, args, "consent", why, before, now)
             args[INJECTED] = values
 
-        # 실행(효과 없음·internal)
+        # 실행(효과 없음·internal). 그 전에 여기까지의 판단(호출 수, 금고 허가·접근 기록)을 커밋한다:
+        # 도구가 자기 DB 세션을 열어도 잠기지 않고(SQLite), 도구가 실패해도 금고 접근 기록은 남는다
+        db.commit()
         started = time.perf_counter()
         try:
             raw = tool.handler(**args)
         except Exception as e:
             reason = f"{type(e).__name__}: {e}"[:300]
             self._decide(db, s, name, "error", "run", reason, before, before, now)
+            db.commit()
             self._observe(tool, args, None, e, started, 0)
             raise
         undo = raw.pop("undo", None) if isinstance(raw, dict) else None
         result, hidden = guard(raw)
         if hidden:
             result["guard"] = {"hidden_lines": hidden, "why": "지시로 보이는 줄을 가렸습니다"}
-        after = set(before)
+        # 실행하는 동안 다른 접속이 같은 세션의 속성을 켰을 수 있다: 다시 읽어 합친다(켜지기만 한다)
+        db.refresh(s, with_for_update=True)
+        after = set(s.flags)
         if "A" in tool.capabilities:
             after.add("A")
             self._saw(s, tool, args, raw, now)
@@ -285,6 +299,7 @@ class ToolGateway:
             action_id = self._internal(db, s, tool, args, undo, now)
             result["action"] = {"id": action_id, "status": "committed", "undo": undo is not None}
         self._decide(db, s, name, "pass", "run", None, before, after, now, action_id)
+        db.commit()
         self._observe(tool, args, result, None, started, hidden)
         return result
 
@@ -439,6 +454,7 @@ class ToolGateway:
         step = "target" if marks else "transition"
         self._decide(db, s, tool.name, decision, step, a.reason, before, before, now, a.id)
         out = self._view(a)
+        db.commit()
         self._observe(tool, args, out, Blocked(reason) if status == "blocked" else None, None, 0)
         return {"action": out}
 
@@ -455,6 +471,7 @@ class ToolGateway:
         now: datetime,
     ) -> dict:
         self._decide(db, s, name, "block", step, reason, before, before, now)
+        db.commit()
         if tool is not None:
             self._observe(tool, args, None, Blocked(reason), None, 0)
         return {"blocked": {"step": step, "reason": reason}}
@@ -549,21 +566,30 @@ class ToolGateway:
             if s is None or s.status != "open":
                 a.reason = f"{a.reason or ''} / 세션이 닫혀 실행하지 않았다"[-300:]
                 self._close(db, a, "discarded", now)
-            elif tool is None:
+                db.commit()
+                continue
+            if tool is None:
                 a.result = {"error": f"등록되지 않은 도구: {a.tool}"}
                 self._close(db, a, "failed", now)
+                db.commit()
+                continue
+            arguments = dict(a.arguments)
+            db.commit()  # 실행하는 동안 트랜잭션을 쥐지 않는다(도구가 자기 DB 세션을 열 수 있게)
+            try:
+                result, error = tool.handler(**arguments), None
+            except Exception as e:
+                result, error = None, f"{type(e).__name__}: {e}"[:300]
+            a = self._action(db, action_id)
+            if error is not None:
+                a.result = {"error": error}
+                self._close(db, a, "failed", now)
             else:
-                try:
-                    result = tool.handler(**a.arguments)
-                except Exception as e:
-                    a.result = {"error": f"{type(e).__name__}: {e}"[:300]}
-                    self._close(db, a, "failed", now)
-                else:
-                    a.result = result if isinstance(result, dict) else {"value": result}
-                    a.committed_at = now
-                    s.flags = _flags([*s.flags, "C"])  # C는 효과가 확정될 때 켜진다
-                    self._close(db, a, "committed", now)
-                    done.append(a)
+                s = db.get(AgentSessionRow, a.session_id, with_for_update=True)
+                a.result = result if isinstance(result, dict) else {"value": result}
+                a.committed_at = now
+                s.flags = _flags([*s.flags, "C"])  # C는 효과가 확정될 때 켜진다
+                self._close(db, a, "committed", now)
+                done.append(a)
             db.commit()
         return done
 
