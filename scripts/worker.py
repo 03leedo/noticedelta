@@ -172,7 +172,11 @@ def main() -> None:
             if args.extract_items:
                 items = _recent_corrected(s, args.extract_items)
                 carry = {"trace": usage_trace}
-                n = sum(enqueue_item_impact(s, i, carry, now) for i in items)
+                n = sum(
+                    enqueue_item_impact(s, i, carry, now, app_id=a.id)
+                    for i in items
+                    for a in ctx.apps()
+                )
                 print(
                     f"최근 정정된 사업 {len(items)}개의 판 {n}개를 새로 넣었습니다(따라잡기, 알림 없음)"
                 )

@@ -503,3 +503,41 @@ def test_an_app_that_reads_other_sources_gets_no_impact_jobs(env):
     with env.factory() as s:
         apps = {r.app_id for r in s.scalars(sa.select(models.FieldValueRow))}
     assert apps == {"grant-alerts"}  # 기업마당 공고는 K-Startup만 읽는 앱의 일이 아니다
+
+
+def test_an_app_with_only_its_own_subscribers_keeps_its_own_chain(env):
+    """범위 subscribed에서 남의 앱 구독만 있는 사업: 그 앱의 앞 판을 보고 다음 판으로 간다."""
+    other = other_app()
+    theirs = RulesFromText()
+    env.ctx.extractor, env.ctx.extra_apps = RulesFromText(), (other,)
+    env.ctx.extractor_for = lambda app: theirs
+    env.ctx.extract_scope = "subscribed"
+    env.ctx.vault = vault.load_cipher()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    subscribe(env, "u2", "rules-watch", 72)
+    with env.factory() as s:
+        from noticedelta.pipeline import enqueue_scope_backlog
+
+        enqueue_scope_backlog(s, env.ctx.for_app("rules-watch"))
+        s.commit()
+    env.work()
+    env.collect("2026-11-14", pdf(RULES.replace("7년", "5년"), DOCS))
+    env.work()
+    with env.factory() as s:
+        alerts = s.scalars(sa.select(models.OutboxAlert)).all()
+        apps = {r.app_id for r in s.scalars(sa.select(models.FieldValueRow))}
+    assert apps == {"rules-watch"}  # 우리 앱은 구독이 없어 돌지 않았다
+    assert [(a.person_id, a.app_id) for a in alerts] == [("u2", "rules-watch")]
+
+
+def test_a_worker_reads_unknown_apps_from_the_registry_or_defers(env):
+    from noticedelta import app_registry
+    from noticedelta.jobs import Deferred
+
+    with env.factory() as s:
+        with pytest.raises(Deferred):
+            env.ctx.for_app("rules-watch", s)  # 켠 적 없는 앱: 미룬다
+        app_registry.register(s, other_app(), at=datetime(2026, 10, 1, tzinfo=UTC))
+        app_registry.enable(s, "rules-watch", 1, at=datetime(2026, 10, 1, tzinfo=UTC))
+        assert env.ctx.for_app("rules-watch", s).app.id == "rules-watch"

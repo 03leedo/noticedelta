@@ -99,14 +99,19 @@ class Context:
     def apps(self) -> list[AppDefinition]:
         return [self.app, *(a for a in self.extra_apps if a.id != self.app.id)]
 
-    def for_app(self, app_id: str | None) -> Context:
-        """그 앱으로 도는 Context. 주 앱이면 자기 자신이다."""
+    def for_app(self, app_id: str | None, session: Session | None = None) -> Context:
+        """그 앱으로 도는 Context. 주 앱이면 자기 자신이다.
+
+        함께 도는 앱이 아니면 등록부에서 켠 판을 읽는다(session이 있을 때). 그래도 없으면 미룬다.
+        """
         if app_id is None or app_id == self.app.id:
             return self
         if app_id not in self._per_app:
             other = next((a for a in self.extra_apps if a.id == app_id), None)
+            if other is None and session is not None:
+                other = app_registry.current(session, app_id)
             if other is None:
-                raise PermanentError(f"함께 도는 앱이 아니다: {app_id}")
+                raise Deferred(f"이 워커가 모르는 앱: {app_id}", delay=timedelta(hours=1))
             extractor = self.extractor_for(other) if self.extractor_for is not None else None
             _check_spec(other, extractor)
             self._per_app[app_id] = replace(
@@ -139,12 +144,15 @@ def parser_id(parser: Parser) -> str:
 
 def flight_config(ctx: Context) -> dict:
     """수집 실행 묶음의 설정: 이것이 같아야 같게 재생을 기대한다(platform-services 3.4)."""
-    return {
+    out = {
         "app": app_ref(ctx.app.id, ctx.app.version),
         "matcher": MATCHER_VERSION,
         "parser": parser_id(ctx.parser),
         "extractor": ctx.extractor_name or None,
     }
+    if ctx.extra_apps:  # 함께 도는 앱이 있을 때만(없는 실행의 설정 해시는 예전 그대로)
+        out["apps"] = sorted(app_ref(a.id, a.version) for a in ctx.extra_apps)
+    return out
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -590,15 +598,16 @@ def handle_impact(root: Context) -> Handler:
 
     def handle(session: Session, job: Job) -> None:
         # 작업에 적힌 앱의 Context로 돈다(없으면 주 앱). 앱마다 필드·규칙·알림이 섞이지 않는다
-        ctx = root.for_app(job.payload.get("app"))
+        ctx = root.for_app(job.payload.get("app"), session)
         if ctx.app.id not in per_app:
-            per_app[ctx.app.id] = _impact_handler(ctx)
+            # 루트 앱(코드가 준 정의)만 등록부에 씨앗으로 넣는다. 다른 앱은 등록부에서 왔다
+            per_app[ctx.app.id] = _impact_handler(ctx, seed=ctx is root)
         per_app[ctx.app.id](session, job)
 
     return handle
 
 
-def _impact_handler(ctx: Context) -> Handler:
+def _impact_handler(ctx: Context, *, seed: bool = True) -> Handler:
     def _work(session: Session, job: Job) -> None:
         if ctx.extractor is None:
             raise TransientError("추출기가 설정되지 않음")
@@ -606,7 +615,7 @@ def _impact_handler(ctx: Context) -> Handler:
         step = next((s for s in replay(session, pv.item_id) if s.to_version.id == pv.id), None)
         if step is None:
             raise PermanentError("변경 이벤트가 없음")
-        if ctx.app.id == APP.id:  # 결과가 가리킬 앱 정의가 DB에 있게(주 앱은 저장소의 씨앗)
+        if seed:  # 결과가 가리킬 앱 정의가 DB에 있게(루트 앱은 코드·저장소의 씨앗)
             app_registry.seed(session, ctx.app, at=ctx.now())
 
         meta = _meta_fields(session, ctx.app, pv.notice_version_id)
@@ -618,7 +627,9 @@ def _impact_handler(ctx: Context) -> Handler:
             return
 
         prev = session.scalar(
-            sa.select(Job.status).where(Job.dedupe_key == _impact_key(step.from_version.id))
+            sa.select(Job.status).where(
+                Job.dedupe_key == _impact_key(step.from_version.id, ctx.app.id)
+            )  # 이 앱의 앞 판(앱마다 사슬이 따로다)
         )
         if prev != "done":
             raise TransientError(f"v{step.from_version.version_no} 영향 계산이 아직 안 끝남")
@@ -835,13 +846,12 @@ def handle_notify(root: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         item_id = job.payload["item_id"]
         trace = Trace.of(job.payload)
-        ctx = root.for_app(job.payload.get("app"))
-        # 그 앱의 알림만, 그 앱의 붙잡기 기준과 표시 이름으로(다른 앱의 알림과 섞지 않는다)
-        app_id = ctx.app.id if root.extra_apps else None
+        ctx = root.for_app(job.payload.get("app"), session)
+        # 늘 그 앱의 알림만, 그 앱의 붙잡기 기준과 표시 이름으로(다른 앱의 알림과 섞지 않는다)
         prepare(session, item_id, mass_impact=ctx.app.alerts.hold.mass_impact, trace=trace,
-                app_id=app_id)  # fmt: skip
+                app_id=ctx.app.id)  # fmt: skip
         deliver(session, ctx.channel, item_id=item_id, now=ctx.now, labels=ctx.labels,
-                trace=trace, app_id=app_id)  # fmt: skip
+                trace=trace, app_id=ctx.app.id)  # fmt: skip
 
     return handle
 
