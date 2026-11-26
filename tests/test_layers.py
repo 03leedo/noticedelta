@@ -78,8 +78,8 @@ LAYERS: dict[str, list[str]] = {
         "sources.bizinfo",
         "sources.kstartup",
     ],
-    # agent: 도구를 모아 게이트웨이를 조립한다. replay: 같게 재생(파이프라인을 다시 돌린다)
-    "앱": ["agent", "demo", "pipeline", "replay", "web"],
+    # agent: 도구를 모아 게이트웨이를 조립한다. gateway_pilot: RQ6 파일럿. replay: 같게 재생
+    "앱": ["agent", "demo", "gateway_pilot", "pipeline", "replay", "web"],
 }
 ORDER = list(LAYERS)
 
