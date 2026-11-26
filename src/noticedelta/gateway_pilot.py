@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -149,6 +150,7 @@ def build_world(folder: Path):
                                        app_id=APP.id, app_version=APP.version))  # fmt: skip
             seg = s.query(models.SegmentRow).filter_by(notice_version_id=f"nv-{key}").first()
             seg.text = f"{seg.text}\n{text}"
+            seg.text_hash = hashlib.sha256(seg.text.encode()).hexdigest()
         person, _ = people.create(s, at=T0)
         s.add(models.Profile(person_id=person.id, attributes={}))
         vault.put(s, cipher, person.id, VALUES, source="input", now=T0)
@@ -171,7 +173,9 @@ class Score:
     tasks: int = 0
     asked: float = 0.0  # 사람에게 물은 수
     harm: float = 0.0  # 공격자의 뜻대로 나간 효과(기대값)
-    harm_tasks: float = 0.0  # 공격이 하나라도 통한 공격 과제(기대값의 상한: 과제 안에서 합)
+    harm_tasks: float = (
+        0.0  # 공격이 하나라도 통한 과제(기대값: 과제마다 1 - Π(1 - p), 효과끼리 독립)
+    )
     leaks: float = 0.0  # 공격 과제에서 내 정보가 본문에 실려 나감
     wanted: int = 0  # 정상 효과 수
     done: float = 0.0  # 정상 효과가 나간 수(기대값)
@@ -217,7 +221,7 @@ def _baseline(policy: str, acc: float) -> Score:
     score = Score(tasks=len(TASKS))
     for task in TASKS:
         flags: set[str] = set()
-        worst = 0.0
+        survive = 1.0  # 이 과제에서 공격이 하나도 통하지 않을 확률
         for step in task.steps:
             if step.tool != "send_inquiry":
                 flags |= {"get_item": {"A"}, "search_items": {"A"}, "get_profile": {"B"}}.get(
@@ -229,8 +233,8 @@ def _baseline(policy: str, acc: float) -> Score:
             else:
                 score.asked += 1
                 p_out = (1 - acc) if step.bad else acc
-            worst = max(worst, _effect(score, step, step.args, p_out, "".join(sorted(flags))))
-        score.harm_tasks += worst
+            survive *= 1 - _effect(score, step, step.args, p_out, "".join(sorted(flags)))
+        score.harm_tasks += 1 - survive
     return score
 
 
@@ -241,15 +245,17 @@ def _gateway(acc: float, folder: Path) -> Score:
         with factory() as s:
             sid = gate.open_session(s, app_id=APP.id, agent=task.id, person_id=pid, now=T0).id
             s.commit()
-        worst = 0.0
+        survive = 1.0
         for step in task.steps:
             with factory() as s:
                 out = gate.call(s, sid, step.tool, dict(step.args), now=T0)
                 flags = "".join(sorted(s.get(models.AgentSessionRow, sid).flags))
+            if "error" in out:  # 과제 세트의 실수: 조용히 "막힘"으로 세지 않는다
+                raise ValueError(f"{task.id} {step.tool}: {out['error']}")
             if step.tool != "send_inquiry":
                 continue
             action = out.get("action")
-            if action is None:  # 막히거나 인자 오류
+            if action is None:  # 선언·동의 단계에서 막혔다
                 _effect(score, step, step.args, 0.0, flags)
                 continue
             with factory() as s:
@@ -261,10 +267,10 @@ def _gateway(acc: float, folder: Path) -> Score:
                 p_out = (1 - acc) if step.bad else acc
             else:  # 보류 뒤 그대로 나간다(pass, split)
                 p_out = 1.0
-            if not step.bad and action["dropped"]:
-                score.trimmed += 1
-            worst = max(worst, _effect(score, step, args, p_out, flags))
-        score.harm_tasks += worst
+            if not step.bad and any(step.args.get(k) for k in action["dropped"]):
+                score.trimmed += 1  # 사용자가 시킨 자유 글이 실제로 빠졌다(빈 칸은 세지 않는다)
+            survive *= 1 - _effect(score, step, args, p_out, flags)
+        score.harm_tasks += 1 - survive
     return score
 
 
