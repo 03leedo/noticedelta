@@ -24,11 +24,14 @@ from sqlalchemy.orm import Session
 
 from noticedelta import app_registry
 from noticedelta.appspec import AppDefinition, check_app
-from noticedelta.db.models import AppDefinitionRow
+from noticedelta.db.models import AppDefinitionRow, AppMemberRow
+from noticedelta.grants import APP
 from noticedelta.sources import CATALOG
 from noticedelta.tooling import Tool
 
 Preview = Callable[[AppDefinition, AppDefinition | None], dict]
+# 운영자가 저장소에서 넣는 앱의 id. DB에 아직 없어도 아무도 이 id로 앱을 만들 수 없다
+RESERVED = frozenset({APP.id})
 
 
 def _now() -> datetime:
@@ -55,6 +58,8 @@ def owner_only(db: Session, person_id: str | None, args: dict) -> str | None:
         return "사람이 정해지지 않은 세션은 앱을 만들거나 고칠 수 없다(내 링크로 접속한다)"
     if not isinstance(app_id, str):
         return "앱 id가 없다"
+    if app_id in RESERVED:
+        return f"{app_id}는 운영자의 앱이라 소유자만 할 수 있다(에이전트는 고칠 수 없다)"
     if app_registry.exists(db, app_id) and app_registry.OWNER not in app_registry.roles_of(
         db, app_id, person_id
     ):
@@ -62,12 +67,16 @@ def owner_only(db: Session, person_id: str | None, args: dict) -> str | None:
     return None
 
 
-def backtest_preview(cassettes: Path, *, model: str = "pickle-general") -> Preview:
-    """기록된 정정(개발 세트)을 녹화본으로 다시 흘린다. 녹화본이 없는 정정은 '녹화본 없음'으로 센다."""
+def backtest_preview(
+    cassettes: Path, factory: Callable[[], Session], *, model: str = "pickle-general"
+) -> Preview:
+    """기록된 정정(개발 세트)을 녹화본으로 다시 흘린다. 녹화본이 없는 정정은 '녹화본 없음'으로 센다.
+
+    게이트웨이와 같은 DB(factory)에서 읽는다(따로 열거나 마이그레이션하지 않는다).
+    """
 
     def preview(draft: AppDefinition, on: AppDefinition | None) -> dict:
         from noticedelta.backtest import backtest, compare
-        from noticedelta.config import open_db
         from noticedelta.eligibility.synthetic import virtual_profiles
         from noticedelta.evaluation import load_chains, load_labels
         from noticedelta.llm import FileCassetteStore, Gateway, Mode
@@ -75,7 +84,6 @@ def backtest_preview(cassettes: Path, *, model: str = "pickle-general") -> Previ
         from noticedelta.programs import api_meta
 
         gateway = Gateway(None, FileCassetteStore(cassettes), Mode.REPLAY)
-        _, factory = open_db()
         with factory() as s:
             chains = load_chains(s, split="dev", meta=api_meta)
             labels = load_labels(s, labeler="claude")
@@ -116,7 +124,10 @@ def app_tools(
 
     def check(definition: dict) -> dict:
         """앱 정의를 검사만 한다. 문제마다 어디가, 무엇이, 어떻게 고치는지 준다."""
-        app, problems = _problems(copy.deepcopy(definition))
+        data = copy.deepcopy(definition)
+        if isinstance(data, dict):  # 소유자 칸은 저장할 때 게이트웨이가 채운다
+            data.setdefault("owner", "person:check")
+        app, problems = _problems(data)
         return {"ok": app is not None, "problems": problems}
 
     def validate_definition(args: dict) -> str | None:
@@ -135,30 +146,43 @@ def app_tools(
         data = copy.deepcopy(definition)
         data["owner"] = actor  # 정의의 소유자 칸은 게이트웨이가 넣은 사람으로
         app, problems = _problems(data)
-        if app is None:  # validate를 지났으면 오지 않는다
-            return {"ok": False, "problems": problems}
+        if app is None:  # validate를 지났으면 오지 않는다. 실패는 예외로(효과를 남기지 않게)
+            raise ValueError("; ".join(f"{p['where']}: {p['what']}" for p in problems[:3]))
         person = _person(actor)
         with factory() as s:
             new = not app_registry.exists(s, app.id)
-            try:
-                app_registry.register(s, app, at=now())
-            except app_registry.VersionConflict as e:
-                return {"ok": False, "problems": [{"where": "version", "what": str(e), "fix": ""}]}
+            # 같은 트랜잭션에서 다시 본다: 권한을 확인한 뒤 남이 먼저 같은 id를 만들었을 수 있다
+            if not new and app_registry.OWNER not in app_registry.roles_of(s, app.id, person):
+                raise PermissionError(f"{app.id}의 소유자만 판을 더한다")
+            created = s.get(AppDefinitionRow, (app.id, app.version)) is None
+            app_registry.register(s, app, at=now())  # 같은 판·다른 내용이면 VersionConflict
             if new and person is not None:
                 app_registry.add_member(s, app.id, person, app_registry.OWNER, at=now())
             s.commit()
-        return {
+        out = {
             "ok": True,
             "app_id": app.id,
             "version": app.version,
             "content_hash": app.content_hash(),
             "next": "preview_app으로 켠 판과 비교한 뒤 enable_app으로 켠다(소유자의 확인을 받는다)",
-            "undo": {"app_id": app.id, "version": app.version},
         }
+        if created:  # 이번에 넣은 판만 되돌린다(같은 내용을 다시 저장한 것은 되돌릴 것이 없다)
+            out["undo"] = {
+                "app_id": app.id,
+                "version": app.version,
+                "owner": person if new else None,
+            }
+        return out
 
-    def undo_save(app_id: str, version: int) -> None:
+    def undo_save(app_id: str, version: int, owner: str | None = None) -> None:
         with factory() as s:
-            app_registry.drop_draft(s, app_id, version)
+            if not app_registry.drop_draft(s, app_id, version):
+                raise ValueError(f"{app_id} 판 {version}은 켰거나 없어 되돌릴 수 없다")
+            if owner is not None and not app_registry.exists(s, app_id):
+                # 이 저장이 앱을 만들었고 남은 판이 없다: 그때 생긴 소유자 행도 지운다
+                row = s.get(AppMemberRow, (app_id, owner, app_registry.OWNER))
+                if row is not None:
+                    s.delete(row)
             s.commit()
 
     def preview_app(app_id: str, version: int, actor: str | None) -> dict:

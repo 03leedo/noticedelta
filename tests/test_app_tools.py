@@ -106,3 +106,60 @@ def test_saving_a_draft_can_be_undone_and_bad_definitions_are_not_saved(env):
         gate.undo(s, saved["action"]["id"], by="person:p1", now=T0)
         s.commit()
         assert s.get(models.AppDefinitionRow, ("my-deadlines", 1)) is None
+
+
+def test_undo_is_honest_and_takes_back_the_ownership_it_gave(env):
+    factory, gate, _ = env
+    p1, p2 = session(factory, gate, "p1"), session(factory, gate, "p2")
+    first = call(factory, gate, p1, "save_app", definition=definition())
+    again = call(factory, gate, p1, "save_app", definition=definition())  # 같은 내용을 또
+    assert again["action"]["undo"] is False  # 이번에 넣은 것이 없으니 되돌릴 것도 없다
+    with factory() as s:
+        gate.undo(s, first["action"]["id"], by="person:p1", now=T0)
+        assert app_registry.roles_of(s, "my-deadlines", "p1") == set()  # 준 소유권도 거둔다
+    # 이제 그 id는 새 앱이다: p2가 만들면 p2만 소유자
+    call(factory, gate, p2, "save_app", definition=definition())
+    with factory() as s:
+        assert app_registry.roles_of(s, "my-deadlines", "p2") == {"owner"}
+        assert app_registry.roles_of(s, "my-deadlines", "p1") == set()
+
+
+def test_an_enabled_version_cannot_be_undone(env):
+    factory, gate, _ = env
+    sid = session(factory, gate, "p1")
+    saved = call(factory, gate, sid, "save_app", definition=definition())
+    on = call(factory, gate, sid, "enable_app", app_id="my-deadlines", version=1)["action"]
+    with factory() as s:
+        gate.approve(s, on["id"], by="person:p1", now=T0)
+        s.commit()
+        gate.commit_due(s, now=T0 + timedelta(minutes=10))
+        with pytest.raises(ValueError, match="되돌릴 수 없다"):
+            gate.undo(s, saved["action"]["id"], by="person:p1", now=T0)
+        assert s.get(models.ToolActionRow, saved["action"]["id"]).status == "committed"
+
+
+def test_reserved_ids_conflicts_and_races(env, tmp_path):
+    factory, gate, _ = env
+    # 운영자 앱 id는 DB에 없어도 막는다
+    engine = make_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+    models.Base.metadata.create_all(engine)
+    empty = sessionmaker(engine)
+    g2 = build_gateway(empty, preview=lambda d, o: {})
+    sid = session(empty, g2, "p9")
+    assert "운영자의 앱" in call(empty, g2, sid, "save_app",
+                                definition=definition(APP.id))["blocked"]["reason"]  # fmt: skip
+    # 같은 판·다른 내용은 효과를 남기지 않고 실패한다
+    p1 = session(factory, gate, "p1")
+    call(factory, gate, p1, "save_app", definition=definition())
+    with pytest.raises(app_registry.VersionConflict):
+        call(factory, gate, p1, "save_app", definition={**definition(), "title": "바꾼 제목"})
+    with factory() as s:
+        saves = s.query(models.ToolActionRow).filter_by(tool="save_app").count()
+        assert saves == 1
+    # 권한을 본 뒤 남이 먼저 만든 경우: 저장하는 트랜잭션에서 다시 본다
+    with pytest.raises(PermissionError):
+        gate.tools["save_app"].handler(definition=definition(version=2), actor="person:p2")
+    # check_app은 소유자 칸 없이도 통과한다(저장할 때 채운다)
+    data = definition("y-app")
+    data.pop("owner")
+    assert call(factory, gate, p1, "check_app", definition=data)["ok"]

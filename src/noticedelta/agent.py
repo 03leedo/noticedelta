@@ -72,7 +72,7 @@ def agent_tools(
         inquiry_tool(
             factory, outbox or FileOutbox(OUTBOX), allow=item_contacts, kinds=INQUIRY_KINDS
         ),
-        *app_tools(factory, preview=preview or backtest_preview(CASSETTES)),
+        *app_tools(factory, preview=preview or backtest_preview(CASSETTES, factory)),
     ]
     if usage is not None:
         tools.append(feedback_tool(usage))
