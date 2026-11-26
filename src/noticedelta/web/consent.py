@@ -16,7 +16,7 @@ from noticedelta.db.models import JudgmentRow, OutboxAlert, Profile, Subscriptio
 from noticedelta.events import Ref, app_ref, emit
 from noticedelta.grants import APP
 
-VERSION = "beta-2026-11"
+VERSION = "beta-2026-11b"  # 11b: 선택 동의에 에이전트 도우미(assist)를 더했다
 KEEP_UNTIL = "2027-03-31"  # 베타가 끝나면 모두 지운다. 일정이 바뀌면 여기만 고친다
 ITEMS = (
     "창업일, 대표자 생년월일, 사업장 소재지(시·도), 사업자 형태, 작년 매출, 상시 근로자 수, "
@@ -24,7 +24,11 @@ ITEMS = (
 )
 
 
-PURPOSES = ("judge", "notify")  # 필수 동의의 용도(platform-services 4.3). 선택 동의는 research
+PURPOSES = (
+    "judge",
+    "notify",
+)  # 필수 동의의 용도(platform-services 4.3). 선택 동의는 research·assist
+ASSIST = "assist"  # 선택: 내 AI 에이전트가 도구 게이트웨이를 거쳐 내 정보를 읽어 돕는다
 
 
 def _who(profile: Profile) -> Ref:
@@ -46,9 +50,15 @@ def record(
          producer="svc:web", key=f"{profile.person_id}:{at.isoformat()}", ref=_who(profile), now=at)  # fmt: skip
 
 
+def assist_on(session: Session, person_id: str) -> bool:
+    return vault.active_consent(session, person_id, APP.id, ASSIST) is not None
+
+
 def update_keys(session: Session, profile: Profile, keys: list[str], *, at: datetime) -> None:
     """사람이 값을 고쳐 키가 바뀌면, 키가 달라진 용도만 새로 적는다. 동의한 문구 판은 이어받는다."""
     purposes = [*PURPOSES, "research"] if profile.research_ok else list(PURPOSES)
+    if assist_on(session, profile.person_id):
+        purposes.append(ASSIST)
     for purpose in purposes:
         current = vault.active_consent(session, profile.person_id, APP.id, purpose)
         if current is not None and sorted(current.keys) == sorted(set(keys)):
@@ -74,6 +84,22 @@ def set_research(session: Session, profile: Profile, ok: bool, *, at: datetime) 
     kind = "consent.granted" if ok else "consent.withdrawn"
     emit(session, kind, {"purpose": ["research"], "text_version": VERSION},
          producer="svc:web", key=f"{profile.person_id}:research:{at.isoformat()}", ref=_who(profile), now=at)  # fmt: skip
+
+
+def set_assist(session: Session, profile: Profile, ok: bool, *, at: datetime) -> None:
+    """선택 동의(에이전트 도우미)를 바꾼다. 거두면 그 용도의 허가도 바로 무효다(vault.withdraw_consent)."""
+    if assist_on(session, profile.person_id) == ok:
+        return
+    if ok:
+        keys = sorted(vault.keys_of(session, profile.person_id))
+        vault.grant_consent(
+            session, profile.person_id, APP.id, ASSIST, keys, text_version=VERSION, now=at
+        )
+    else:
+        vault.withdraw_consent(session, profile.person_id, APP.id, ASSIST, now=at)
+    kind = "consent.granted" if ok else "consent.withdrawn"
+    emit(session, kind, {"purpose": [ASSIST], "text_version": VERSION},
+         producer="svc:web", key=f"{profile.person_id}:assist:{at.isoformat()}", ref=_who(profile), now=at)  # fmt: skip
 
 
 def delete_user(session: Session, person_id: str, *, at: datetime | None = None) -> bool:

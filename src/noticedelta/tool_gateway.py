@@ -229,7 +229,10 @@ class ToolGateway:
         *,
         now: datetime,
     ) -> dict:
-        """도구 하나를 부른다. 막으면 {"blocked": …}, 밖으로 나가는 효과는 {"action": …}를 돌려준다."""
+        """도구 하나를 부른다. 막으면 {"blocked": …}, 밖으로 나가는 효과는 {"action": …}를 돌려준다.
+
+        도구를 실행하기 직전에 db를 한 번 커밋한다. 결과의 기록(속성, 판단)은 부른 쪽이 커밋한다.
+        """
         s = db.get(AgentSessionRow, session_id)
         if s is None or s.status != "open":
             raise KeyError(f"열린 세션이 아니다: {session_id}")
@@ -260,7 +263,9 @@ class ToolGateway:
                 return self._refuse(db, s, name, tool, args, "consent", why, before, now)
             args[INJECTED] = values
 
-        # 실행(효과 없음·internal)
+        # 실행(효과 없음·internal). 그 전에 여기까지의 판단(호출 수, 금고 허가·접근 기록)을 커밋한다:
+        # 도구가 자기 DB 세션을 열어도 잠기지 않고(SQLite), 도구가 실패해도 금고 접근 기록은 남는다
+        db.commit()
         started = time.perf_counter()
         try:
             raw = tool.handler(**args)

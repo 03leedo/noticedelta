@@ -62,6 +62,7 @@ LAYERS: dict[str, list[str]] = {
         "ingest",
         "item_tools",  # 항목·변경을 조회하는 읽기 도구
         "matching",
+        "person_tools",  # 사람의 정보를 쓰는 도구(B): 내 정보, 자격 확인, 근거 설명
         "segments",
         "values",
     ],
@@ -76,7 +77,8 @@ LAYERS: dict[str, list[str]] = {
         "sources.bizinfo",
         "sources.kstartup",
     ],
-    "앱": ["demo", "pipeline", "replay", "web"],  # replay: 같게 재생(파이프라인을 다시 돌린다)
+    # agent: 도구를 모아 게이트웨이를 조립한다. replay: 같게 재생(파이프라인을 다시 돌린다)
+    "앱": ["agent", "demo", "pipeline", "replay", "web"],
 }
 ORDER = list(LAYERS)
 

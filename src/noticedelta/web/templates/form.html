@@ -31,6 +31,8 @@
   {% if token %}
   <label class="check"><input type="checkbox" name="research_ok" {% if research_ok %}checked{% endif %}> (선택) 서비스 개선과 연구에 쓰는 데 동의합니다</label>
   <p class="muted">개인을 알아볼 수 없는 통계로만 씁니다. 언제든 끄거나, <a href="/p/{{ token }}/delete">내 정보를 모두 지울</a> 수 있습니다.</p>
+  <label class="check"><input type="checkbox" name="assist_ok" {% if assist_ok %}checked{% endif %}> (선택) 내가 쓰는 AI 에이전트가 내 링크로 연결되면, 위 정보를 읽어 자격 확인을 돕는 데 동의합니다</label>
+  <p class="muted">에이전트에게 간 값은 그 에이전트의 AI 서비스로 보내집니다. 에이전트는 도구 게이트웨이를 거쳐서만 읽고, 메일처럼 밖으로 나가는 일은 내 승인 없이는 하지 못합니다. 끄면 바로 읽지 못합니다. <a href="/privacy">자세히 보기</a></p>
   {% else %}
   <fieldset class="consent">
     <legend>개인정보 수집·이용 동의</legend>

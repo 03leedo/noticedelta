@@ -272,3 +272,26 @@ def test_privacy_page_shows_items_retention_and_contact(env):
     page = client.get("/privacy").text
     assert consent.ITEMS in page and consent.KEEP_UNTIL in page and "베타 문의 창구" in page
     assert "/privacy" in client.get("/").text  # 첫 화면에서 안내로 갈 수 있다
+
+
+def test_assist_consent_is_optional_and_follows_the_values(env):
+    """에이전트 도우미(선택): 고치기 화면에서 켜고 끈다. 켜면 지금 넣은 키에, 값을 고치면 새 키에 동의가 따라간다."""
+    from noticedelta import vault
+
+    client, factory = env
+    path = make_profile(client, **BUSAN_FOUNDER)
+    token = path.rsplit("/", 1)[-1]
+    with factory() as s:
+        pid = people.resolve(s, token)
+        assert not consent.assist_on(s, pid)  # 가입만으로는 켜지지 않는다
+    assert "assist_ok" in client.get(f"{path}/edit").text
+    client.post(f"{path}/edit", data={**BUSAN_FOUNDER, "assist_ok": "on"})
+    with factory() as s:
+        c = vault.active_consent(s, pid, consent.APP.id, "assist")
+        assert c is not None and "revenue_krw" in c.keys
+    client.post(f"{path}/edit", data={"region_sido": "부산", "assist_ok": "on"})  # 값을 줄였다
+    with factory() as s:
+        assert "revenue_krw" not in vault.active_consent(s, pid, consent.APP.id, "assist").keys
+    client.post(f"{path}/edit", data=BUSAN_FOUNDER)  # 끄고 저장
+    with factory() as s:
+        assert not consent.assist_on(s, pid)
