@@ -19,7 +19,7 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from functools import cache
@@ -325,15 +325,16 @@ def close_finished(session: Session, now: datetime) -> list[TraceRow]:
     return closed
 
 
-def spent_tokens(session: Session, since: datetime) -> int:
+def spent_tokens(session: Session, since: datetime, refs: Iterable[str] | None = None) -> int:
     """since 이후 실제로 보낸 LLM 토큰(입력+출력, 실패한 호출 포함). 워커의 하루 한도가 쓴다.
 
     워커가 영향 계산 작업마다 작업 트랜잭션과 따로 바로 커밋하는 기록(kind=llm_usage)을 센다. 작업이
     되돌려져도, 호출이 실패해도, 묶음 없는 작업이어도 빠지지 않는다. 호출별 색인(llm_call)은 세지 않는다.
+    refs를 주면 그 기록만 센다(앱별 예산: 앱마다 ref가 다르다).
     """
-    total = session.scalar(
-        sa.select(sa.func.coalesce(sa.func.sum(RecordRow.cost), 0)).where(
-            RecordRow.kind == "llm_usage", RecordRow.at >= since
-        )
+    q = sa.select(sa.func.coalesce(sa.func.sum(RecordRow.cost), 0)).where(
+        RecordRow.kind == "llm_usage", RecordRow.at >= since
     )
-    return int(total or 0)
+    if refs is not None:
+        q = q.where(RecordRow.ref.in_(list(refs)))
+    return int(session.scalar(q) or 0)

@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.appspec import AppDefinition
-from noticedelta.db.models import AppDefinitionRow, AppMemberRow
+from noticedelta.db.models import AppBudgetRow, AppDefinitionRow, AppMemberRow
 from noticedelta.events import Ref, app_ref, emit
 
 
@@ -140,3 +140,34 @@ def drop_draft(session: Session, app_id: str, version: int) -> bool:
     session.delete(row)
     session.flush()
     return True
+
+
+# --- 예산 (app-spec 9장) ---
+
+DEFAULT_DAILY_TOKENS = 20_000  # 다른 앱의 기본 하루 한도. 무료 한도를 나눠 쓰므로 작게 시작한다
+
+
+def usage_ref(app_id: str, primary: str) -> str:
+    """워커가 남기는 LLM 사용 기록(llm_usage)의 ref. 주 앱은 예전 그대로 "worker"다."""
+    return "worker" if app_id == primary else f"app:{app_id}"
+
+
+def daily_tokens(session: Session, app_id: str) -> int | None:
+    row = session.get(AppBudgetRow, app_id)
+    return row.daily_tokens if row is not None else None
+
+
+def set_daily_tokens(
+    session: Session, app_id: str, tokens: int, *, by: str, at: datetime
+) -> int | None:
+    """한도를 바꾼다. 앞의 한도(없으면 None)를 준다."""
+    if tokens < 0:
+        raise ValueError("한도는 0 이상이다")
+    row = session.get(AppBudgetRow, app_id)
+    before = row.daily_tokens if row is not None else None
+    if row is None:
+        session.add(AppBudgetRow(app_id=app_id, daily_tokens=tokens, set_by=by[:64], set_at=at))
+    else:
+        row.daily_tokens, row.set_by, row.set_at = tokens, by[:64], at
+    session.flush()
+    return before

@@ -32,7 +32,7 @@ from pathlib import Path
 import sqlalchemy as sa
 
 ROOT = Path(__file__).resolve().parents[1]
-from noticedelta import app_registry, flight  # noqa: E402
+from noticedelta import app_registry, budgets, flight  # noqa: E402
 from noticedelta.agent import build_gateway  # noqa: E402
 from noticedelta.blobstore import LocalBlobStore  # noqa: E402
 from noticedelta.config import load_env, open_db  # noqa: E402
@@ -40,7 +40,7 @@ from noticedelta.db.models import ChangeEvent, ItemVersion  # noqa: E402
 from noticedelta.drift import pending  # noqa: E402
 from noticedelta.events import new_ulid  # noqa: E402
 from noticedelta.jobs import counts, run_worker  # noqa: E402
-from noticedelta.llm import Budget, FileCassetteStore, Gateway, Mode, choose, make_provider  # noqa: E402
+from noticedelta.llm import FileCassetteStore, Gateway, Mode, choose, make_provider  # noqa: E402
 from noticedelta.llm.extract import LLMExtractor, spec_for  # noqa: E402
 from noticedelta.parsing import DockerParser  # noqa: E402
 from noticedelta.pipeline import (  # noqa: E402
@@ -127,30 +127,39 @@ def main() -> None:
             else int(os.environ.get(DAILY_ENV, "200000"))
         )
         now = datetime.now(UTC)
+        # 소유자가 켠 다른 앱도 함께 돈다(영향 계산·알림은 앱마다 따로). 앱마다 하루 한도를 두고,
+        # 그 위에 하루 전체 한도를 건다(budgets.py)
         with factory() as s:
+            ctx.extra_apps = tuple(a for a in app_registry.enabled(s) if a.id != ctx.app.id)
             spent = flight.spent_tokens(s, _today_kst())
-        budget = Budget(max(daily - spent, 0))
-        gateway = Gateway(
-            make_provider(choice),
-            FileCassetteStore(ROOT / "data" / "cassettes"),
-            Mode.REPLAY_OR_LIVE,
-            budget=budget,
-            observer=flight.llm_observer,  # 묶음별 녹화본 색인(키·출력 해시)
-        )
+            budget, per_app = budgets.plan(
+                s, ctx.apps(), primary=ctx.app.id, daily=daily, since=_today_kst()
+            )
+        provider = make_provider(choice)
+        cassettes = FileCassetteStore(ROOT / "data" / "cassettes")
+        gateways = {
+            app_id: Gateway(
+                provider,
+                cassettes,
+                Mode.REPLAY_OR_LIVE,
+                budget=b,
+                observer=flight.llm_observer,  # 묶음별 녹화본 색인(키·출력 해시)
+            )
+            for app_id, b in per_app.items()
+        }
+        gateway = gateways[ctx.app.id]
         ctx.extractor = LLMExtractor(gateway, model=choice.model, spec=spec_for(ctx.app))
         ctx.extractor_name = f"{choice.name}/{choice.model}"
         ctx.extract_scope = args.scope
-        # 소유자가 켠 다른 앱도 함께 돈다(영향 계산·알림은 앱마다 따로, 같은 하루 한도를 나눠 쓴다)
-        with factory() as s:
-            ctx.extra_apps = tuple(a for a in app_registry.enabled(s) if a.id != ctx.app.id)
         ctx.extractor_for = lambda app: LLMExtractor(
-            gateway, model=choice.model, spec=spec_for(app)
+            gateways[app.id], model=choice.model, spec=spec_for(app)
         )
         if ctx.extra_apps:
             print("함께 도는 앱: " + ", ".join(f"{a.id}@{a.version}" for a in ctx.extra_apps))
         print(
             f"추출: {ctx.extractor_name} · 범위 {args.scope} · 오늘 쓴 토큰 {spent:,} / "
-            f"한도 {daily:,} · 남은 {budget.limit:,}"
+            f"한도 {daily:,} · 남은 {budget.limit:,} · 앱별 남은 "
+            + ", ".join(f"{k} {b.limit:,}" for k, b in per_app.items())
         )
         with factory() as s:
             # 이번 실행의 묶음: 하루 한도에 드는 사용량(llm_usage)을 여기에 남긴다
@@ -193,28 +202,32 @@ def main() -> None:
     rest = {k: h for k, h in todo.items() if k != IMPACT}
     stats = run_worker(factory, rest, worker_id=worker_id, max_jobs=args.max_jobs)
     if args.extract and IMPACT in todo:
-        logged = 0
+        logged = dict.fromkeys(gateways, 0)
 
         def log_usage() -> None:
             # 작업 트랜잭션과 따로 바로 커밋한다: 작업이 되돌려지거나, 호출이 실패하거나(공급자가 센
-            # 토큰), 묶음 없는 작업이어도 하루 한도에 들어간다
-            nonlocal logged
-            live = gateway.usage.live_tokens
-            if live > logged:
+            # 토큰), 묶음 없는 작업이어도 하루 한도에 들어간다. 앱마다 ref를 달리 남긴다(앱별 예산)
+            for app_id, gw in gateways.items():
+                live = gw.usage.live_tokens
+                if live <= logged[app_id]:
+                    continue
                 with factory() as s:
                     flight.add_record(
                         s,
                         usage_trace,
                         "llm_usage",
-                        ref="worker",
+                        ref=app_registry.usage_ref(app_id, ctx.app.id),
                         at=datetime.now(UTC),
-                        cost=live - logged,
+                        cost=live - logged[app_id],
                     )
                     s.commit()
-                logged = live
+                logged[app_id] = live
 
         # 영향 계산은 하나씩: 한도에 닿으면(blocked) 더 꺼내지 않는다. 한도에 걸린 작업은 시도 횟수를 쓰지 않고 미룬다
+        # (앱 한도에 걸린 앱의 작업만 미뤄지고, 하루 전체 한도에 닿으면 모두 멈춘다)
         while not budget.blocked and budget.spent < budget.limit:
+            if all(b.blocked or b.spent >= b.limit for b in per_app.values()):
+                break
             if (
                 args.max_jobs is not None
                 and stats.done + stats.retried + stats.dead >= args.max_jobs
@@ -237,7 +250,8 @@ def main() -> None:
         )
         log_usage()
         note = " · 한도에 닿아 나머지는 다음 실행으로 미룸" if budget.blocked else ""
-        print(f"이번에 보낸 LLM 토큰 {gateway.usage.live_tokens:,}{note}")
+        sent = sum(gw.usage.live_tokens for gw in gateways.values())
+        print(f"이번에 보낸 LLM 토큰 {sent:,}{note}")
     with factory() as s:
         # 에이전트가 요청하고 보류 시간이 지난 효과를 실행한다(도구 게이트웨이, 많아야 한 번)
         acted = build_gateway(factory, cipher=ctx.vault).commit_due(s, now=datetime.now(UTC))

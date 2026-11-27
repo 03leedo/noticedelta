@@ -73,13 +73,22 @@ class Budget:
     limit: int
     spent: int = 0
     blocked: bool = False  # 한 번이라도 넘어 막힌 적이 있다(워커가 더 꺼내지 않는다)
+    parent: Budget | None = None  # 위의 한도(앱 예산 위의 하루 전체 한도). 둘 다 지켜야 보낸다
 
     def check(self, estimate: int) -> None:
+        if self.parent is not None:
+            self.parent.check(estimate)
         if self.spent + estimate > self.limit:
             self.blocked = True
             raise BudgetExceeded(
                 f"토큰 예산 {self.limit:,} 중 {self.spent:,} 씀, 이번 호출 어림 {estimate:,}"
             )
+
+    def charge(self, tokens: int) -> None:
+        """보낸 토큰을 센다(위의 한도에도)."""
+        self.spent += tokens
+        if self.parent is not None:
+            self.parent.charge(tokens)
 
 
 def request_chars(req: LLMRequest) -> int:
@@ -169,14 +178,14 @@ class Gateway:
             # 실패해도 공급자가 센 토큰은 한도에서 빠졌다. 예산과 합계에 넣고 다시 올린다
             lost = getattr(e, "spent", 0)
             if self.budget is not None:
-                self.budget.spent += lost
+                self.budget.charge(lost)
             self.usage.failed_calls += 1
             self.usage.live_tokens += lost
             raise
         resp.from_cassette = False
         spent = resp.input_tokens + resp.output_tokens
         if self.budget is not None:
-            self.budget.spent += spent
+            self.budget.charge(spent)
         self.usage.live_calls += 1
         self.usage.live_cost_usd += resp.cost_usd
         self.usage.live_tokens += spent
