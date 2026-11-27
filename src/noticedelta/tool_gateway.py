@@ -41,7 +41,7 @@ import inspect
 import re
 import time
 from collections import Counter
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -125,7 +125,9 @@ class ToolGateway:
         hold: timedelta = HOLD,
         decide_within: timedelta = DECIDE_WITHIN,
         max_effects: int = MAX_EFFECTS,
+        chosen_by_app: Callable[[Session, str], Collection[str] | None] | None = None,
     ):
+        """chosen_by_app: (db, 세션의 앱) → 그 앱이 고른 도구(앱 정의의 agent.tools). None이면 모두."""
         self.tools: dict[str, Tool] = {}
         for tool in tools:
             if tool.name in self.tools:
@@ -154,6 +156,7 @@ class ToolGateway:
         self.hold = hold
         self.decide_within = decide_within
         self.max_effects = max_effects
+        self.chosen_by_app = chosen_by_app
 
     # --- 세션 (5.3) ---
 
@@ -270,7 +273,7 @@ class ToolGateway:
         tool = self.tools.get(name)
 
         # 1. 선언
-        why = self._undeclared(s, name, tool, args)
+        why = self._undeclared(s, name, tool, args) or self._not_for_app(db, s, name)
         if why is not None:
             return self._refuse(db, s, name, tool, args, "declare", why, before, now)
         params = inspect.signature(tool.handler).parameters
@@ -342,6 +345,14 @@ class ToolGateway:
         db.commit()
         self._observe(tool, args, result, None, started, hidden)
         return result
+
+    def _not_for_app(self, db: Session, s: AgentSessionRow, name: str) -> str | None:
+        if self.chosen_by_app is None:
+            return None
+        picked = self.chosen_by_app(db, s.app_id)
+        if picked is not None and name not in picked:
+            return f"앱 {s.app_id}이 쓰기로 고르지 않은 도구(앱 정의의 agent.tools)"
+        return None
 
     def _undeclared(
         self, s: AgentSessionRow, name: str, tool: Tool | None, args: dict

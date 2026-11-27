@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -104,8 +104,11 @@ def backtest_preview(
         out: dict[str, Any] = {"draft": d.app, "events": d.events, "summary": d.summary()}
         out["missing_cassettes"] = len(d.missing)
         if on is not None:
-            c = compare(run(on), d, labels)
+            base = run(on)
+            c = compare(base, d, labels)
             out["against"] = f"{on.id}@{on.version}"
+            out["against_summary"] = base.summary()  # 나란히 보기(검증 화면)
+            out["against_missing"] = len(base.missing)
             out["diff"] = {
                 "new": len(c.new),
                 "gone": len(c.gone),
@@ -141,7 +144,10 @@ def app_tools(
     now: Callable[[], datetime] = _now,
     snapshots: Path | None = None,
     daily: int = 200_000,
+    known: Callable[[], Collection[str]] | None = None,
 ) -> list[Tool]:
+    """known: 플랫폼이 내놓는 도구 이름(앱 정의의 agent.tools를 검사한다)."""
+
     def app_schema() -> dict:
         """앱 정의의 JSON 스키마. 이것을 보고 정의를 쓴 뒤 check_app으로 검사한다."""
         return {"schema": AppDefinition.model_json_schema()}
@@ -160,6 +166,11 @@ def app_tools(
         if isinstance(data, dict):  # 소유자 칸은 저장할 때 게이트웨이가 채운다
             data.setdefault("owner", "person:check")
         app, problems = _problems(data, mine(actor))
+        picked = (data.get("agent") or {}).get("tools") or [] if isinstance(data, dict) else []
+        if known is not None and (unknown := sorted(set(picked) - set(known()))):
+            problems.append({"where": "agent.tools", "what": f"없는 도구: {unknown}",
+                             "fix": f"쓸 수 있는 도구: {sorted(known())}"})  # fmt: skip
+            app = None
         return {"ok": app is not None, "problems": problems}
 
     def validate_definition(args: dict) -> str | None:
@@ -178,6 +189,9 @@ def app_tools(
         data = {**copy.deepcopy(args["definition"]), "owner": "person:check"}
         own = user_sources.sheets(db, owner=person_id) if person_id else {}
         _, problems = _problems(data, own)
+        picked = (data.get("agent") or {}).get("tools") or []
+        if known is not None and (unknown := sorted(set(picked) - set(known()))):
+            problems.append({"where": "agent.tools", "what": f"없는 도구: {unknown}", "fix": ""})
         if problems:
             shown = "; ".join(f"{p['where']}: {p['what']}" for p in problems[:3])
             return f"정의에 문제 {len(problems)}개(check_app으로 자세히): {shown}"

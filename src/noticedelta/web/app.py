@@ -17,9 +17,10 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,10 +31,19 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
-from noticedelta import people, vault
-from noticedelta.agent import build_gateway
+from noticedelta import app_registry, people, vault
+from noticedelta.agent import CASSETTES, build_gateway
+from noticedelta.app_status import app_status, describe
+from noticedelta.app_tools import Preview, backtest_preview
+from noticedelta.appspec import AppDefinition
 from noticedelta.config import ROOT
-from noticedelta.db.models import AgentSessionRow, Profile, ToolActionRow
+from noticedelta.db.models import (
+    AgentSessionRow,
+    AppDefinitionRow,
+    AppMemberRow,
+    Profile,
+    ToolActionRow,
+)
 from noticedelta.grants import SIDO
 from noticedelta.metrics import collect, prometheus_text
 from noticedelta.names import FIELD_NAMES, RESULT_NAMES
@@ -57,6 +67,26 @@ ACTION_STATUS_NAMES = {
     "undoing": "되돌리는 중",
     "undone": "되돌림",
 }
+DAILY = int(os.environ.get("NOTICEDELTA_LLM_DAILY_TOKENS", "200000"))
+
+
+def _kst_today(at: datetime) -> datetime:
+    kst = timezone(timedelta(hours=9))
+    return at.astimezone(kst).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+
+
+def changed_paths(a: Any, b: Any, path: str = "", limit: int = 40) -> list[tuple[str, Any, Any]]:
+    """두 정의에서 값이 다른 자리(점으로 이은 경로, 앞 값, 뒤 값). 판 사이에 무엇을 고쳤는지 보인다."""
+    out: list[tuple[str, Any, Any]] = []
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            if k == "version":
+                continue
+            out += changed_paths(a.get(k), b.get(k), f"{path}.{k}" if path else k, limit)
+    elif a != b:
+        out.append((path, a, b))
+    return out[:limit]
+
 
 TEMPLATES = Path(__file__).parent / "templates"
 
@@ -101,6 +131,7 @@ def create_app(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     cipher: vault.Cipher | None = None,
     gateway: ToolGateway | None = None,
+    preview: Preview | None = None,
 ) -> FastAPI:
     """cipher: 개인정보 금고의 열쇠. 없으면 NOTICEDELTA_VAULT_KEY, 그것도 없으면 개발용 열쇠 파일.
 
@@ -108,6 +139,7 @@ def create_app(
     """
     cipher = cipher or vault.load_cipher(ROOT / "data" / "vault.key")
     gate = gateway or build_gateway(session_factory, cipher=cipher)
+    run_preview = preview or backtest_preview(CASSETTES, session_factory)
     app = FastAPI(title="NoticeDelta", docs_url=None, redoc_url=None, openapi_url=None)
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html"]))
     env.filters["human"] = humanize
@@ -334,6 +366,72 @@ def create_app(
             gate.close_session(s, session_id, now=now(), by=f"person:{person_id}")
             s.commit()
         return RedirectResponse(f"/p/{token}/approvals", status_code=303)
+
+    # --- 검증 화면: 내 앱의 상태와, 판 두 개를 다시 돌린 결과를 나란히 (app-spec 10장, ARCHITECTURE 10.2) ---
+
+    def my_apps(s: Session, person_id: str) -> list[str]:
+        return list(
+            s.scalars(
+                sa.select(AppMemberRow.app_id).where(
+                    AppMemberRow.person_id == person_id,
+                    AppMemberRow.role == app_registry.OWNER,
+                    AppMemberRow.removed_at.is_(None),
+                )
+            ).all()
+        )
+
+    def versions(s: Session, app_id: str) -> list[AppDefinitionRow]:
+        return list(
+            s.scalars(
+                sa.select(AppDefinitionRow)
+                .where(AppDefinitionRow.app_id == app_id)
+                .order_by(AppDefinitionRow.version)
+            ).all()
+        )
+
+    @app.get("/p/{token}/apps", response_class=HTMLResponse)
+    def apps_page(request: Request, token: str):
+        with session_factory() as s:
+            person_id = load(s, token).person_id
+            rows = []
+            for app_id in my_apps(s, person_id):
+                current = app_registry.current(s, app_id)
+                vs = versions(s, app_id)
+                status = None
+                if current is not None:
+                    at = now()
+                    status = describe(app_status(
+                        s, current, root=ROOT / "data" / "snapshots", since=at - timedelta(days=7),
+                        now=at, primary=consent.APP.id, daily=DAILY, today=_kst_today(at),
+                    ))  # fmt: skip
+                rows.append({"id": app_id, "current": current, "versions": vs, "status": status})
+            ctx = {**common, "token": token, "apps": rows}
+            return templates.TemplateResponse(request, "apps.html", ctx)
+
+    @app.get("/p/{token}/apps/{app_id}", response_class=HTMLResponse)
+    def app_page(
+        request: Request, token: str, app_id: str, a: int | None = None, b: int | None = None
+    ):
+        with session_factory() as s:
+            person_id = load(s, token).person_id
+            if app_id not in my_apps(s, person_id):
+                raise HTTPException(404, "없는 앱입니다")
+            vs = versions(s, app_id)
+            enabled = app_registry.current(s, app_id)
+            if a is None and enabled is not None:
+                a = enabled.version
+            if b is None and vs:
+                b = vs[-1].version
+            bodies = {v.version: v.body for v in vs}
+        result = changes = None
+        if a is not None and b is not None and a != b and a in bodies and b in bodies:
+            changes = changed_paths(bodies[a], bodies[b])
+            result = run_preview(
+                AppDefinition.model_validate(bodies[b]), AppDefinition.model_validate(bodies[a])
+            )
+        ctx = {**common, "token": token, "app_id": app_id, "versions": vs, "a": a, "b": b,
+               "result": result, "changes": changes}  # fmt: skip
+        return templates.TemplateResponse(request, "app.html", ctx)
 
     @app.get("/programs/{item_id}", response_class=HTMLResponse)
     def program(request: Request, item_id: str):
