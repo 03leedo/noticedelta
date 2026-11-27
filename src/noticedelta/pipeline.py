@@ -61,6 +61,7 @@ from noticedelta.notify import Channel, InboxChannel, deliver, note, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
 from noticedelta.programs import LoadSummary, load_run, source_meta
 from noticedelta.sources import CATALOG
+from noticedelta.user_sources import sheets as _user_sheets
 from noticedelta.values import same_value
 
 LOAD, PARSE, DIFF, IMPACT, NOTIFY = "load_run", "parse", "diff", "impact", "notify"
@@ -336,7 +337,9 @@ def handle_parse(ctx: Context) -> Handler:
 def handle_diff(ctx: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         item_id = job.payload["item_id"]
-        results = record_item(session, item_id, ctx.store, sheets=CATALOG)
+        # 사용자 출처의 장도 함께(무시할 키·읽는 키로 변경을 가른다)
+        sheets = {**CATALOG, **_user_sheets(session)}
+        results = record_item(session, item_id, ctx.store, sheets=sheets)
         trace = Trace.of(job.payload)
         for r in results:
             if r.status != "recorded":

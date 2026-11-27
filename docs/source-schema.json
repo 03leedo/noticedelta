@@ -34,7 +34,7 @@
       "title": "Attachments",
       "type": "object"
     },
-    "Connector": {
+    "CodeConnector": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -51,7 +51,7 @@
         "kind",
         "adapter"
       ],
-      "title": "Connector",
+      "title": "CodeConnector",
       "type": "object"
     },
     "Fetch": {
@@ -179,6 +179,26 @@
       "title": "MetaInfo",
       "type": "object"
     },
+    "RssConnector": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "rss",
+          "title": "Kind",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "url"
+      ],
+      "title": "RssConnector",
+      "type": "object"
+    },
     "Terms": {
       "additionalProperties": false,
       "properties": {
@@ -203,6 +223,30 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "agreed_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agreed By"
+        },
+        "agreed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agreed At"
         }
       },
       "required": [
@@ -242,7 +286,22 @@
       "type": "string"
     },
     "connector": {
-      "$ref": "#/$defs/Connector"
+      "discriminator": {
+        "mapping": {
+          "code": "#/$defs/CodeConnector",
+          "rss": "#/$defs/RssConnector"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CodeConnector"
+        },
+        {
+          "$ref": "#/$defs/RssConnector"
+        }
+      ],
+      "title": "Connector"
     },
     "fetch": {
       "$ref": "#/$defs/Fetch"

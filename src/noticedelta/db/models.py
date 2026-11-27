@@ -680,3 +680,17 @@ class AppBudgetRow(Base):
     daily_tokens: Mapped[int] = mapped_column(sa.Integer)
     set_by: Mapped[str] = mapped_column(sa.String(64))
     set_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+
+
+class UserSourceRow(Base):
+    """사용자가 등록한 출처 한 장 (source-catalog.md 4장). 나만 쓰는 출처(private)로 시작한다.
+
+    등록은 이용 조건 동의가 필요한 순간이라 도구 게이트웨이의 확인을 거친다. 소유자의 앱만 쓴다.
+    """
+
+    __tablename__ = "user_source"
+    id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)  # 출처 id(source.id와 같다)
+    owner: Mapped[str] = mapped_column(sa.String(32), index=True)  # person id
+    body: Mapped[dict] = mapped_column(JSONType)  # 출처 한 장(catalog.SourceSheet)
+    registered_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    removed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

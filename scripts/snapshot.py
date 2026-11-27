@@ -21,9 +21,10 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-from noticedelta.config import load_env  # noqa: E402
+from noticedelta.config import database_url, load_env  # noqa: E402
 from noticedelta.snapshot import PER_PAGE, run_snapshot  # noqa: E402
 from noticedelta.sources import BizinfoClient, KStartupClient, RateLimiter  # noqa: E402
+from noticedelta.sources.rss import fetch_feed, to_record  # noqa: E402
 
 OUT = ROOT / "data" / "snapshots"
 LOCK = OUT / ".lock"
@@ -44,6 +45,36 @@ def alert(text: str) -> None:
         return
     with contextlib.suppress(httpx.HTTPError):  # 알림 실패가 수집 결과를 바꾸지 않게
         httpx.post(url, json={"content": f"[NoticeDelta 수집] {text}"}, timeout=10)
+
+
+def user_feeds(http: httpx.Client) -> dict:
+    """사용자가 등록한 RSS 출처의 받기 함수. DB는 마이그레이션 없이 읽기만 한다(없으면 빈 것)."""
+    from sqlalchemy.orm import sessionmaker
+
+    from noticedelta.db import make_engine
+    from noticedelta.user_sources import sheets
+
+    try:
+        with sessionmaker(make_engine(database_url()))() as s:
+            found = sheets(s)
+    except Exception as e:  # DB가 없거나 열리지 않아도 운영자 출처는 받는다
+        print(f"사용자 출처를 읽지 못했습니다: {type(e).__name__}", file=sys.stderr)
+        return {}
+    limiter = RateLimiter(1)  # 사용자 출처는 초당 1회를 넘지 않는다(source-catalog.md 6장)
+
+    def feed(source_id: str, url: str):
+        convert = to_record(source_id)
+
+        def page(n: int):
+            if n > 1:
+                return []
+            limiter.acquire()
+            _, items = fetch_feed(url, http)
+            return [convert(it) for it in items]
+
+        return page
+
+    return {sid: feed(sid, sh.connector.url) for sid, sh in found.items()}
 
 
 def main() -> int:
@@ -74,6 +105,7 @@ def main() -> int:
                         page=p, per_page=PER_PAGE, only_open=True
                     ),
                     "bizinfo": lambda p: bz.list_notices(page=p, per_page=PER_PAGE),
+                    **user_feeds(http),
                 },
                 http=http,
                 root=OUT,

@@ -26,6 +26,7 @@ from noticedelta.mail_tools import FileOutbox, Outbox, inquiry_tool
 from noticedelta.parsing import Parser
 from noticedelta.person_tools import person_tools
 from noticedelta.programs import api_contacts, api_meta
+from noticedelta.source_tools import source_tools
 from noticedelta.tool_gateway import ToolGateway
 from noticedelta.tooling import Tool
 from noticedelta.usage import UsageLog, feedback_tool
@@ -74,6 +75,7 @@ def agent_tools(
         inquiry_tool(
             factory, outbox or FileOutbox(OUTBOX), allow=item_contacts, kinds=INQUIRY_KINDS
         ),
+        *source_tools(factory),
         *app_tools(
             factory,
             preview=preview or backtest_preview(CASSETTES, factory),

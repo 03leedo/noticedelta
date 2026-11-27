@@ -4,8 +4,8 @@
     SourceSheet.model_json_schema()   에이전트가 읽는 JSON 스키마
 
 앱 정의(appspec)는 출처를 고르고 그 출처가 내는 키(`keys`)와 구조화 값(`meta`)만 읽을 수 있다.
-1차는 운영자 출처(`connector.kind: code`, 코드 어댑터)만 받는다. 사용자 출처(rss, html_list,
-file_drop)는 4장의 등록 흐름이 생길 때 연다.
+운영자 출처는 `connector.kind: code`(코드 어댑터)다. 사용자 출처는 `rss`부터 받는다(2026-11-27,
+4장의 등록 흐름, user_sources.py). html_list·file_drop은 아직이다.
 """
 
 from __future__ import annotations
@@ -27,9 +27,17 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class Connector(_Strict):
-    kind: Literal["code"]  # rss, html_list, file_drop, data_go_kr_list는 등록 흐름과 함께 연다
+class CodeConnector(_Strict):
+    kind: Literal["code"]  # 운영자 출처: 코드 어댑터
     adapter: str
+
+
+class RssConnector(_Strict):
+    kind: Literal["rss"]  # 사용자 출처: RSS·Atom 피드
+    url: str
+
+
+Connector = Annotated[CodeConnector | RssConnector, Field(discriminator="kind")]
 
 
 class Fetch(_Strict):
@@ -73,6 +81,8 @@ class Terms(_Strict):
     license: str
     quote_limit: int = Field(ge=0, le=5000)  # 원문을 한 번에 보여 줄 수 있는 글자 수
     note: str | None = None
+    agreed_by: str | None = None  # 사용자 출처: 이용 조건에 동의한 사람(person:<id>)
+    agreed_at: str | None = None
 
 
 class SourceSheet(_Strict):

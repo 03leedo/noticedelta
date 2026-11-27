@@ -41,6 +41,7 @@ LAYERS: dict[str, list[str]] = {
         "sources.base",
         "sources.http",
         "sources.resilience",
+        "sources.rss",  # RSS·Atom 피드 커넥터(사용자 출처), 주소 안전 검사
         "text",
         "tooling",  # 도구와 능력 속성, 등록부
         "tool_gateway",  # 도구 게이트웨이: 세션, 판단, 보류 후 확정, 승인함
@@ -67,6 +68,7 @@ LAYERS: dict[str, list[str]] = {
         "matching",
         "person_tools",  # 사람의 정보를 쓰는 도구(B): 내 정보, 자격 확인, 근거 설명
         "segments",
+        "user_sources",  # 사용자가 등록한 출처(나만 쓰는 private 출처)
         "values",
     ],
     "팩": [
@@ -82,7 +84,16 @@ LAYERS: dict[str, list[str]] = {
     ],
     # agent: 도구를 모아 게이트웨이를 조립한다. app_tools: 앱을 만드는 조종 도구.
     # gateway_pilot: RQ6 파일럿. replay: 같게 재생
-    "앱": ["agent", "app_tools", "demo", "gateway_pilot", "pipeline", "replay", "web"],
+    "앱": [
+        "agent",
+        "app_tools",
+        "demo",
+        "gateway_pilot",
+        "pipeline",
+        "replay",
+        "source_tools",
+        "web",
+    ],
 }
 ORDER = list(LAYERS)
 

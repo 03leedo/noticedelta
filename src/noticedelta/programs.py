@@ -28,7 +28,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta import drift
+from noticedelta import drift, user_sources
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
 from noticedelta.db.models import (
@@ -316,7 +316,8 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
     at = _when(run.get("started_at"))
     run_drift: dict[str, dict] = {}
     for source, body in run["sources"].items():
-        to_record = TO_RECORD.get(source)
+        # 운영자 출처는 코드 어댑터, 사용자 출처(rss)는 등록부의 장으로 바꾼다
+        to_record = TO_RECORD.get(source) or user_sources.to_record_for(session, source)
         if to_record is None:
             continue
         items = body.get("items", [])

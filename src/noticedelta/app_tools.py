@@ -25,7 +25,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from noticedelta import app_registry
+from noticedelta import app_registry, user_sources
 from noticedelta.appspec import AppDefinition, check_app
 from noticedelta.db.models import AppDefinitionRow, AppMemberRow
 from noticedelta.grants import APP
@@ -41,11 +41,15 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _problems(definition: dict) -> tuple[AppDefinition | None, list[dict]]:
+def _problems(
+    definition: dict, extra: dict | None = None
+) -> tuple[AppDefinition | None, list[dict]]:
+    """extra: 그 사람이 등록한 출처(사용자 출처는 소유자의 앱만 쓴다)."""
+    sheets = {**CATALOG, **(extra or {})}
     app, problems = check_app(
         definition,
-        sources={sid: s.readable_keys() for sid, s in CATALOG.items()},
-        meta={sid: set(s.meta) for sid, s in CATALOG.items()},
+        sources={sid: s.readable_keys() for sid, s in sheets.items()},
+        meta={sid: set(s.meta) for sid, s in sheets.items()},
     )
     return app, [{"where": p.path, "what": p.message, "fix": p.fix} for p in problems]
 
@@ -142,12 +146,20 @@ def app_tools(
         """앱 정의의 JSON 스키마. 이것을 보고 정의를 쓴 뒤 check_app으로 검사한다."""
         return {"schema": AppDefinition.model_json_schema()}
 
-    def check(definition: dict) -> dict:
+    def mine(actor: str | None) -> dict:
+        """그 사람이 등록한 출처(앱 정의가 쓸 수 있다)."""
+        person = _person(actor)
+        if person is None:
+            return {}
+        with factory() as s:
+            return user_sources.sheets(s, owner=person)
+
+    def check(definition: dict, actor: str | None = None) -> dict:
         """앱 정의를 검사만 한다. 문제마다 어디가, 무엇이, 어떻게 고치는지 준다."""
         data = copy.deepcopy(definition)
         if isinstance(data, dict):  # 소유자 칸은 저장할 때 게이트웨이가 채운다
             data.setdefault("owner", "person:check")
-        app, problems = _problems(data)
+        app, problems = _problems(data, mine(actor))
         return {"ok": app is not None, "problems": problems}
 
     def validate_definition(args: dict) -> str | None:
@@ -155,7 +167,7 @@ def app_tools(
         if not isinstance(args.get("definition"), dict):
             return "definition은 앱 정의(JSON 객체)다"
         data = {**copy.deepcopy(args["definition"]), "owner": "person:check"}
-        _, problems = _problems(data)
+        _, problems = _problems(data, mine(args.get("actor")))
         if problems:
             shown = "; ".join(f"{p['where']}: {p['what']}" for p in problems[:3])
             return f"정의에 문제 {len(problems)}개(check_app으로 자세히): {shown}"
@@ -165,7 +177,7 @@ def app_tools(
         """초안 판을 넣는다(켜지 않는다). 새 앱이면 부른 사람이 소유자가 된다."""
         data = copy.deepcopy(definition)
         data["owner"] = actor  # 정의의 소유자 칸은 게이트웨이가 넣은 사람으로
-        app, problems = _problems(data)
+        app, problems = _problems(data, mine(actor))
         if app is None:  # validate를 지났으면 오지 않는다. 실패는 예외로(효과를 남기지 않게)
             raise ValueError("; ".join(f"{p['where']}: {p['what']}" for p in problems[:3]))
         person = _person(actor)
