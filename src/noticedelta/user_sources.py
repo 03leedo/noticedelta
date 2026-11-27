@@ -20,9 +20,10 @@ from datetime import datetime
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta.catalog import RssConnector, SourceSheet
+from noticedelta.catalog import HtmlListConnector, RssConnector, SourceSheet
 from noticedelta.db.models import Source, UserSourceRow
 from noticedelta.sources.base import NoticeRecord
+from noticedelta.sources.html_list import to_record as list_record
 from noticedelta.sources.rss import _public, check_url
 from noticedelta.sources.rss import to_record as rss_record
 
@@ -59,8 +60,8 @@ def sheets(session: Session, *, owner: str | None = None) -> dict[str, SourceShe
 def problems(sheet: SourceSheet, taken: Collection[str]) -> list[str]:
     """사용자 출처로 받을 수 있는지. 문제마다 고칠 방법을 함께 적는다."""
     out = []
-    if not isinstance(sheet.connector, RssConnector):
-        out.append("connector.kind: 사용자 출처는 지금 rss만 받는다")
+    if not isinstance(sheet.connector, RssConnector | HtmlListConnector):
+        out.append("connector.kind: 사용자 출처는 지금 rss와 html_list(게시판)만 받는다")
     if sheet.status != "private":
         out.append("status: 사용자 출처는 private로 시작한다(공개는 운영자가 검토한 뒤)")
     if len(sheet.id) > MAX_ID:
@@ -127,6 +128,8 @@ def to_record_for(session: Session, source_id: str) -> Callable[[dict], NoticeRe
         sheet = SourceSheet.model_validate(row.body)
     except ValueError:
         return None
+    if isinstance(sheet.connector, HtmlListConnector):
+        return list_record(source_id)
     if not isinstance(sheet.connector, RssConnector):
         return None
     return rss_record(source_id)

@@ -39,6 +39,7 @@ LAYERS: dict[str, list[str]] = {
         "snapshot",
         "sources.attachments",
         "sources.base",
+        "sources.html_list",  # 게시판(글 목록 페이지) 커넥터: 목록 위치를 찾아 제안
         "sources.http",
         "sources.resilience",
         "sources.rss",  # RSS·Atom 피드 커넥터(사용자 출처), 주소 안전 검사

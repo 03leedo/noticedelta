@@ -26,7 +26,9 @@ from noticedelta.config import database_url, load_env  # noqa: E402
 from noticedelta.snapshot import PER_PAGE, run_snapshot  # noqa: E402
 from noticedelta.sources import BizinfoClient, KStartupClient, RateLimiter  # noqa: E402
 from noticedelta.sources.base import SourceError  # noqa: E402
-from noticedelta.sources.rss import fetch_feed, to_record  # noqa: E402
+from noticedelta.sources.html_list import decode, extract  # noqa: E402
+from noticedelta.sources.html_list import to_record as list_record  # noqa: E402
+from noticedelta.sources.rss import fetch_bytes, fetch_feed, to_record  # noqa: E402
 
 OPERATOR = ("kstartup", "bizinfo")  # 운영자 출처(실패하면 알린다)
 
@@ -68,14 +70,20 @@ def user_feeds(http: httpx.Client) -> dict:
     last = last_fetched(OUT / "runs", set(found))
     now = datetime.now()
 
-    def feed(source_id: str, url: str):
-        convert = to_record(source_id)
+    def feed(source_id: str, sheet):
+        connector = sheet.connector
+        board = connector.kind == "html_list"
+        convert = list_record(source_id) if board else to_record(source_id)
 
         def page(n: int):
             if n > 1:
                 return []
             limiter.acquire()
-            _, items = fetch_feed(url, http)
+            if board:  # 게시판: 장에 적은 목록 위치로 글을 뽑는다
+                data = fetch_bytes(connector.url, http)
+                items = extract(decode(data), connector.url, connector.list)
+            else:
+                _, items = fetch_feed(connector.url, http)
             out = []
             for it in items:  # 변환하지 못하는 글 하나가 피드 전체를 막지 않게
                 with contextlib.suppress(SourceError):
@@ -89,7 +97,7 @@ def user_feeds(http: httpx.Client) -> dict:
         for sid, sh in found.items()
         if sid not in last or now - last[sid] >= timedelta(hours=sh.fetch.every_hours)
     }  # 장에 적은 주기(every_hours)보다 자주 받지 않는다
-    return {sid: feed(sid, sh.connector.url) for sid, sh in due.items()}
+    return {sid: feed(sid, sh) for sid, sh in due.items()}
 
 
 def last_fetched(runs: Path, ids: set[str]) -> dict[str, datetime]:

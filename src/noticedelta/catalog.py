@@ -4,8 +4,8 @@
     SourceSheet.model_json_schema()   에이전트가 읽는 JSON 스키마
 
 앱 정의(appspec)는 출처를 고르고 그 출처가 내는 키(`keys`)와 구조화 값(`meta`)만 읽을 수 있다.
-운영자 출처는 `connector.kind: code`(코드 어댑터)다. 사용자 출처는 `rss`부터 받는다(2026-11-27,
-4장의 등록 흐름, user_sources.py). html_list·file_drop은 아직이다.
+운영자 출처는 `connector.kind: code`(코드 어댑터)다. 사용자 출처는 `rss`와 `html_list`(게시판)를 받는다
+(2026-11-27, 4장의 등록 흐름, user_sources.py). file_drop은 아직이다.
 """
 
 from __future__ import annotations
@@ -37,7 +37,13 @@ class RssConnector(_Strict):
     url: str
 
 
-Connector = Annotated[CodeConnector | RssConnector, Field(discriminator="kind")]
+class HtmlListConnector(_Strict):
+    kind: Literal["html_list"]  # 사용자 출처: 게시판(글 목록 페이지)
+    url: str
+    list: str = Field(min_length=1, max_length=500)  # 글 링크까지의 조상 모양(플랫폼이 제안한 후보)
+
+
+Connector = Annotated[CodeConnector | RssConnector | HtmlListConnector, Field(discriminator="kind")]
 
 
 class Fetch(_Strict):
