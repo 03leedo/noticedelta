@@ -667,3 +667,16 @@ class AppMemberRow(Base):
     role: Mapped[str] = mapped_column(sa.String(16), primary_key=True)  # owner / manager
     added_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
     removed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class AppBudgetRow(Base):
+    """앱별 하루 LLM 토큰 한도 (app-spec 9장). 소유자가 정하고, 올릴 때는 사람의 확인을 받는다.
+
+    행이 없으면 기본값(주 앱은 워커의 하루 한도, 다른 앱은 app_registry.DEFAULT_DAILY_TOKENS)을 쓴다.
+    """
+
+    __tablename__ = "app_budget"
+    app_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    daily_tokens: Mapped[int] = mapped_column(sa.Integer)
+    set_by: Mapped[str] = mapped_column(sa.String(64))
+    set_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))

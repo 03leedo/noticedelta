@@ -8,6 +8,7 @@ MCP 서버(scripts/mcp_server.py)와 워커(보류 시간이 지난 효과를 �
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Collection, Sequence
 from datetime import date
 from pathlib import Path
@@ -33,6 +34,7 @@ from noticedelta.vault import Cipher
 ROOT = Path(__file__).resolve().parents[2]
 OUTBOX = ROOT / "data" / "outbox"  # 개발용: 메일을 보내지 않고 .eml로 쓴다
 CASSETTES = ROOT / "data" / "cassettes"
+DAILY_ENV = "NOTICEDELTA_LLM_DAILY_TOKENS"  # 워커와 같은 하루 전체 한도
 INQUIRY_KINDS = {
     "deadline": "접수 기간과 마감",
     "documents": "제출 서류",
@@ -72,7 +74,12 @@ def agent_tools(
         inquiry_tool(
             factory, outbox or FileOutbox(OUTBOX), allow=item_contacts, kinds=INQUIRY_KINDS
         ),
-        *app_tools(factory, preview=preview or backtest_preview(CASSETTES, factory)),
+        *app_tools(
+            factory,
+            preview=preview or backtest_preview(CASSETTES, factory),
+            snapshots=ROOT / "data" / "snapshots",
+            daily=int(os.environ.get(DAILY_ENV, "200000")),
+        ),
     ]
     if usage is not None:
         tools.append(feedback_tool(usage))

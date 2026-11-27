@@ -5,6 +5,9 @@
 - save_app(definition): 초안 판을 등록부에 넣는다. 켜지 않는다. 플랫폼 안의 되돌릴 수 있는 효과(internal)라
   바로 반영하고 되돌릴 수 있다. 새 앱이면 부른 사람이 소유자가 된다. 있는 앱은 소유자만 판을 더한다.
 - preview_app(app_id, version): 기록된 정정을 초안으로 다시 흘려 켠 판과 알림을 비교한다(녹화본만, 비용 0).
+- app_status(app_id): 앱의 상태 보고(app-spec 11장). 운영자의 앱은 누구나, 다른 앱은 소유자만.
+- set_app_budget(app_id, daily_tokens): 앱의 하루 LLM 한도. 예산 올리기는 사람의 확인이 필요한 순간이라
+  늘 소유자의 확인을 받는다(C, confirm).
 - enable_app(app_id, version): 판을 켠다. 구독자 모두의 알림이 바뀌는 일이라 밖으로 나가는 효과(C)로
   두고 늘 소유자의 확인을 받는다(confirm). 승인함에 붙잡혔다가 보류 시간 뒤에 켜진다.
 
@@ -112,11 +115,28 @@ def backtest_preview(
     return preview
 
 
+def existing_owner(db: Session, person_id: str | None, args: dict) -> str | None:
+    """있는 앱의 소유자만(켜기·미리 돌려 보기·예산). 없는 앱이면 막는다."""
+    why = owner_only(db, person_id, args)
+    if why is None and not app_registry.exists(db, str(args.get("app_id"))):
+        return f"없는 앱: {args.get('app_id')}. save_app으로 먼저 넣는다"
+    return why
+
+
+def readable(db: Session, person_id: str | None, args: dict) -> str | None:
+    """상태 보고: 운영자의 앱은 누구나(사람 수만 센 숫자다), 다른 앱은 소유자만."""
+    if args.get("app_id") in RESERVED:
+        return None
+    return existing_owner(db, person_id, args)
+
+
 def app_tools(
     factory: Callable[[], Session],
     *,
     preview: Preview | None = None,
     now: Callable[[], datetime] = _now,
+    snapshots: Path | None = None,
+    daily: int = 200_000,
 ) -> list[Tool]:
     def app_schema() -> dict:
         """앱 정의의 JSON 스키마. 이것을 보고 정의를 쓴 뒤 check_app으로 검사한다."""
@@ -211,8 +231,71 @@ def app_tools(
             s.commit()
         return {"enabled": f"{app_id}@{version}"}
 
+    def validate_status(args: dict) -> str | None:
+        days = args.get("days", 7)
+        if not isinstance(args.get("app_id"), str) or type(days) is not int or not 1 <= days <= 90:
+            return "app_id는 글자, days는 1~90의 정수다"
+        return None
+
+    def app_status(app_id: str, days: int = 7) -> dict:
+        """앱의 상태: 수집·형식 변화·파싱·붙잡힌 알림·예산을 숫자와 사람 말로."""
+        from datetime import timedelta, timezone
+
+        from noticedelta.app_status import app_status as status
+        from noticedelta.app_status import describe
+
+        with factory() as s:
+            app = app_registry.current(s, app_id) or (APP if app_id == APP.id else None)
+            if app is None:
+                return {"error": f"켠 판이 없는 앱: {app_id}"}
+            at = now()
+            kst = timezone(timedelta(hours=9))
+            today = at.astimezone(kst).replace(hour=0, minute=0, second=0, microsecond=0)
+            today = today.astimezone(UTC)  # 기록은 UTC로 적혀 있다(SQLite는 글자로 비교한다)
+            out = status(s, app, root=snapshots, since=at - timedelta(days=days),
+                         now=at, primary=APP.id, daily=daily, today=today)  # fmt: skip
+        return {**out, "summary": describe(out)}
+
+    def validate_budget(args: dict) -> str | None:
+        from noticedelta.budgets import others_cap
+
+        tokens, cap = args.get("daily_tokens"), others_cap(daily)
+        if not isinstance(args.get("app_id"), str) or type(tokens) is not int:
+            return "app_id는 글자, daily_tokens는 정수다"
+        if not 0 <= tokens <= cap:
+            return f"daily_tokens는 0~{cap:,}다(다른 앱들이 함께 쓰는 몫. 넓히려면 운영자에게)"
+        return None
+
+    def set_app_budget(app_id: str, daily_tokens: int, actor: str | None) -> dict:
+        """앱의 하루 LLM 토큰 한도를 정한다. 소유자의 확인을 받고 보류 시간 뒤에 바뀐다."""
+        with factory() as s:
+            if app_registry.OWNER not in app_registry.roles_of(s, app_id, _person(actor)):
+                raise PermissionError(f"{app_id}의 소유자가 아니다")
+            before = app_registry.set_daily_tokens(
+                s, app_id, daily_tokens, by=actor or "", at=now()
+            )
+            s.commit()
+        return {"app_id": app_id, "daily_tokens": daily_tokens, "before": before}
+
     return [
         Tool("app_schema", "앱 정의의 JSON 스키마를 준다.", app_schema),
+        Tool(
+            "app_status",
+            "앱의 상태(수집·형식 변화·파싱·붙잡힌 알림·예산)를 숫자와 사람 말 요약으로 준다.",
+            app_status,
+            authorize=readable,
+            validate=validate_status,
+        ),
+        Tool(
+            "set_app_budget",
+            "앱의 하루 LLM 토큰 한도를 정한다. 소유자의 확인을 받고 보류 시간 뒤에 바뀐다.",
+            set_app_budget,
+            frozenset({"C"}),
+            effect="external",
+            confirm=True,
+            authorize=existing_owner,
+            validate=validate_budget,
+        ),
         Tool(
             "check_app",
             "앱 정의를 검사만 한다. 문제마다 어디가·무엇이·어떻게 고치는지 준다. 아무것도 남기지 않는다.",
@@ -231,7 +314,7 @@ def app_tools(
             "preview_app",
             "초안 판으로 기록된 정정을 다시 흘려, 켠 판과 알림이 어떻게 달라지는지 준다(비용 0).",
             preview_app,
-            authorize=owner_only,
+            authorize=existing_owner,
             validate=validate_version,
         ),
         Tool(
@@ -241,7 +324,7 @@ def app_tools(
             frozenset({"C"}),
             effect="external",
             confirm=True,
-            authorize=owner_only,
+            authorize=existing_owner,
             validate=validate_version,
         ),
     ]
