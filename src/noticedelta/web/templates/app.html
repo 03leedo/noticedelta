@@ -14,10 +14,12 @@
   <label>바꾼 판 <select name="b">{% for v in versions %}<option value="{{ v.version }}" {% if v.version == b %}selected{% endif %}>{{ v.version }}</option>{% endfor %}</select></label>
   <button type="submit">다시 돌려 나란히 보기</button>
 </form>
+{% if note %}<p class="note" role="alert">{{ note }}</p>{% endif %}
 {% if changes is not none %}
 <h2>판 {{ a }} → {{ b }}에서 고친 것</h2>
 {% if not changes %}<p class="muted">판 번호 말고는 같습니다.</p>{% endif %}
-<ul>{% for path, before, after in changes %}<li><code>{{ path }}</code>: {{ before if before is not none else "(없음)" }} → {{ after if after is not none else "(없음)" }}</li>{% endfor %}</ul>
+<ul>{% for path, before, after in changes[:40] %}<li><code>{{ path }}</code>: {{ before if before is not none else "(없음)" }} → {{ after if after is not none else "(없음)" }}</li>{% endfor %}</ul>
+{% if changes | length > 40 %}<p class="muted">그 밖에 {{ changes | length - 40 }}곳을 더 고쳤습니다.</p>{% endif %}
 {% endif %}
 {% if result %}
 <h2>기록된 정정으로 다시 돌린 결과</h2>

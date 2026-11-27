@@ -346,6 +346,15 @@ class ToolGateway:
         self._observe(tool, args, result, None, started, hidden)
         return result
 
+    def available(self, db: Session, session_id: str) -> list[str]:
+        """이 세션이 쓸 수 있는 도구(플랫폼이 고른 것 ∩ 세션의 앱이 고른 것). MCP 목록이 쓴다."""
+        names = [n for n in self.tools if n in self.chosen]
+        s = db.get(AgentSessionRow, session_id)
+        if s is None or self.chosen_by_app is None:
+            return names
+        picked = self.chosen_by_app(db, s.app_id)
+        return names if picked is None else [n for n in names if n in picked]
+
     def _not_for_app(self, db: Session, s: AgentSessionRow, name: str) -> str | None:
         if self.chosen_by_app is None:
             return None

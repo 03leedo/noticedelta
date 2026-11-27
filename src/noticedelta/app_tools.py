@@ -152,6 +152,16 @@ def app_tools(
         """앱 정의의 JSON 스키마. 이것을 보고 정의를 쓴 뒤 check_app으로 검사한다."""
         return {"schema": AppDefinition.model_json_schema()}
 
+    def _unknown_tools(app: AppDefinition) -> dict | None:
+        """검증을 지난 정의의 agent.tools 가운데 이 플랫폼에 없는 도구(모양은 규격이 이미 봤다)."""
+        if known is None or app.agent is None:
+            return None
+        unknown = sorted(set(app.agent.tools) - set(known()))
+        if not unknown:
+            return None
+        return {"where": "agent.tools", "what": f"없는 도구: {unknown}",
+                "fix": f"쓸 수 있는 도구: {sorted(known())}"}  # fmt: skip
+
     def mine(actor: str | None) -> dict:
         """그 사람이 등록한 출처(앱 정의가 쓸 수 있다)."""
         person = _person(actor)
@@ -166,10 +176,8 @@ def app_tools(
         if isinstance(data, dict):  # 소유자 칸은 저장할 때 게이트웨이가 채운다
             data.setdefault("owner", "person:check")
         app, problems = _problems(data, mine(actor))
-        picked = (data.get("agent") or {}).get("tools") or [] if isinstance(data, dict) else []
-        if known is not None and (unknown := sorted(set(picked) - set(known()))):
-            problems.append({"where": "agent.tools", "what": f"없는 도구: {unknown}",
-                             "fix": f"쓸 수 있는 도구: {sorted(known())}"})  # fmt: skip
+        if app is not None and (bad := _unknown_tools(app)):
+            problems.append(bad)
             app = None
         return {"ok": app is not None, "problems": problems}
 
@@ -188,10 +196,9 @@ def app_tools(
             return why
         data = {**copy.deepcopy(args["definition"]), "owner": "person:check"}
         own = user_sources.sheets(db, owner=person_id) if person_id else {}
-        _, problems = _problems(data, own)
-        picked = (data.get("agent") or {}).get("tools") or []
-        if known is not None and (unknown := sorted(set(picked) - set(known()))):
-            problems.append({"where": "agent.tools", "what": f"없는 도구: {unknown}", "fix": ""})
+        app, problems = _problems(data, own)
+        if app is not None and (bad := _unknown_tools(app)):
+            problems.append(bad)
         if problems:
             shown = "; ".join(f"{p['where']}: {p['what']}" for p in problems[:3])
             return f"정의에 문제 {len(problems)}개(check_app으로 자세히): {shown}"

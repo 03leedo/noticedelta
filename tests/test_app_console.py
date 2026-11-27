@@ -59,18 +59,28 @@ def test_owner_sees_apps_and_two_versions_side_by_side(env):
     client, token, other_token, runs, _, _ = env
     page = client.get(f"/p/{token}/apps").text
     assert "my-watch" in page and "켠 판 1" in page and "판 2개" in page
-    cmp = client.get(f"/p/{token}/apps/my-watch").text  # 기본: 켠 판 대 가장 새 판
+    first = client.get(f"/p/{token}/apps/my-watch").text  # 열기만 해서는 돌리지 않는다
+    assert runs == [] and 'value="2" selected' in first  # 기본 선택: 켠 판 1 대 판 2
+    cmp = client.get(f"/p/{token}/apps/my-watch?a=1&b=2").text
     assert runs == [(2, 1)]
     assert "<code>title</code>" in cmp and "고친 지킴이" in cmp  # 무엇을 고쳤는지
     assert "새로 생긴 알림 3개" in cmp and "깨진 시험" in cmp
     assert client.get(f"/p/{other_token}/apps/my-watch").status_code == 404  # 남의 앱
     assert "내가 만든 앱이 없습니다" in client.get(f"/p/{other_token}/apps").text
+    assert "같은 판끼리는" in client.get(f"/p/{token}/apps/my-watch?a=1&b=1").text
+    assert "없는 판입니다" in client.get(f"/p/{token}/apps/my-watch?a=1&b=9").text
+    assert runs == [(2, 1)]  # 둘 다 돌리지 않았다
 
 
 def test_changed_paths_lists_what_differs():
-    a = {"version": 1, "alerts": {"rules": [1]}, "title": "a"}
-    b = {"version": 2, "alerts": {"rules": [1, 2]}, "title": "a", "agent": {"tools": ["x"]}}
-    assert changed_paths(a, b) == [("agent", None, {"tools": ["x"]}), ("alerts.rules", [1], [1, 2])]
+    a = {"version": 1, "alerts": {"rules": [1]}, "title": "a", "labels": {"version": "판"}}
+    b = {"version": 2, "alerts": {"rules": [1, 2]}, "title": "a", "agent": {"tools": ["x"]},
+         "labels": {"version": "버전"}}  # fmt: skip
+    assert changed_paths(a, b) == [
+        ("agent", None, {"tools": ["x"]}),
+        ("alerts.rules", [1], [1, 2]),
+        ("labels.version", "판", "버전"),  # 안쪽의 version은 판 번호가 아니다
+    ]
 
 
 def test_an_app_that_picks_tools_gets_only_those(env):
@@ -92,3 +102,10 @@ def test_an_app_that_picks_tools_gets_only_those(env):
         bad = definition(4, agent={"tools": ["rm_rf"]}).model_dump(mode="json", by_alias=True)
         out = gate.call(s, mine, "check_app", {"definition": bad}, now=T0)
         assert not out["ok"] and any("rm_rf" in p["what"] for p in out["problems"])
+        for odd in (["search_items"], "all", {"tools": [{"x": 1}]}):  # 모양이 틀려도 문제 목록으로
+            shaped = {**bad, "agent": odd}
+            out = gate.call(s, mine, "check_app", {"definition": shaped}, now=T0)
+            assert out["ok"] is False and out["problems"]
+        # MCP 목록도 그 앱이 고른 도구만 보인다
+        assert set(gate.available(s, sid)) == {"search_items", "check"}
+        assert "send_inquiry" in gate.available(s, mine)

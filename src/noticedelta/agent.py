@@ -115,10 +115,10 @@ def build_gateway(
         preview=preview,
         known=lambda: names,
     )
-    names.extend(t.name for t in tools)
+    names.extend(t.name for t in tools if chosen is None or t.name in chosen)  # 고를 수 있는 도구
     return ToolGateway(
         tools,
-        chosen=names if chosen is None else chosen,
+        chosen=list(names),
         cipher=cipher,
         observer=usage,
         chosen_by_app=picked_tools,
