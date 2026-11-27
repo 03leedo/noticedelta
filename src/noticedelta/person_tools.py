@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta.appspec import AppDefinition
+from noticedelta.db import repo
 from noticedelta.db.models import FieldValueRow, Item, ItemVersion, Notice, SegmentRow
 from noticedelta.eligibility import RuleGroup, derive_profile, eligibility_timeline, judge
 from noticedelta.tooling import Tool
@@ -71,10 +72,13 @@ def person_tools(
         if pv is None:
             return None
         rows = s.scalars(
-            sa.select(FieldValueRow)
-            .where(FieldValueRow.item_version_id == pv.id, FieldValueRow.app_id == app.id)
-            .order_by(FieldValueRow.app_version)  # 판을 바꿔 다시 계산했으면 새 판의 값이 덮는다
+            sa.select(FieldValueRow).where(
+                FieldValueRow.item_version_id == pv.id, FieldValueRow.app_id == app.id
+            )
         ).all()
+        rows = repo.for_version(
+            rows, app.version
+        )  # 앱의 여러 판 값이 있으면 켠 판의 것(파이프라인과 같게)
         return pv, {r.name: r for r in rows}
 
     def verdict(s: Session, item_id: str, profile: dict) -> dict:

@@ -125,6 +125,7 @@ ARCHITECTURE 7장 그대로다. A는 신뢰할 수 없는 입력(외부 문서, 
 | `verdict.changed` | 엔진 | `judgment` |
 | `alert.created` · `held` · `released` · `sent` · `corrected` · `superseded` · `discarded` | 알림 발송 | `outbox_alert.status` |
 | `app.version_enabled` | 앱 정의 | (앱 정의 2단계에서 생김) |
+| `app.version_switched` | 판 바꾸기(다시 계산 뒤) | 사람 수·바뀐 수만(누구인지 없음) |
 | `consent.granted`, `consent.withdrawn` | 금고 | `profile`의 동의 칸 |
 | `action.requested` · `held` · `approved` · `committed` · `discarded` · `blocked` | 게이트웨이 | 없음 |
 
@@ -147,7 +148,8 @@ ARCHITECTURE 7장 그대로다. A는 신뢰할 수 없는 입력(외부 문서, 
 | `alert.superseded` · `discarded` · 대량 영향 `held` · `released` · `sent` · `corrected` | 알림 발송(`notify`) |
 | `source.drift_held`, `source.drift_decided` | 형식 변화 감시(`drift`) |
 | `app.version_enabled` | 앱 정의(`app_registry.enable`) |
-| `consent.granted`, `consent.withdrawn` | 동의(`web/consent`) |
+| `app.version_switched` | 판 바꾸기 요약 작업(`pipeline.handle_switch`, 2026-11-27) |
+| `consent.granted`, `consent.withdrawn` | 동의(`web/consent`, 관리자 동의는 `managers`) |
 
 - **추적**: 작업 본문에 `trace`(묶음)와 `cause`(원인 봉투)를 실어 다음 작업으로 넘긴다. 수집 실행 하나가 묶음이 되고, 보낸 알림에서 원인을 거꾸로 따라가면 `alert.sent ← alert.created ← verdict.changed ← change.detected ← document.parsed ← document.version_created ← source.run_finished`로 끊기지 않는다(`tests/test_events.py`).
 - **구독**: 코드에 둔다(`events.subscribe`). 9장의 "작업 큐로 할까"를 작업 큐로 정했다. 첫 구독은 알림 발송이다. 영향 계산이 알림 발송 작업을 직접 넣던 것을 `alert.created` 구독으로 바꿨다(항목 판 하나에 한 번).

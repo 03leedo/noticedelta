@@ -263,9 +263,12 @@ def app_tools(
     def validate_version(args: dict) -> str | None:
         if not isinstance(args.get("app_id"), str) or type(args.get("version")) is not int:
             return "app_id는 글자, version은 정수다"
+        return None
+
+    def validate_enable(args: dict) -> str | None:
         if args.get("on_switch", "silent") not in ("silent", "summary"):
             return "on_switch는 silent(조용히 반영) 또는 summary(사람마다 한 번 요약)다"
-        return None
+        return validate_version(args)
 
     def enable_app(app_id: str, version: int, actor: str | None, on_switch: str = "silent") -> dict:
         """판을 켠다. 소유자의 확인을 받고 보류 시간이 지나야 켜진다. 켜면 구독자가 있는 사업을 새 판으로
@@ -377,6 +380,6 @@ def app_tools(
             effect="external",
             confirm=True,
             authorize=existing_owner,
-            validate=validate_version,
+            validate=validate_enable,
         ),
     ]

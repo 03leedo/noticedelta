@@ -188,6 +188,14 @@ def test_enabling_a_new_version_starts_a_rebase_and_validates_the_mode(env):
     assert enable(2, on_switch="summary")["on_switch"] == "summary"
     with factory() as s:
         jobs = s.scalars(sa.select(models.Job).where(models.Job.kind == "switch")).all()
-        assert [j.payload for j in jobs] == [
-            {"app": "my-deadlines", "version": 2, "mode": "summary"}
-        ]
+        [job] = jobs
+        assert (job.payload["app"], job.payload["version"], job.payload["mode"]) == (
+            "my-deadlines",
+            2,
+            "summary",
+        )
+        assert job.payload["stamp"] and job.payload["since"]  # 켤 때마다 다른 묶음
+    out = call(
+        factory, gate, sid, "preview_app", app_id="my-deadlines", version=2, on_switch="summary"
+    )
+    assert "error" in out  # 미리 돌려 보기는 on_switch를 받지 않는다(TypeError 대신 이유)

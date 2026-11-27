@@ -531,20 +531,16 @@ def _enqueue_impact(
     )
 
 
-def _newest(rows: list[FieldValueRow]) -> list[FieldValueRow]:
-    """한 판에 앱의 여러 판 값이 있으면(판 바꾸기로 다시 계산했다) 가장 새 앱 판의 것만."""
-    top = max((r.app_version for r in rows), default=None)
-    return [r for r in rows if r.app_version == top]
-
-
-def _load_fields(session: Session, pv_id: str, app_id: str) -> dict[str, FieldValue]:
-    rows = _newest(
-        session.scalars(
-            sa.select(FieldValueRow).where(
-                FieldValueRow.item_version_id == pv_id, FieldValueRow.app_id == app_id
-            )
-        ).all()
-    )
+def _load_fields(
+    session: Session, pv_id: str, app_id: str, version: int | None = None
+) -> dict[str, FieldValue]:
+    """그 판의 앱 필드 값. 앱의 여러 판 값이 있으면 켜져 있는 판(version)의 것(repo.for_version)."""
+    rows = session.scalars(
+        sa.select(FieldValueRow).where(
+            FieldValueRow.item_version_id == pv_id, FieldValueRow.app_id == app_id
+        )
+    ).all()
+    rows = repo.for_version(rows, version) if version is not None else rows
     return {
         r.name: FieldValue(r.name, r.value_type, r.value, list(r.source_lineage_ids), r.confidence)
         for r in rows
@@ -583,15 +579,16 @@ def _save_fields(
         )
 
 
-def _carry_fields(session: Session, from_pv_id: str, pv: ItemVersion, app_id: str) -> None:
+def _carry_fields(
+    session: Session, from_pv_id: str, pv: ItemVersion, app_id: str, version: int | None = None
+) -> None:
     """앞 판의 필드 값을 상태(확인 필요·stale 포함)까지 그대로 이 판으로 옮긴다."""
-    rows = _newest(
-        session.scalars(
-            sa.select(FieldValueRow).where(
-                FieldValueRow.item_version_id == from_pv_id, FieldValueRow.app_id == app_id
-            )
-        ).all()
-    )
+    rows = session.scalars(
+        sa.select(FieldValueRow).where(
+            FieldValueRow.item_version_id == from_pv_id, FieldValueRow.app_id == app_id
+        )
+    ).all()
+    rows = repo.for_version(rows, version) if version is not None else rows
     skip = {"id", "item_version_id", "created_at"}
     for r in rows:
         cols = {
@@ -612,8 +609,31 @@ def _latest_judgments(session: Session, item_id: str, app_id: str) -> dict[str, 
 # --- 판 바꾸기 (app-spec 7·9장): 새 판을 켜면 지금 상태를 새 판으로 다시 계산한다 ---
 
 
-def _rebase_key(pv_id: str, app_id: str, version: int) -> str:
-    return f"{_impact_key(pv_id, app_id)}:rebase@{version}"
+def _rebase_prefix(app_id: str, version: int, stamp: str) -> str:
+    """켤 때마다 다른 묶음(같은 판을 다시 켜도 다시 계산한다). 주 앱도 이름을 붙인다."""
+    return f"rebase:{app_id}@{version}:{stamp}:"
+
+
+def _latest_changed_pv(session: Session, item_id: str) -> str | None:
+    return session.scalar(
+        sa.select(ItemVersion.id)
+        .join(ChangeEvent, ChangeEvent.to_version_id == ItemVersion.id)
+        .where(ItemVersion.item_id == item_id)
+        .order_by(ItemVersion.version_no.desc())
+        .limit(1)
+    )
+
+
+def _enqueue_rebase_item(session, app_id, version, stamp, item_id, pv_id, now) -> Job | None:
+    return enqueue(
+        session,
+        IMPACT,
+        {"item_version_id": pv_id, "app": app_id, "rebase": version, "stamp": stamp},
+        dedupe_key=_rebase_prefix(app_id, version, stamp) + pv_id,
+        concurrency_key=f"item:{item_id}",
+        priority=70,
+        now=now,
+    )
 
 
 def enqueue_rebase(
@@ -626,47 +646,56 @@ def enqueue_rebase(
     """
     if mode not in SWITCH_MODES:
         raise ValueError(f"판 바꾸기 알림은 {SWITCH_MODES} 가운데 하나다")
+    at = now or _utcnow()
+    stamp = at.strftime("%Y%m%dT%H%M%S%f")
     items = session.scalars(
         sa.select(SubscriptionRow.item_id).where(SubscriptionRow.app_id == app_id).distinct()
     ).all()
     n = 0
     for item_id in items:
-        pv_id = session.scalar(
-            sa.select(ItemVersion.id)
-            .join(ChangeEvent, ChangeEvent.to_version_id == ItemVersion.id)
-            .where(ItemVersion.item_id == item_id)
-            .order_by(ItemVersion.version_no.desc())
-            .limit(1)
-        )
-        if pv_id is None:
-            continue
-        job = enqueue(
-            session,
-            IMPACT,
-            {"item_version_id": pv_id, "app": app_id, "rebase": version},
-            dedupe_key=_rebase_key(pv_id, app_id, version),
-            concurrency_key=f"item:{item_id}",
-            priority=70,
-            now=now,
-        )
-        n += job is not None
+        pv_id = _latest_changed_pv(session, item_id)
+        if pv_id is not None:
+            n += (
+                _enqueue_rebase_item(session, app_id, version, stamp, item_id, pv_id, now)
+                is not None
+            )
     enqueue(
         session,
         SWITCH,
-        {"app": app_id, "version": version, "mode": mode},
-        dedupe_key=f"{SWITCH}:{app_id}@{version}",
+        {"app": app_id, "version": version, "mode": mode, "stamp": stamp, "since": at.isoformat()},
+        dedupe_key=f"{SWITCH}:{app_id}@{version}:{stamp}",
         priority=80,
         now=now,
     )
     return n
 
 
+def _enabled_version(session: Session, ctx: Context) -> int:
+    """등록부에서 지금 켜져 있는 판(워커가 들고 있는 정의보다 새로울 수 있다)."""
+    current = app_registry.current(session, ctx.app.id)
+    return current.version if current is not None else ctx.app.version
+
+
 def _rebase(ctx: Context, session: Session, job: Job, pv: ItemVersion, step, meta) -> None:
     """사업 하나의 가장 새 판을 지금 앱 판으로 처음부터 다시 뽑고 판정한다. 알림은 내지 않는다."""
-    version = int(job.payload["rebase"])
+    version, stamp = int(job.payload["rebase"]), job.payload.get("stamp", "")
+    enabled = _enabled_version(session, ctx)
+    if enabled != version:
+        return  # 그 사이 다른 판을 켰다: 그 판의 다시 계산이 맡는다
     if ctx.app.version != version:
-        # 이 워커가 아직 옛 판을 들고 있다(도는 중에 켜졌다). 다음 실행에서 새 판으로 한다
+        # 이 워커가 아직 옛 정의를 들고 있다(도는 중에 켜졌다). 다음 실행에서 새 판으로 한다
         raise Deferred(f"앱 {ctx.app.id}의 판 {version}을 아직 모른다", delay=timedelta(minutes=10))
+    latest = _latest_changed_pv(session, pv.item_id)
+    if latest is not None and latest != pv.id:
+        # 그 사이 새 판이 왔다: 가장 새 판을 다시 계산한다(옛 판의 판정이 새 판정을 덮지 않게)
+        _enqueue_rebase_item(session, ctx.app.id, version, stamp, pv.item_id, latest, ctx.now())
+        return
+    normal = session.scalar(
+        sa.select(Job.status).where(Job.dedupe_key == _impact_key(pv.id, ctx.app.id))
+    )
+    if normal is not None and normal not in ("done", "dead"):
+        # 이 판의 보통 영향 계산이 아직이다: 그것이 끝난 뒤에 덮어야 정정 알림이 섞이지 않는다
+        raise Deferred("이 판의 영향 계산이 아직 안 끝남", delay=timedelta(minutes=10))
     wanted = set(ctx.app.value_types()) - set(meta)
     fields = ctx.extractor(wanted, step.change.segments) if wanted else {}
     session.execute(
@@ -692,13 +721,13 @@ def _rebase(ctx: Context, session: Session, job: Job, pv: ItemVersion, step, met
         now=ctx.now(), keys=ctx.app.subjects.attributes,
     )  # fmt: skip
     for person_id, attrs in profiles.items():
+        # 판정 표의 유일 키는 (사람, 사업, 판, 규칙 해시)다: 같은 규칙이면 앞 판정이 그대로 맞다
         exists = session.scalar(
             sa.select(JudgmentRow.id).where(
                 JudgmentRow.person_id == person_id,
                 JudgmentRow.item_id == pv.item_id,
                 JudgmentRow.item_version_id == pv.id,
                 JudgmentRow.ruleset_hash == h,
-                JudgmentRow.app_version == version,
             )
         )
         if exists is not None:
@@ -722,22 +751,27 @@ def _rebase(ctx: Context, session: Session, job: Job, pv: ItemVersion, step, met
 def handle_switch(root: Context) -> Handler:
     def handle(session: Session, job: Job) -> None:
         app_id, version, mode = job.payload["app"], int(job.payload["version"]), job.payload["mode"]
-        waiting = session.scalar(
-            sa.select(sa.func.count()).where(
-                Job.kind == IMPACT,
-                Job.dedupe_key.like(f"%:{app_id}:rebase@{version}"),
-                Job.status.not_in(("done", "dead")),
+        stamp = job.payload.get("stamp", "")
+        ctx = root.for_app(app_id, session)
+        if _enabled_version(session, ctx) != version:
+            return  # 그 사이 다른 판을 켰다: 그 판의 요약이 맡는다
+        prefix = _rebase_prefix(app_id, version, stamp)
+        jobs = session.scalars(
+            sa.select(Job).where(
+                Job.kind == IMPACT, Job.dedupe_key.startswith(prefix, autoescape=True)
             )
-        )
+        ).all()
+        waiting = sum(1 for j in jobs if j.status not in ("done", "dead"))
         if waiting:
             raise Deferred(f"다시 계산 {waiting}개가 남았다", delay=timedelta(minutes=10))
-        changed = _switch_changes(session, app_id, version)
+        rebased = {j.payload["item_version_id"] for j in jobs if j.status == "done"}
+        since = datetime.fromisoformat(job.payload["since"]) if job.payload.get("since") else None
+        changed = _switch_changes(session, app_id, version, rebased, since)
         if mode == "summary":
-            ctx = root.for_app(app_id, session)
             for person_id, items in changed.items():
                 text = f"자격 기준이 바뀌어 {len(items)}개 사업의 결과가 달라졌습니다. 내 지원사업 화면에서 확인하세요."
                 alert = OutboxAlert(
-                    idempotency_key=f"{app_id}:{person_id}:switch@{version}",
+                    idempotency_key=f"{app_id}:{person_id}:switch@{version}:{stamp}",
                     person_id=person_id,
                     item_id=SWITCH_ITEM,
                     payload={
@@ -753,7 +787,8 @@ def handle_switch(root: Context) -> Handler:
                 )
                 with session.begin_nested():
                     session.add(alert)
-            deliver(session, ctx.channel, now=ctx.now, labels=ctx.labels, app_id=app_id)
+            deliver(session, ctx.channel, item_id=SWITCH_ITEM, now=ctx.now, labels=ctx.labels,
+                    app_id=app_id)  # fmt: skip
         emit(
             session,
             "app.version_switched",
@@ -765,22 +800,43 @@ def handle_switch(root: Context) -> Handler:
                 "changes": sum(len(v) for v in changed.values()),
             },  # fmt: skip
             producer="svc:engine",
-            key=f"{app_id}@{version}:switched",
+            key=f"{app_id}@{version}:{stamp}:switched",
             now=root.now(),
         )
 
     return handle
 
 
-def _switch_changes(session: Session, app_id: str, version: int) -> dict[str, set[str]]:
-    """새 판으로 다시 판정한 결과가 앞 판의 마지막 판정과 다른 (사람 → 사업들)."""
+def _aware_utc(t: datetime) -> datetime:
+    return t.replace(tzinfo=UTC) if t.tzinfo is None else t
+
+
+def _switch_changes(
+    session: Session, app_id: str, version: int, rebased: set[str], since: datetime | None
+) -> dict[str, set[str]]:
+    """이번 다시 계산이 만든 판정이 켜기 전의 마지막 판정과 다른 (사람 → 사업들).
+
+    다시 계산한 판(rebased)의 새 앱 판 판정만 '뒤'로 센다. 켠 뒤에 보통 파이프라인이 낸 판정(이미 정정
+    알림이 나간 것)은 세지 않는다. '앞'은 켜기 전(since)의 마지막 판정이다.
+    """
+    if not rebased:
+        return {}
+    items = set(
+        session.scalars(sa.select(ItemVersion.item_id).where(ItemVersion.id.in_(rebased))).all()
+    )
     rows = session.scalars(
-        sa.select(JudgmentRow).where(JudgmentRow.app_id == app_id).order_by(JudgmentRow.created_at)
+        sa.select(JudgmentRow)
+        .where(JudgmentRow.app_id == app_id, JudgmentRow.item_id.in_(items))
+        .order_by(JudgmentRow.created_at)
     ).all()
     before: dict[tuple[str, str], str] = {}
     after: dict[tuple[str, str], str] = {}
     for r in rows:  # 뒤의 것이 앞의 것을 덮는다
-        (after if r.app_version == version else before)[(r.person_id, r.item_id)] = r.result
+        key = (r.person_id, r.item_id)
+        if r.item_version_id in rebased and r.app_version == version:
+            after[key] = r.result
+        elif since is None or _aware_utc(r.created_at) < _aware_utc(since):
+            before[key] = r.result
     out: dict[str, set[str]] = {}
     for key, result in after.items():
         if key in before and before[key] != result:
@@ -836,8 +892,9 @@ def _impact_handler(ctx: Context, *, seed: bool = True) -> Handler:
         if not _for_app(ctx.app, event):
             # 이 앱이 읽지 않는 것만 바뀌었다. 다음 판이 이어 받도록 값만 옮긴다(LLM·알림 없음)
             # 다만 출처 값 필드는 읽는 키 밖(예: 제목의 [마감], 접수 기간)에서 바뀔 수 있어 따로 본다
-            if not _meta_changed(_load_fields(session, step.from_version.id, ctx.app.id), meta):
-                _carry_fields(session, step.from_version.id, pv, ctx.app.id)
+            v = ctx.app.version
+            if not _meta_changed(_load_fields(session, step.from_version.id, ctx.app.id, v), meta):
+                _carry_fields(session, step.from_version.id, pv, ctx.app.id, v)
                 return
             # 출처 값만 비교한다: 조각 변경은 비워 LLM을 부르지 않는다
             change = replace(change, added=[], removed=[], modified=[])
@@ -877,7 +934,7 @@ def _impact_handler(ctx: Context, *, seed: bool = True) -> Handler:
             item_id=item_id,
             to_version_id=pv.id,
             change=change,
-            old_fields=_load_fields(session, step.from_version.id, ctx.app.id),
+            old_fields=_load_fields(session, step.from_version.id, ctx.app.id, ctx.app.version),
             extractor=ctx.extractor,
             subscriptions=subs,
             profiles=profiles,

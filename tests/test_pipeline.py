@@ -607,3 +607,89 @@ def test_switching_a_version_rejudges_quietly_and_summarises_once(env, mode):
     else:
         assert alerts == []
     assert switched.payload["people"] == 1 and switched.payload["changes"] == 1
+
+
+def test_switching_back_and_forth_uses_the_enabled_version_and_recomputes_each_time(env):
+    """v1 → v2 → v1 → v2: 켠 판의 값을 쓰고, 다시 켤 때마다 다시 계산한다. 같은 규칙이면 판정을 다시 쓰지 않는다."""
+    from noticedelta import app_registry
+    from noticedelta.pipeline import _load_fields, enqueue_rebase
+
+    v1 = other_app()
+    v2 = v1.model_copy(update={"version": 2})
+    env.ctx.extractor, env.ctx.extra_apps = RulesFromText(), (v1,)
+    env.ctx.extractor_for = lambda app: StricterRules() if app.version == 2 else RulesFromText()
+    env.ctx.vault = vault.load_cipher()
+    with env.factory() as s:
+        app_registry.register(s, v1, at=datetime(2026, 10, 1, tzinfo=UTC))
+        app_registry.enable(s, v1.id, 1, at=datetime(2026, 10, 1, tzinfo=UTC))
+        app_registry.register(s, v2, at=datetime(2026, 10, 1, tzinfo=UTC))
+        s.commit()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    subscribe(env, "u2", "rules-watch", 72)
+
+    def switch(app, mode="silent"):
+        env.clock.t += timedelta(minutes=1)
+        with env.factory() as s:
+            app_registry.enable(s, app.id, app.version, at=env.clock())
+            enqueue_rebase(s, app.id, app.version, mode, env.clock())
+            s.commit()
+        env.ctx.extra_apps, env.ctx._per_app = (app,), {}
+        env.work()
+        env.clock.t += timedelta(minutes=15)
+        env.work()
+
+    def rule_value():
+        with env.factory() as s:
+            pv = s.scalars(sa.select(models.ItemVersion)).one()
+            current = app_registry.current(s, "rules-watch").version
+            fields = _load_fields(s, pv.id, "rules-watch", current)
+            return fields["eligibility_rules"].value["rules"][0]["value"]
+
+    switch(v2)
+    assert rule_value() == 42
+    switch(v1)  # 되돌리기: 가장 큰 판 번호(2)가 아니라 켠 판(1)의 값
+    assert rule_value() == 84
+    switch(v2)  # 다시 켜도 다시 계산한다(켤 때마다 다른 묶음)
+    assert rule_value() == 42
+    with env.factory() as s:
+        dead = s.scalars(sa.select(models.Job).where(models.Job.status == "dead")).all()
+        events = s.scalars(
+            sa.select(models.EventRow).where(models.EventRow.type == "app.version_switched")
+        ).all()
+    assert dead == [] and len(events) == 3  # 같은 규칙의 판정을 다시 써도 유일 키에 걸리지 않는다
+
+
+def test_a_superseded_switch_ends_instead_of_deferring_forever(env):
+    from noticedelta import app_registry
+    from noticedelta.pipeline import enqueue_rebase
+
+    v1 = other_app()
+    v2, v3 = v1.model_copy(update={"version": 2}), v1.model_copy(update={"version": 3})
+    env.ctx.extractor, env.ctx.extra_apps = RulesFromText(), (v1,)
+    env.ctx.extractor_for = lambda app: RulesFromText()
+    env.ctx.vault = vault.load_cipher()
+    with env.factory() as s:
+        for v in (v1, v2, v3):
+            app_registry.register(s, v, at=datetime(2026, 10, 1, tzinfo=UTC))
+        app_registry.enable(s, v1.id, 1, at=datetime(2026, 10, 1, tzinfo=UTC))
+        s.commit()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    subscribe(env, "u2", "rules-watch", 72)
+    with env.factory() as s:
+        app_registry.enable(s, v1.id, 2, at=env.clock())
+        enqueue_rebase(s, v1.id, 2, "summary", env.clock())
+        env.clock.t += timedelta(seconds=1)
+        app_registry.enable(s, v1.id, 3, at=env.clock())  # 다시 계산이 돌기 전에 판 3을 켰다
+        enqueue_rebase(s, v1.id, 3, "summary", env.clock())
+        s.commit()
+    env.ctx.extra_apps, env.ctx._per_app = (v3,), {}
+    env.work()
+    env.clock.t += timedelta(minutes=15)
+    env.work()
+    with env.factory() as s:
+        pending = s.scalars(
+            sa.select(models.Job).where(models.Job.status.not_in(("done", "dead")))
+        ).all()
+    assert pending == []  # 판 2의 작업은 끝났다(미루기를 되풀이하지 않는다)
