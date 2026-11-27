@@ -326,9 +326,9 @@ class AccessLink(Base):
 
 
 class Profile(Base):
-    """지원사업 앱의 자격 속성. 금고 단계에서 vault_value로 옮긴다(platform-services 4.7).
+    """사람의 동의 기록(문구 판·시각·선택 동의). 값은 금고(vault_value)에 있다(platform-services 4.7).
 
-    person_id는 person.id다. 외래 키는 SQLite에서 표를 새로 만들어야 달 수 있어 금고로 옮길 때 단다.
+    person_id는 person.id다. 구독·판정은 프로필이 아니라 사람을 가리킨다(마이그레이션 0019).
     """
 
     __tablename__ = "profile"

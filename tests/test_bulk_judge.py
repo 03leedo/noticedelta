@@ -116,6 +116,10 @@ def test_bulk_judge_matches_judge_with_messy_profiles(pg_session):
     seed_program(s)
     profiles = virtual_profiles(1500, seed=3, messy=0.3)
     s.add_all(
+        models.Person(id=p["person_id"]) for p in profiles
+    )  # 판정의 외래 키가 사람을 가리킨다
+    s.flush()
+    s.add_all(
         models.Profile(
             person_id=p["person_id"], attributes={k: v for k, v in p.items() if k != "person_id"}
         )

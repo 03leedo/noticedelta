@@ -1,6 +1,6 @@
 """보관 기한 정리 (noticedelta/retention.py): 기한이 지난 금고 값, 오래된 허가, 끝난 효과의 인자를 지운다.
 
-    uv run python scripts/retention.py              # 무엇을 지울지 세기만 한다(아무것도 바꾸지 않는다)
+    uv run python scripts/retention.py              # 무엇을 지울지 세기만 한다(DB를 마이그레이션하지도 않는다)
     uv run python scripts/retention.py --apply      # 지운다
     uv run python scripts/retention.py --apply --end-beta   # 베타가 끝났으면(KEEP_UNTIL이 지났으면) 모두
 
@@ -14,7 +14,10 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-from noticedelta.config import load_env, open_db  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from noticedelta.config import database_url, load_env, open_db  # noqa: E402
+from noticedelta.db import make_engine  # noqa: E402
 from noticedelta.retention import purge  # noqa: E402
 from noticedelta.web.consent import KEEP_UNTIL  # noqa: E402
 
@@ -25,7 +28,8 @@ def main() -> None:
     ap.add_argument("--end-beta", action="store_true", help="베타가 끝났으면 사람의 정보도 모두")
     args = ap.parse_args()
     load_env()
-    _, factory = open_db()
+    # 세기만 할 때는 마이그레이션 없이 연다(머지 전 브랜치에서 돌려도 운영 DB의 스키마를 바꾸지 않게)
+    factory = open_db()[1] if args.apply else sessionmaker(make_engine(database_url()))
     with factory() as s:
         p = purge(s, now=datetime.now(UTC), beta_ends=date.fromisoformat(KEEP_UNTIL),
                   end_beta=args.end_beta)  # fmt: skip

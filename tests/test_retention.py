@@ -69,3 +69,34 @@ def test_beta_end_removes_everyone_only_after_the_date(db):
     assert vault.keys_of(db, a) == set() and vault.keys_of(db, b) == set()
     assert db.get(models.Person, a).deleted_at is not None  # 사람 ID는 가명으로 남는다
     assert purge(db, now=datetime(2027, 4, 2, tzinfo=UTC), beta_ends=ends).people == 0
+
+
+def test_undo_info_survives_and_age_counts_from_the_end(db):
+    board = []
+    tick = Tool("tick", "체크", lambda step: board.append(step) or {"undo": {"step": step}},
+                effect="internal", undo=lambda step: board.remove(step))  # fmt: skip
+    gate = ToolGateway([tick], chosen=["tick"])
+    sid = gate.open_session(db, app_id="a", agent="x", person_id=None, now=T0).id
+    kept = gate.call(db, sid, "tick", {"step": "a"}, now=T0)["action"]["id"]
+    late = gate.call(db, sid, "tick", {"step": "b"}, now=T0)["action"]["id"]
+    gate.undo(db, late, by="person:p", now=T0 + timedelta(days=29))  # 요청은 오래전, 끝난 건 어제
+    purge(db, now=T0 + timedelta(days=31))
+    db.commit()
+    a, b = db.get(models.ToolActionRow, kept), db.get(models.ToolActionRow, late)
+    assert a.arguments == {} and a.undo == {"step": "a"}  # 반영된 효과는 여전히 되돌릴 수 있다
+    assert b.arguments == {"step": "b"}  # 끝난 지 2일이라 아직 남긴다
+    gate.undo(db, kept, by="person:p", now=T0 + timedelta(days=31))
+    assert board == []
+
+
+def test_beta_end_also_reaches_people_without_a_profile(db):
+    cipher = vault.Cipher(vault.Cipher.new_key())
+    pid = person(db, cipher)
+    db.delete(db.get(models.Profile, pid))  # 프로필만 먼저 지워졌다
+    db.flush()
+    p = purge(db, now=datetime(2027, 4, 1, 1, tzinfo=UTC), beta_ends=date(2027, 3, 31),
+              end_beta=True)  # fmt: skip
+    db.commit()
+    assert p.people == 1 and vault.keys_of(db, pid) == set()
+    assert db.get(models.Person, pid).deleted_at is not None
+    assert db.scalar(sa.select(sa.func.count()).select_from(models.AccessLink)) == 0

@@ -7,7 +7,7 @@
 - 금고의 허가: 만료되거나 철회된 지 KEEP_GRANTS(30일)가 지난 것을 지운다. 접근 기록(vault_access)은
   남긴다(누가 언제 무엇을 꺼냈는지는 감사 기록이다. 값은 들어 있지 않다).
 - 에이전트 효과: 끝난 지 KEEP_ACTIONS(30일)가 지난 효과의 인자·결과(본문에 넣은 내 정보 등)를 지운다.
-  행과 상태는 남긴다(RQ6의 숫자가 이것으로 나온다).
+  행과 상태는 남긴다(RQ6의 숫자가 이것으로 나온다). 반영된 internal 효과의 되돌리기 정보는 남긴다.
 - 베타가 끝나면(end_beta, 그날이 지난 뒤에만): 모든 사람의 구독·판정·알림·프로필·금고 값을 지우고 링크를
   끊는다. 사람 ID는 가명으로 남는다(동의 철회 기록과 감사 기록이 가리킨다).
 
@@ -17,15 +17,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta import people
+from noticedelta import people, vault
 from noticedelta.db.models import (
     AgentSessionRow,
+    JudgmentRow,
+    OutboxAlert,
+    Person,
     Profile,
+    SubscriptionRow,
     ToolActionRow,
     VaultGrantRow,
     VaultValueRow,
@@ -68,32 +72,57 @@ def purge(
         )
     ).rowcount
     stale = now - keep_actions
-    rows = session.execute(
-        sa.select(ToolActionRow.id, ToolActionRow.arguments, ToolActionRow.result).where(
+    for a in session.scalars(
+        sa.select(ToolActionRow).where(
             ToolActionRow.status.in_(FINISHED), ToolActionRow.requested_at <= stale
         )
-    ).all()
-    ids = [i for i, args, result in rows if args or result]  # 이미 지운 것은 건너뛴다
-    if ids:
-        out.actions = session.execute(
-            sa.update(ToolActionRow)
-            .where(ToolActionRow.id.in_(ids))
-            .values(arguments={}, result=None, undo=None)
-            .execution_options(synchronize_session=False)
-        ).rowcount
+    ):
+        # 끝난 시각으로 센다(요청한 지 오래돼도 끝난 지 얼마 안 됐으면 남긴다)
+        ended = a.undone_at or a.committed_at or a.decided_at or a.requested_at
+        if _aware(ended) > stale or not (a.arguments or a.result):
+            continue  # 아직이거나 이미 지웠다
+        a.arguments, a.result = {}, None
+        if a.status != "committed":  # 반영된 internal 효과는 되돌릴 수 있게 undo를 남긴다
+            a.undo = None
+        out.actions += 1
     if end_beta and beta_ends is not None and now.date() > beta_ends:
         gate = ToolGateway([], chosen=[])  # 세션을 닫고 효과의 인자를 지우는 데만 쓴다
-        for person_id in session.scalars(sa.select(Profile.person_id)).all():
-            gate.forget_person(session, person_id, now=now)
-            consent.delete_user(session, person_id, at=now)
-            people.forget(session, person_id, at=now)
-            out.people += 1
-        # 프로필이 없는 사람의 에이전트 세션도 닫는다
-        for (pid,) in session.execute(
-            sa.select(AgentSessionRow.person_id)
-            .where(AgentSessionRow.person_id.is_not(None), AgentSessionRow.status == "open")
-            .distinct()
-        ).all():
-            gate.forget_person(session, pid, now=now)
+        for person_id in sorted(_everyone(session)):
+            out.people += _erase(session, gate, person_id, now)
     session.flush()
     return out
+
+
+def _aware(t: datetime) -> datetime:
+    return t.replace(tzinfo=UTC) if t.tzinfo is None else t
+
+
+def _everyone(session: Session) -> set[str]:
+    """정보가 남아 있을 수 있는 모든 사람: 지우지 않은 사람, 그리고 프로필·금고·구독·판정·세션이
+    가리키는 사람(프로필 없이 남은 것도 빠뜨리지 않게)."""
+    ids = set(session.scalars(sa.select(Person.id).where(Person.deleted_at.is_(None))).all())
+    for col in (
+        Profile.person_id,
+        VaultValueRow.person_id,
+        SubscriptionRow.person_id,
+        JudgmentRow.person_id,
+        AgentSessionRow.person_id,
+    ):
+        ids |= {i for i in session.scalars(sa.select(col).distinct()).all() if i}
+    return ids
+
+
+def _erase(session: Session, gate: ToolGateway, person_id: str, now: datetime) -> int:
+    """한 사람의 정보를 지운다. 실제로 지운 것이 있으면 1."""
+    did = gate.forget_person(session, person_id, now=now) > 0
+    if not consent.delete_user(session, person_id, at=now):  # 프로필이 없어도 남은 것을 지운다
+        for model in (SubscriptionRow, JudgmentRow, OutboxAlert):
+            did |= (
+                session.execute(sa.delete(model).where(model.person_id == person_id)).rowcount > 0
+            )
+        did |= bool(vault.keys_of(session, person_id))
+        vault.erase(session, person_id, now=now)
+    else:
+        did = True
+    did |= people.forget(session, person_id, at=now)
+    return int(did)

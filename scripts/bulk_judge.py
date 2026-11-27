@@ -57,12 +57,12 @@ def setup(url: str, n: int) -> sa.Engine:
                     )
                 )
         s.flush()
+        profiles = virtual_profiles(n, seed=42)
+        # 판정의 외래 키가 사람(person)을 가리킨다(0019): 가상 프로필마다 사람 행도 둔다
+        s.execute(sa.insert(models.Person), [{"id": p["person_id"]} for p in profiles])
         s.execute(
             sa.insert(models.Profile),
-            [
-                {"person_id": p.pop("person_id"), "attributes": p}
-                for p in virtual_profiles(n, seed=42)
-            ],
+            [{"person_id": p.pop("person_id"), "attributes": p} for p in profiles],
         )
         s.commit()
     return engine
