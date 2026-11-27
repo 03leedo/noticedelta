@@ -114,3 +114,53 @@ def test_budget_tool_needs_the_owner_and_a_confirmation(factory):
         assert "blocked" in gate.call(s, p2, "app_status", {"app_id": "mine"}, now=T0)
         assert "없는 앱" in gate.call(s, p1, "set_app_budget", {"app_id": "nope", "daily_tokens": 1},
                                      now=T0)["blocked"]["reason"]  # fmt: skip
+
+
+def test_other_apps_share_a_pool_and_cannot_eat_the_primary_share(factory):
+    from noticedelta.appspec import AppDefinition
+
+    mine = AppDefinition.model_validate(other()[1])
+    theirs = AppDefinition.model_validate(other("theirs")[1])
+    with factory() as s:
+        app_registry.set_daily_tokens(s, "mine", 150_000, by="person:p1", at=T0)  # 크게 정해도
+        assert budgets.cap_of(s, "mine", primary=APP.id, daily=200_000) == 60_000  # 공동 몫까지
+        used(s, "app:theirs", 20_000)
+        used(s, "app:mine", 30_000)
+        root, per = budgets.plan(s, [APP, mine, theirs], primary=APP.id, daily=200_000, since=DAY)
+        s.commit()
+    assert per["mine"].limit == 30_000  # 자기 한도에서 남은 것
+    with pytest.raises(BudgetExceeded):
+        per["mine"].check(15_000)  # 공동 몫(60,000 중 50,000 씀)에 걸린다
+    assert per[APP.id].limit == 200_000 and root.limit == 150_000  # 주 앱은 그대로
+    with factory() as s:  # 워커가 도는 중에 켜진 앱도 같은 공동 몫 아래
+        late = budgets.budget_for(s, "late", primary=APP.id, daily=200_000, since=DAY, root=root)
+    with pytest.raises(BudgetExceeded):
+        late.check(15_000)
+
+
+def test_status_counts_today_in_korean_time_and_names_global_limits(factory, tmp_path):
+    from noticedelta.app_tools import app_tools
+
+    with factory() as s:
+        app_registry.seed(s, APP, at=T0)
+        used(s, "worker", 200_000, at=datetime(2026, 11, 26, 16, tzinfo=UTC))  # 한국 시간 1시
+        s.commit()
+    tools = {t.name: t for t in app_tools(factory, now=lambda: T0, snapshots=None, daily=200_000)}
+    out = tools["app_status"].handler(app_id=APP.id)
+    assert out["budget"]["today"] == 200_000  # 한국 시간 0~9시에 쓴 것도 오늘이다
+    assert out["collect"] is None and "볼 수 없습니다" in out["summary"][0]
+    assert any("오늘 한도를 다 써서" in line for line in out["summary"])
+    assert tools["app_status"].validate({"app_id": APP.id, "days": 10**9})
+    assert tools["set_app_budget"].validate({"app_id": "mine", "daily_tokens": True})
+    assert tools["set_app_budget"].validate({"app_id": "mine", "daily_tokens": 100_000})
+    assert tools["set_app_budget"].validate({"app_id": "mine", "daily_tokens": 60_000}) is None
+    st = {
+        "collect": {"runs": 2, "longest_gap_hours": 6, "sources": {"bizinfo": {"runs": 2},
+                                                                     "newsrc": {}}},
+        "drift_held": [], "attachments": {}, "fields": {}, "alerts": {"held": 0, "sent": 0},
+        "budget": {"daily": 20_000, "today": 0, "period": 0, "all_daily": 200_000,
+                   "all_today": 200_000, "shared_daily": 60_000, "shared_today": 0},
+    }  # fmt: skip
+    text = "\n".join(describe(st))
+    assert "수집되지 않은 출처가 있습니다: newsrc" in text and "모두 제대로" not in text
+    assert "하루 전체 한도를 다 써서" in text

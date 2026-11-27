@@ -35,7 +35,8 @@ def main() -> None:
     load_env()
     factory = sessionmaker(make_engine(database_url()))
     now = datetime.now(UTC)
-    today = now.astimezone(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    # 한국 시간 0시를 UTC로(SQLite는 시간대를 버리고 글자로 비교한다. 기록은 UTC로 적혀 있다)
+    today = now.astimezone(KST).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
     daily = int(os.environ.get("NOTICEDELTA_LLM_DAILY_TOKENS", "200000"))
     with factory() as s:
         apps = {a.id: a for a in app_registry.enabled(s)}

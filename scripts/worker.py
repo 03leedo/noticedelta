@@ -148,11 +148,26 @@ def main() -> None:
             for app_id, b in per_app.items()
         }
         gateway = gateways[ctx.app.id]
+        logged = dict.fromkeys(gateways, 0)
+
+        def gateway_for(app_id: str) -> Gateway:
+            # 워커가 도는 동안 새로 켜진 앱: 그 자리에서 예산과 게이트웨이를 만든다
+            if app_id not in gateways:
+                with factory() as s:
+                    b = budgets.budget_for(
+                        s, app_id, primary=ctx.app.id, daily=daily, since=_today_kst(), root=budget
+                    )
+                gateways[app_id] = Gateway(
+                    provider, cassettes, Mode.REPLAY_OR_LIVE, budget=b, observer=flight.llm_observer
+                )
+                per_app[app_id], logged[app_id] = b, 0
+            return gateways[app_id]
+
         ctx.extractor = LLMExtractor(gateway, model=choice.model, spec=spec_for(ctx.app))
         ctx.extractor_name = f"{choice.name}/{choice.model}"
         ctx.extract_scope = args.scope
         ctx.extractor_for = lambda app: LLMExtractor(
-            gateways[app.id], model=choice.model, spec=spec_for(app)
+            gateway_for(app.id), model=choice.model, spec=spec_for(app)
         )
         if ctx.extra_apps:
             print("함께 도는 앱: " + ", ".join(f"{a.id}@{a.version}" for a in ctx.extra_apps))
@@ -202,12 +217,11 @@ def main() -> None:
     rest = {k: h for k, h in todo.items() if k != IMPACT}
     stats = run_worker(factory, rest, worker_id=worker_id, max_jobs=args.max_jobs)
     if args.extract and IMPACT in todo:
-        logged = dict.fromkeys(gateways, 0)
 
         def log_usage() -> None:
             # 작업 트랜잭션과 따로 바로 커밋한다: 작업이 되돌려지거나, 호출이 실패하거나(공급자가 센
             # 토큰), 묶음 없는 작업이어도 하루 한도에 들어간다. 앱마다 ref를 달리 남긴다(앱별 예산)
-            for app_id, gw in gateways.items():
+            for app_id, gw in list(gateways.items()):
                 live = gw.usage.live_tokens
                 if live <= logged[app_id]:
                     continue

@@ -81,7 +81,7 @@ def app_status(
     session: Session,
     app: AppDefinition,
     *,
-    root: Path,
+    root: Path | None,
     since: datetime,
     now: datetime,
     primary: str,
@@ -121,7 +121,7 @@ def app_status(
     return {
         "app": f"{app.id}@{app.version}",
         "since": since.isoformat(timespec="minutes"),
-        "collect": _runs(root, since, now, sources),
+        "collect": _runs(root, since, now, sources) if root is not None else None,
         "drift_held": held_keys,
         "attachments": dict(parse),
         "fields": dict(fields),
@@ -130,6 +130,13 @@ def app_status(
             "daily": budgets.cap_of(session, app.id, primary=primary, daily=daily),
             "today": flight.spent_tokens(session, today, refs=ref),
             "period": flight.spent_tokens(session, since, refs=ref),
+            # 위의 한도: 하루 전체, 다른 앱이면 다른 앱들의 공동 몫(budgets.plan과 같은 셈)
+            "all_daily": daily,
+            "all_today": (total := flight.spent_tokens(session, today)),
+            "shared_daily": None if app.id == primary else budgets.others_cap(daily),
+            "shared_today": None
+            if app.id == primary
+            else total - budgets.spent_today(session, primary, primary=primary, since=today),
         },
     }
 
@@ -142,19 +149,26 @@ def describe(s: dict) -> list[str]:
     """소유자에게 보일 사람 말 요약. 문제가 없으면 한 줄로 그렇다고 말한다."""
     lines: list[str] = []
     c = s["collect"]
-    failed = {src: v.get("failed", 0) for src, v in c["sources"].items() if v.get("failed")}
-    if c["runs"] == 0:
-        lines.append("이 기간에 수집이 한 번도 돌지 않았습니다.")
-    elif failed:
-        what = ", ".join(f"{src} {n}번" for src, n in failed.items())
-        lines.append(f"수집 {c['runs']}번 중 출처가 멈춘 적이 있습니다({what}).")
+    if c is None:
+        lines.append("수집 기록을 볼 수 없습니다(이 서버에 스냅샷 폴더가 없습니다).")
     else:
-        lines.append(f"수집 {c['runs']}번이 모두 제대로 돌았습니다.")
-    if c["longest_gap_hours"] > GAP_WARN.total_seconds() / 3600:
-        lines.append(f"수집 사이가 가장 길게는 {c['longest_gap_hours']}시간 비었습니다.")
-    att = sum(v.get("attachment_errors", 0) for v in c["sources"].values())
-    if att:
-        lines.append(f"첨부를 받지 못한 적이 {att}번 있습니다(다음 수집에서 다시 받습니다).")
+        failed = {src: v.get("failed", 0) for src, v in c["sources"].items() if v.get("failed")}
+        missing = [src for src, v in c["sources"].items() if not v.get("runs")]
+        if c["runs"] == 0:
+            lines.append("이 기간에 수집이 한 번도 돌지 않았습니다.")
+        else:
+            if missing:
+                lines.append(f"이 기간에 수집되지 않은 출처가 있습니다: {', '.join(missing)}.")
+            if failed:
+                what = ", ".join(f"{src} {n}번" for src, n in failed.items())
+                lines.append(f"수집 {c['runs']}번 중 출처가 멈춘 적이 있습니다({what}).")
+            elif not missing:
+                lines.append(f"수집 {c['runs']}번이 모두 제대로 돌았습니다.")
+        if c["longest_gap_hours"] > GAP_WARN.total_seconds() / 3600:
+            lines.append(f"수집 사이가 가장 길게는 {c['longest_gap_hours']}시간 비었습니다.")
+        att = sum(v.get("attachment_errors", 0) for v in c["sources"].values())
+        if att:
+            lines.append(f"첨부를 받지 못한 적이 {att}번 있습니다(다음 수집에서 다시 받습니다).")
     if s["drift_held"]:
         lines.append(
             f"출처의 형식이 바뀐 것으로 보여 붙잡아 둔 키가 있습니다: {', '.join(s['drift_held'])}."
@@ -178,4 +192,10 @@ def describe(s: dict) -> list[str]:
     )
     if b["daily"] and b["today"] >= b["daily"]:
         lines.append("오늘 한도를 다 써서 새 정정의 영향 계산은 내일로 미뤄집니다.")
+    elif b["all_today"] >= b["all_daily"]:
+        lines.append("하루 전체 한도를 다 써서 모든 앱의 영향 계산이 내일로 미뤄집니다.")
+    elif b["shared_daily"] is not None and b["shared_today"] >= b["shared_daily"]:
+        lines.append(
+            f"다른 앱들이 함께 쓰는 몫({b['shared_daily']:,})을 다 써서 영향 계산이 내일로 미뤄집니다."
+        )
     return lines

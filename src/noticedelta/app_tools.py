@@ -231,6 +231,12 @@ def app_tools(
             s.commit()
         return {"enabled": f"{app_id}@{version}"}
 
+    def validate_status(args: dict) -> str | None:
+        days = args.get("days", 7)
+        if not isinstance(args.get("app_id"), str) or type(days) is not int or not 1 <= days <= 90:
+            return "app_id는 글자, days는 1~90의 정수다"
+        return None
+
     def app_status(app_id: str, days: int = 7) -> dict:
         """앱의 상태: 수집·형식 변화·파싱·붙잡힌 알림·예산을 숫자와 사람 말로."""
         from datetime import timedelta, timezone
@@ -245,14 +251,19 @@ def app_tools(
             at = now()
             kst = timezone(timedelta(hours=9))
             today = at.astimezone(kst).replace(hour=0, minute=0, second=0, microsecond=0)
-            out = status(s, app, root=snapshots or Path("."), since=at - timedelta(days=days),
+            today = today.astimezone(UTC)  # 기록은 UTC로 적혀 있다(SQLite는 글자로 비교한다)
+            out = status(s, app, root=snapshots, since=at - timedelta(days=days),
                          now=at, primary=APP.id, daily=daily, today=today)  # fmt: skip
         return {**out, "summary": describe(out)}
 
     def validate_budget(args: dict) -> str | None:
-        tokens = args.get("daily_tokens")
-        if not isinstance(args.get("app_id"), str) or not isinstance(tokens, int) or tokens < 0:
-            return "app_id는 글자, daily_tokens는 0 이상의 정수다"
+        from noticedelta.budgets import others_cap
+
+        tokens, cap = args.get("daily_tokens"), others_cap(daily)
+        if not isinstance(args.get("app_id"), str) or type(tokens) is not int:
+            return "app_id는 글자, daily_tokens는 정수다"
+        if not 0 <= tokens <= cap:
+            return f"daily_tokens는 0~{cap:,}다(다른 앱들이 함께 쓰는 몫. 넓히려면 운영자에게)"
         return None
 
     def set_app_budget(app_id: str, daily_tokens: int, actor: str | None) -> dict:
@@ -273,6 +284,7 @@ def app_tools(
             "앱의 상태(수집·형식 변화·파싱·붙잡힌 알림·예산)를 숫자와 사람 말 요약으로 준다.",
             app_status,
             authorize=readable,
+            validate=validate_status,
         ),
         Tool(
             "set_app_budget",

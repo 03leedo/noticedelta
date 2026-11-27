@@ -153,6 +153,9 @@ def usage_ref(app_id: str, primary: str) -> str:
 
 
 def daily_tokens(session: Session, app_id: str) -> int | None:
+    # 표가 없는 예전 DB(마이그레이션 없이 읽는 스크립트)에서는 정한 값이 없는 것으로 본다
+    if not sa.inspect(session.connection()).has_table(AppBudgetRow.__tablename__):
+        return None
     row = session.get(AppBudgetRow, app_id)
     return row.daily_tokens if row is not None else None
 
