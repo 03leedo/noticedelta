@@ -22,7 +22,7 @@ from datetime import UTC, date, datetime, timedelta
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta import people, vault
+from noticedelta import managers, people, vault
 from noticedelta.db.models import (
     AgentSessionRow,
     JudgmentRow,
@@ -115,6 +115,7 @@ def _everyone(session: Session) -> set[str]:
 def _erase(session: Session, gate: ToolGateway, person_id: str, now: datetime) -> int:
     """한 사람의 정보를 지운다. 실제로 지운 것이 있으면 1."""
     did = gate.forget_person(session, person_id, now=now) > 0
+    did |= managers.forget(session, person_id, at=now) > 0
     if not consent.delete_user(session, person_id, at=now):  # 프로필이 없어도 남은 것을 지운다
         for model in (SubscriptionRow, JudgmentRow, OutboxAlert):
             did |= (

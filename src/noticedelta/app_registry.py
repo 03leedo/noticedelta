@@ -103,15 +103,36 @@ def enabled(session: Session) -> list[AppDefinition]:
 OWNER, MANAGER = "owner", "manager"
 
 
-def add_member(session: Session, app_id: str, person_id: str, role: str, *, at: datetime) -> None:
+def add_member(
+    session: Session,
+    app_id: str,
+    person_id: str,
+    role: str,
+    *,
+    at: datetime,
+    label: str | None = None,
+) -> None:
+    """역할을 준다. 관리자는 운영자가 확인한 이름(label, 예: 기관 이름)과 함께 준다."""
     if role not in (OWNER, MANAGER):
         raise ValueError(f"모르는 역할: {role}")
     row = session.get(AppMemberRow, (app_id, person_id, role))
     if row is None:
-        session.add(AppMemberRow(app_id=app_id, person_id=person_id, role=role, added_at=at))
-    elif row.removed_at is not None:
-        row.added_at, row.removed_at = at, None
+        session.add(AppMemberRow(app_id=app_id, person_id=person_id, role=role, added_at=at,
+                                 label=label))  # fmt: skip
+    else:
+        if row.removed_at is not None:
+            row.added_at, row.removed_at = at, None
+        if label is not None:
+            row.label = label
     session.flush()
+
+
+def manager_label(session: Session, app_id: str, person_id: str) -> str | None:
+    """운영자가 관리자로 확인한 사람의 이름. 관리자가 아니면 None."""
+    row = session.get(AppMemberRow, (app_id, person_id, MANAGER))
+    if row is None or row.removed_at is not None:
+        return None
+    return row.label or None
 
 
 def roles_of(session: Session, app_id: str, person_id: str | None) -> set[str]:

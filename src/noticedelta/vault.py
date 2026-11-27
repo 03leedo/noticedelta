@@ -40,7 +40,7 @@ from noticedelta.db.models import (
 
 KEY_ENV = "NOTICEDELTA_VAULT_KEY"
 ENV_NAME = "NOTICEDELTA_ENV"  # production이면 개발용 열쇠 파일을 쓰지 않는다
-PURPOSES = ("judge", "notify", "assist", "research", "self")
+PURPOSES = ("judge", "notify", "assist", "research", "manage", "self")  # manage: 관리자가 대신 관리
 SELF = "self"
 GRANT_TTL = timedelta(minutes=10)
 

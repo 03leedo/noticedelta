@@ -16,7 +16,7 @@ from noticedelta.db.models import JudgmentRow, OutboxAlert, Profile, Subscriptio
 from noticedelta.events import Ref, app_ref, emit
 from noticedelta.grants import APP
 
-VERSION = "beta-2026-11b"  # 11b: 선택 동의에 에이전트 도우미(assist)를 더했다
+VERSION = "beta-2026-11c"  # 11b: 에이전트 도우미(assist), 11c: 관리자(manage) 조항
 KEEP_UNTIL = "2027-03-31"  # 베타가 끝나면 모두 지운다. 일정이 바뀌면 여기만 고친다
 ITEMS = (
     "창업일, 대표자 생년월일, 사업장 소재지(시·도), 사업자 형태, 작년 매출, 상시 근로자 수, "
@@ -29,6 +29,7 @@ PURPOSES = (
     "notify",
 )  # 필수 동의의 용도(platform-services 4.3). 선택 동의는 research·assist
 ASSIST = "assist"  # 선택: 내 AI 에이전트가 도구 게이트웨이를 거쳐 내 정보를 읽어 돕는다
+MANAGE = "manage"  # 선택: 내가 받아들인 관리자(기관)가 내 정보를 대신 본다(managers.py)
 
 
 def _who(profile: Profile) -> Ref:
@@ -59,6 +60,10 @@ def update_keys(session: Session, profile: Profile, keys: list[str], *, at: date
     purposes = [*PURPOSES, "research"] if profile.research_ok else list(PURPOSES)
     if assist_on(session, profile.person_id):
         purposes.append(ASSIST)
+    if vault.active_consent(session, profile.person_id, APP.id, MANAGE) is not None:
+        purposes.append(
+            MANAGE
+        )  # 관리자에게 맡긴 키도 지금 값에 맞춘다(지운 키를 관리자가 되살리지 않게)
     for purpose in purposes:
         current = vault.active_consent(session, profile.person_id, APP.id, purpose)
         if current is not None and sorted(current.keys) == sorted(set(keys)):
@@ -112,7 +117,7 @@ def delete_user(session: Session, person_id: str, *, at: datetime | None = None)
     emit(
         session,
         "consent.withdrawn",
-        {"purpose": [*PURPOSES, "research", ASSIST], "text_version": VERSION},
+        {"purpose": [*PURPOSES, "research", ASSIST, MANAGE], "text_version": VERSION},
         producer="svc:web",
         key=f"{person_id}:all",
         ref=Ref(app=app_ref(APP.id, APP.version), subject=f"person:{person_id}"),

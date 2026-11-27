@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}내 관리자 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>내 관리자</h1>
+<p class="muted"><a href="/p/{{ token }}">내 지원사업으로</a></p>
+{% if not links %}<p class="muted">내 정보를 맡긴 곳이 없습니다.</p>{% endif %}
+{% for l in links %}
+<article class="card">
+  <p><strong>{{ l.label }}</strong> <span class="muted">{{ l.created_at.strftime("%Y-%m-%d") }}부터</span></p>
+  <form method="post" action="/p/{{ token }}/managers/{{ l.app_id }}/{{ l.manager_id }}/revoke">
+    <button type="submit">끊기(바로 볼 수 없게 됩니다)</button>
+  </form>
+</article>
+{% endfor %}
+{% endblock %}
