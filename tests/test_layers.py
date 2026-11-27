@@ -91,6 +91,7 @@ LAYERS: dict[str, list[str]] = {
         "gateway_pilot",
         "pipeline",
         "replay",
+        "retention",  # 보관 기한 정리
         "source_tools",
         "web",
     ],
