@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -24,7 +25,10 @@ ROOT = Path(__file__).resolve().parents[1]
 from noticedelta.config import database_url, load_env  # noqa: E402
 from noticedelta.snapshot import PER_PAGE, run_snapshot  # noqa: E402
 from noticedelta.sources import BizinfoClient, KStartupClient, RateLimiter  # noqa: E402
+from noticedelta.sources.base import SourceError  # noqa: E402
 from noticedelta.sources.rss import fetch_feed, to_record  # noqa: E402
+
+OPERATOR = ("kstartup", "bizinfo")  # 운영자 출처(실패하면 알린다)
 
 OUT = ROOT / "data" / "snapshots"
 LOCK = OUT / ".lock"
@@ -61,6 +65,8 @@ def user_feeds(http: httpx.Client) -> dict:
         print(f"사용자 출처를 읽지 못했습니다: {type(e).__name__}", file=sys.stderr)
         return {}
     limiter = RateLimiter(1)  # 사용자 출처는 초당 1회를 넘지 않는다(source-catalog.md 6장)
+    last = last_fetched(OUT / "runs", set(found))
+    now = datetime.now()
 
     def feed(source_id: str, url: str):
         convert = to_record(source_id)
@@ -70,11 +76,36 @@ def user_feeds(http: httpx.Client) -> dict:
                 return []
             limiter.acquire()
             _, items = fetch_feed(url, http)
-            return [convert(it) for it in items]
+            out = []
+            for it in items:  # 변환하지 못하는 글 하나가 피드 전체를 막지 않게
+                with contextlib.suppress(SourceError):
+                    out.append(convert(it))
+            return out
 
         return page
 
-    return {sid: feed(sid, sh.connector.url) for sid, sh in found.items()}
+    due = {
+        sid: sh
+        for sid, sh in found.items()
+        if sid not in last or now - last[sid] >= timedelta(hours=sh.fetch.every_hours)
+    }  # 장에 적은 주기(every_hours)보다 자주 받지 않는다
+    return {sid: feed(sid, sh.connector.url) for sid, sh in due.items()}
+
+
+def last_fetched(runs: Path, ids: set[str]) -> dict[str, datetime]:
+    """출처마다 마지막으로 받은 실행의 시각(실행 파일 이름, 로컬 시각)."""
+    out: dict[str, datetime] = {}
+    for path in sorted(runs.glob("*.json"), reverse=True)[:200]:
+        if not ids - set(out):
+            break
+        try:
+            at = datetime.strptime(path.stem, "%Y%m%dT%H%M%S")
+            sources = json.loads(path.read_text(encoding="utf-8")).get("sources", {})
+        except (ValueError, OSError):
+            continue
+        for sid in ids & set(sources) - set(out):
+            out[sid] = at
+    return out
 
 
 def main() -> int:
@@ -116,9 +147,15 @@ def main() -> int:
 
     print(json.dumps(summary.sources, ensure_ascii=False, indent=2))
     print(f"변경·신규 {summary.new_or_changed}건, {summary.started_at} ~ {summary.finished_at}")
-    if not summary.ok:
-        failed = [k for k, v in summary.sources.items() if v.get("error")]
-        alert(f"출처 실패: {', '.join(failed)}")
+    failed = [k for k, v in summary.sources.items() if v.get("error")]
+    operator = [k for k in failed if k in OPERATOR]
+    users = [k for k in failed if k not in OPERATOR]
+    if (
+        users
+    ):  # 사용자 출처의 실패는 운영자 알림·종료 코드에 넣지 않는다(상태 보고가 소유자에게 알린다)
+        print(f"사용자 출처 실패: {', '.join(users)}", file=sys.stderr)
+    if operator:
+        alert(f"출처 실패: {', '.join(operator)}")
         return 1
     return 0
 

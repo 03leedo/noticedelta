@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable, Collection
 from datetime import datetime
@@ -25,6 +26,7 @@ from noticedelta.sources.base import NoticeRecord
 from noticedelta.sources.rss import _public, check_url
 from noticedelta.sources.rss import to_record as rss_record
 
+log = logging.getLogger(__name__)
 MAX_ID = 32  # 출처 표의 id 칸
 MIN_EVERY_HOURS = 1  # 사용자 출처의 수집 주기 하한(6장)
 MAX_RATE = 1.0  # 초당 1회
@@ -45,7 +47,13 @@ def sheets(session: Session, *, owner: str | None = None) -> dict[str, SourceShe
     q = sa.select(UserSourceRow).where(UserSourceRow.removed_at.is_(None))
     if owner is not None:
         q = q.where(UserSourceRow.owner == owner)
-    return {r.id: SourceSheet.model_validate(r.body) for r in session.scalars(q)}
+    out = {}
+    for r in session.scalars(q):
+        try:
+            out[r.id] = SourceSheet.model_validate(r.body)
+        except ValueError:  # 장 하나가 깨져도 다른 출처의 적재·비교는 돈다
+            log.warning("사용자 출처 %s의 장을 읽지 못해 건너뜁니다", r.id)
+    return out
 
 
 def problems(sheet: SourceSheet, taken: Collection[str]) -> list[str]:
@@ -110,7 +118,15 @@ def remove(session: Session, source_id: str, *, owner: str, at: datetime) -> boo
 
 
 def to_record_for(session: Session, source_id: str) -> Callable[[dict], NoticeRecord] | None:
-    sheet = sheets(session).get(source_id)
-    if sheet is None or not isinstance(sheet.connector, RssConnector):
+    if not _ready(session):
+        return None
+    row = session.get(UserSourceRow, source_id)
+    if row is None or row.removed_at is not None:
+        return None
+    try:
+        sheet = SourceSheet.model_validate(row.body)
+    except ValueError:
+        return None
+    if not isinstance(sheet.connector, RssConnector):
         return None
     return rss_record(source_id)

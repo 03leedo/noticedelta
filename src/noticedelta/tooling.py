@@ -56,7 +56,8 @@ class Tool:
     allow: Callable[..., Collection[str]] | None = None  # external: (db, 인자) → 받는 쪽 허용 목록
     form: tuple[str, ...] = ()  # external: 서식 칸. 있으면 전이 때 이 칸만으로 다시 만든다(split)
     max_calls: int | None = None  # 세션 하나에서 부를 수 있는 수
-    # 인자 검사. 문제가 있으면 그 이유(요청 때 본다)
+    # 인자 검사. 문제가 있으면 그 이유(요청 때 본다). DB를 열지 않는다: 게이트웨이가 쓰기 트랜잭션을
+    # 쥔 채 부르므로 새 세션을 열면 SQLite에서 잠긴다. DB가 필요하면 authorize(db를 받는다)에서 본다
     validate: Callable[[dict], str | None] | None = None
     # (db, 사람 id 또는 None, 인자) → 이 사람이 이 일을 해도 되는가. 안 되면 그 이유(예: 앱의 소유자만)
     authorize: Callable[..., str | None] | None = None

@@ -92,11 +92,18 @@ def source_tools(
             {"title": it.get("title"), "published": it.get("published")} for it in items[:SAMPLES]
         ]
         recent = ", ".join(f"「{x['title']}」" for x in samples[:2] if x["title"])
+        draft = draft_sheet(url, title)
+        with factory() as s:  # 다른 사람이 같은 피드를 먼저 등록했으면 겹치지 않는 id를 제안한다
+            taken = user_sources.taken_ids(s, CATALOG)
+        base, n = draft["id"], 2
+        while draft["id"] in taken:
+            tail = f"_{n}"
+            draft["id"], n = base[: user_sources.MAX_ID - len(tail)] + tail, n + 1
         say = f"이 피드에서 글 {len(items)}개를 찾았습니다." + (
             f" 최근 글: {recent}." if recent else ""
         )
         return {
-            "draft": draft_sheet(url, title),
+            "draft": draft,
             "samples": samples,
             "say": say
             + " 이 출처를 지켜볼까요? 등록하면 6시간마다 받고, 이용 조건에 동의한 것으로 남습니다.",
@@ -117,7 +124,10 @@ def source_tools(
             return "사람이 정해지지 않은 세션은 출처를 등록할 수 없다(내 링크로 접속한다)"
         sid = (args.get("draft") or {}).get("id")
         if sid in user_sources.taken_ids(db, CATALOG):
-            return f"이미 있는 출처 id: {sid}. find_sources로 그것을 쓰거나 다른 id를 쓴다"
+            # 남의 private 출처가 있다는 것은 드러내지 않는다
+            return (
+                f"이 id는 쓸 수 없다: {sid}. 다른 id를 쓰거나 probe_source가 새로 제안한 id를 쓴다"
+            )
         return None
 
     def register_source(draft: dict, actor: str | None) -> dict:

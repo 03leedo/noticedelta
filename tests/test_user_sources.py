@@ -123,10 +123,14 @@ def test_register_flow_and_only_the_owner_sees_and_uses_it(env):
         assert terms["agreed_by"] == "person:p1" and terms["agreed_at"].startswith("2026-11-27")
     assert sid in {x["id"] for x in call(env, "p1", "find_sources")["sources"]}
     assert sid not in {x["id"] for x in call(env, "p2", "find_sources")["sources"]}
-    # 같은 id로 다시 등록할 수 없다, 운영자 출처 id도
-    again = call(env, "p2", "register_source", draft={**call(env, "p2", "probe_source",
-                                                           url=FEED)["draft"]})  # fmt: skip
-    assert "이미 있는 출처" in again["blocked"]["reason"]
+    # 같은 피드를 다른 사람이 등록하면 겹치지 않는 id를 제안받는다(남의 출처가 있다는 말은 하지 않는다)
+    second = call(env, "p2", "probe_source", url=FEED)["draft"]
+    assert second["id"] != sid and second["id"].endswith("_2") and len(second["id"]) <= 32
+    taken = call(env, "p2", "register_source", draft={**second, "id": sid})
+    assert (
+        "쓸 수 없다" in taken["blocked"]["reason"]
+        and "find_sources" not in taken["blocked"]["reason"]
+    )
     # 소유자의 앱만 그 출처를 쓴다
     app = APP.model_dump(mode="json", by_alias=True, exclude_none=True)
     app.update(id="my-feed-app", sources=[{"id": sid, "read": ["title", "description"]}])
@@ -164,3 +168,43 @@ def test_a_registered_feed_is_collected_and_loaded_as_its_own_items(env, tmp_pat
             len({n.item_id for n in notices}) == 2
         )  # 글 하나가 항목 하나(기관이 없어 묶지 않는다)
         assert user_sources.to_record_for(s, sid) is not None
+
+
+def test_encoding_tricks_cgnat_and_rebinding_are_refused():
+    sneaky = ('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE r [<!ENTITY a "PWNED">]>'
+              "<rss><channel><title>&a;</title></channel></rss>").encode("utf-16")  # fmt: skip
+    with pytest.raises(SourceError, match="DOCTYPE"):
+        rss.parse_feed(sneaky)
+    for url in ("http://100.100.100.200/latest", "http://[::ffff:127.0.0.1]/x"):
+        with pytest.raises(rss.UnsafeURL):
+            rss.check_url(url)
+
+    class Stream:
+        def get_extra_info(self, key):
+            return ("10.0.0.7", 443) if key == "server_addr" else None
+
+    resp = httpx.Response(200, extensions={"network_stream": Stream()})
+    with pytest.raises(rss.UnsafeURL, match="연결된 주소"):
+        rss._peer_ok(resp)  # 이름이 검사 뒤에 사설 주소로 풀려 연결됐다
+
+
+def test_items_without_ids_are_dropped_and_old_feed_items_stay_open(env, tmp_path):
+    _, dropped = rss.parse_feed(
+        b"<rss><channel><item><title>no link</title></item></channel></rss>"
+    )
+    assert dropped == []  # guid·link가 없는 글은 가리킬 수 없어 버린다
+    _, items = rss.parse_feed(RSS)
+    factory, _, _ = env
+    sid = register(env)
+    root = tmp_path / "snap"
+    convert = rss.to_record(sid)
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+    for hour, feed in ((10, items), (16, items[:1])):  # 두 번째에는 오래된 글이 피드에서 밀려났다
+        run_snapshot({sid: lambda p, f=feed: [convert(i) for i in f] if p == 1 else []},
+                     http=http, root=root, now=lambda h=hour: datetime(2026, 11, 27, h))  # fmt: skip
+    with factory() as s:
+        for path in sorted((root / "runs").glob("*.json")):
+            programs.load_run(s, path, LocalBlobStore(root / "blobs"), programs.LoadSummary())
+        s.commit()
+        statuses = {n.external_id: n.status for n in s.scalars(sa.select(models.Notice))}
+    assert set(statuses.values()) == {"open"}  # 피드에서 밀려났다고 닫지 않는다

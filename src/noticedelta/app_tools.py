@@ -163,11 +163,21 @@ def app_tools(
         return {"ok": app is not None, "problems": problems}
 
     def validate_definition(args: dict) -> str | None:
-        """저장 전에 검사한다(문제가 있으면 넣지 않는다). 자세한 목록은 check_app이 준다."""
         if not isinstance(args.get("definition"), dict):
             return "definition은 앱 정의(JSON 객체)다"
+        return None
+
+    def may_save(db: Session, person_id: str | None, args: dict) -> str | None:
+        """저장 전에 소유자와 정의를 본다(문제가 있으면 넣지 않는다. 자세한 목록은 check_app이 준다).
+
+        그 사람이 등록한 출처를 게이트웨이의 DB 세션으로 읽는다(새 세션을 열면 SQLite에서 잠긴다).
+        """
+        why = owner_only(db, person_id, args)
+        if why is not None:
+            return why
         data = {**copy.deepcopy(args["definition"]), "owner": "person:check"}
-        _, problems = _problems(data, mine(args.get("actor")))
+        own = user_sources.sheets(db, owner=person_id) if person_id else {}
+        _, problems = _problems(data, own)
         if problems:
             shown = "; ".join(f"{p['where']}: {p['what']}" for p in problems[:3])
             return f"정의에 문제 {len(problems)}개(check_app으로 자세히): {shown}"
@@ -319,7 +329,7 @@ def app_tools(
             save_app,
             effect="internal",
             undo=undo_save,
-            authorize=owner_only,
+            authorize=may_save,
             validate=validate_definition,
         ),
         Tool(

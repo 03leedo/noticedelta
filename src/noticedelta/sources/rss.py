@@ -17,10 +17,12 @@ import html
 import ipaddress
 import re
 import socket
+import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from html.parser import HTMLParser
 from urllib.parse import urljoin
+from xml.parsers import expat
 
 import httpx
 
@@ -29,6 +31,7 @@ from noticedelta.sources.base import NoticeRecord, SourceError
 MAX_BYTES = 2_000_000
 MAX_ITEMS = 200
 MAX_REDIRECTS = 3
+TOTAL_SECONDS = 60.0  # 한 피드를 받는 전체 시간(조금씩 천천히 보내도 끝없이 기다리지 않게)
 KEYS = {
     "guid": "글을 가리키는 값(없으면 주소)",
     "title": "글 제목",
@@ -44,14 +47,11 @@ class UnsafeURL(SourceError):
 
 
 def _blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    """공개 주소가 아니면 막는다. is_global은 사설·루프백·링크 로컬·예약에 더해 CGNAT(100.64.0.0/10,
+    알리바바 클라우드 메타데이터 100.100.100.200이 여기다)까지 거른다."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return not ip.is_global or ip.is_multicast
 
 
 def _public(host: str) -> bool:
@@ -89,12 +89,34 @@ def check_url(url: str, *, resolve: Callable[[str], bool] = _public) -> httpx.UR
     return u
 
 
-def fetch_bytes(url: str, http: httpx.Client, *, resolve: Callable[[str], bool] = _public) -> bytes:
-    """주소를 받는다. 넘겨주기마다 주소를 다시 보고, 크기를 자른다."""
+def _peer_ok(resp: httpx.Response) -> None:
+    """실제로 연결된 주소를 다시 본다(검사한 뒤 이름이 다른 주소로 풀리는 DNS 리바인딩)."""
+    stream = resp.extensions.get("network_stream")
+    addr = stream.get_extra_info("server_addr") if stream is not None else None
+    if not addr:
+        return
+    try:
+        ip = ipaddress.ip_address(addr[0])
+    except ValueError:
+        return
+    if _blocked(ip):
+        raise UnsafeURL(f"연결된 주소가 사설·내부 주소다: {addr[0]}")
+
+
+def fetch_bytes(
+    url: str,
+    http: httpx.Client,
+    *,
+    resolve: Callable[[str], bool] = _public,
+    total_seconds: float = TOTAL_SECONDS,
+) -> bytes:
+    """주소를 받는다. 넘겨주기마다 주소를, 연결된 주소도 다시 보고, 크기와 전체 시간을 자른다."""
+    deadline = time.monotonic() + total_seconds
     for _ in range(MAX_REDIRECTS + 1):
         check_url(url, resolve=resolve)
         try:
             with http.stream("GET", url, follow_redirects=False, timeout=20) as resp:
+                _peer_ok(resp)  # 본문을 읽기 전에
                 if resp.is_redirect:
                     url = urljoin(url, resp.headers.get("location", ""))
                     continue
@@ -105,11 +127,31 @@ def fetch_bytes(url: str, http: httpx.Client, *, resolve: Callable[[str], bool] 
                     size += len(chunk)
                     if size > MAX_BYTES:
                         raise SourceError(f"피드가 너무 크다({MAX_BYTES:,}바이트 넘음)")
+                    if time.monotonic() > deadline:
+                        raise SourceError(f"피드를 {total_seconds:g}초 안에 다 받지 못했다")
                     chunks.append(chunk)
                 return b"".join(chunks)
         except httpx.HTTPError as e:
             raise SourceError(f"피드를 받지 못했다: {type(e).__name__}") from None
     raise SourceError("넘겨주기가 너무 많다")
+
+
+def _no_declarations(data: bytes) -> None:
+    """DOCTYPE·ENTITY 선언이 있으면 거절한다. 바이트를 찾지 않고 파서로 본다(UTF-16 같은 인코딩으로
+    돌아가지 못하게)."""
+
+    def refuse(*_args) -> None:
+        raise SourceError("DOCTYPE·ENTITY가 있는 피드는 읽지 않는다")
+
+    parser = expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = refuse
+    parser.EntityDeclHandler = refuse
+    parser.UnparsedEntityDeclHandler = refuse
+    parser.ExternalEntityRefHandler = lambda *a: refuse()
+    try:
+        parser.Parse(data, True)
+    except expat.ExpatError as e:
+        raise SourceError(f"피드가 XML이 아니다: {e}") from None
 
 
 class _Text(HTMLParser):
@@ -143,10 +185,8 @@ def _first(el: ET.Element, *paths: str) -> ET.Element | None:
 
 
 def parse_feed(data: bytes) -> tuple[str, list[dict]]:
-    """피드의 제목과 항목(원본 사전) 목록. RSS 2.0과 Atom을 읽는다."""
-    head = data[:4096].lower()
-    if b"<!doctype" in head or b"<!entity" in data.lower():
-        raise SourceError("DOCTYPE·ENTITY가 있는 피드는 읽지 않는다")
+    """피드의 제목과 항목(원본 사전) 목록. RSS 2.0과 Atom을 읽는다. 가리키는 값이 없는 글은 버린다."""
+    _no_declarations(data)
     try:
         root = ET.fromstring(data)
     except ET.ParseError as e:
@@ -165,7 +205,7 @@ def parse_feed(data: bytes) -> tuple[str, list[dict]]:
                 "description": strip_html(_text(summary)),
                 "published": _text(e.find(f"{_ATOM}updated")) or _text(e.find(f"{_ATOM}published")),
             })  # fmt: skip
-        return title, items
+        return title, [it for it in items if it["guid"]]
     channel = root.find("channel")
     if root.tag != "rss" or channel is None:
         raise SourceError("RSS나 Atom 피드가 아니다")
@@ -179,7 +219,7 @@ def parse_feed(data: bytes) -> tuple[str, list[dict]]:
             "description": strip_html(_text(it.find("description"))),
             "published": _text(it.find("pubDate")),
         })  # fmt: skip
-    return title, items
+    return title, [it for it in items if it["guid"]]  # guid·link가 없는 글은 가리킬 수 없다
 
 
 def fetch_feed(
