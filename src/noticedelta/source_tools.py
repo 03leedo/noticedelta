@@ -12,6 +12,7 @@ RSS·Atom 피드와 게시판(html_list: 되풀이되는 글 목록의 위치를
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 from noticedelta import user_sources
 from noticedelta.catalog import SourceSheet, check_sheet
 from noticedelta.sources import CATALOG, html_list, rss
+from noticedelta.sources.base import SourceError
 from noticedelta.tooling import Tool
 
 SAMPLES = 5
@@ -66,7 +68,7 @@ def board_sheet(url: str, title: str, list_path: str) -> dict:
 
 def page_title(page: str) -> str:
     m = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
-    return " ".join(m[1].split())[:100] if m else ""
+    return " ".join(html.unescape(m[1]).split())[:100] if m else ""
 
 
 def source_tools(
@@ -115,16 +117,12 @@ def source_tools(
             return {"error": f"받지 못했다: {e}"}
         try:
             title, items = rss.parse_feed(data)
-            kind = "피드"
-            draft = unique_id(draft_sheet(url, title))
-            samples = [
-                {"title": it.get("title"), "published": it.get("published")}
-                for it in items[:SAMPLES]
-            ]
-            count, others = len(items), []
-        except Exception:  # 피드가 아니다: 게시판으로 본다
+        except SourceError:  # 피드가 아니다: 게시판으로 본다
             page = html_list.decode(data)
-            found = html_list.candidates(page, url)
+            try:
+                found = html_list.candidates(page, url)
+            except SourceError as e:
+                return {"error": str(e)}
             if not found:
                 return {"error": "피드도 아니고, 글 목록으로 보이는 곳도 찾지 못했다(자바스크립트로 그리는 "
                                  "페이지나 로그인이 필요한 페이지는 받지 않는다)"}  # fmt: skip
@@ -135,6 +133,14 @@ def source_tools(
             count = best["count"]
             others = [{"list": c["list"], "count": c["count"],
                        "samples": [x["title"] for x in c["samples"][:2]]} for c in found[1:4]]  # fmt: skip
+        else:
+            kind = "피드"
+            draft = unique_id(draft_sheet(url, title))
+            samples = [
+                {"title": it.get("title"), "published": it.get("published")}
+                for it in items[:SAMPLES]
+            ]
+            count, others = len(items), []
         recent = ", ".join(f"「{x['title']}」" for x in samples[:2] if x["title"])
         say = f"이 {kind}에서 글 {count}개를 찾았습니다." + (
             f" 최근 글: {recent}." if recent else ""
@@ -194,7 +200,8 @@ def source_tools(
         ),
         Tool(
             "probe_source",
-            "피드 주소를 한 번 받아 보고 출처 초안·최근 글·사람에게 보일 문장을 준다(등록하지 않는다).",
+            "피드(RSS·Atom)나 게시판(글 목록 페이지) 주소를 한 번 받아 보고 출처 초안·최근 글·사람에게"
+            " 보일 문장을 준다. 게시판이면 글 목록 위치의 후보도 준다(등록하지 않는다).",
             probe_source,
             frozenset({"A"}),
             logged_args=("url",),

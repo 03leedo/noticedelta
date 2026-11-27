@@ -105,3 +105,54 @@ def test_pages_with_no_list_are_refused(env):
         sid2 = g2.open_session(s, app_id=APP.id, agent="b", person_id="p2", now=T0).id
         out = g2.call(s, sid2, "probe_source", {"url": URL}, now=T0)
     assert "글 목록으로 보이는 곳도 찾지 못했다" in out["error"]
+
+
+def test_real_world_board_shapes():
+    # 줄무늬 class(li.odd/li.even)와 고정 공지(tr.notice)가 섞여도 한 목록이다
+    striped = (
+        "<ul class='list'>"
+        + "".join(
+            f"<li class='{'odd' if i % 2 else 'even'}'><a href='v{i}'>공지 제목 {i}번</a></li>"
+            for i in range(8)
+        )
+        + "</ul>"
+    )
+    [best] = html_list.candidates(striped, URL)
+    assert best["count"] == 8 and best["list"] == "ul.list>li>a"
+    # 끝 태그를 생략한 li
+    loose = (
+        "<ul>"
+        + "".join(f"<li><a href='p{i}'>생략된 끝 태그 글 {i}</a>" for i in range(4))
+        + "</ul>"
+    )
+    assert html_list.candidates(loose, URL)[0]["count"] == 4
+    # 제목·날짜가 각각 div에 든 줄: 링크가 섞이기 직전까지의 조상이 줄이다
+    divs = (
+        "<ul>"
+        + "".join(
+            f"<li><div class=t><a href='d{i}'>2026.12.1까지 신청 {i}</a></div>"
+            f"<div class=d>2026.11.0{i + 1}</div></li>"
+            for i in range(4)
+        )
+        + "</ul>"
+    )
+    items = html_list.extract(divs, URL, html_list.candidates(divs, URL)[0]["list"])
+    assert [it["date"] for it in items] == ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"]
+    # 있을 수 없는 날짜는 버린다
+    assert html_list._date("2026.13.45 등록") == ""
+
+
+def test_odd_links_sessions_and_deep_pages_do_not_break_collection():
+    rows = "".join(
+        f"<tr><td><a href='view.do;jsessionid=ABC{i}?id={i}&page=3'>글 제목 {i}</a></td>"
+        f"<td>2026-11-2{i}</td></tr>"
+        for i in range(3)
+    )
+    page = f"<table>{rows}<tr><td><a href='JavaScript:go(1)'>자바스크립트 글</a></td></tr></table>"
+    items = html_list.extract(page, URL, html_list.candidates(page, URL)[0]["list"])
+    assert [it["guid"] for it in items] == [
+        f"https://cse.example.ac.kr/bbs/view.do?id={i}" for i in range(3)
+    ]  # 세션값·쪽 번호를 뗀다
+    assert all(it["link"].startswith("https://") for it in items)  # javascript: 는 받지 않는다
+    deep = "<div>" + "<option>" * 1500 + "<a href='x'>깊은 글</a>"
+    assert html_list.candidates(deep, URL) == []  # 재귀 오류 없이 끝난다

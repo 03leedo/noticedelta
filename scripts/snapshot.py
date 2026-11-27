@@ -54,7 +54,7 @@ def alert(text: str) -> None:
 
 
 def user_feeds(http: httpx.Client) -> dict:
-    """사용자가 등록한 RSS 출처의 받기 함수. DB는 마이그레이션 없이 읽기만 한다(없으면 빈 것)."""
+    """사용자가 등록한 출처(RSS·게시판)의 받기 함수. DB는 마이그레이션 없이 읽기만 한다(없으면 빈 것)."""
     from sqlalchemy.orm import sessionmaker
 
     from noticedelta.db import make_engine

@@ -2,7 +2,7 @@
 
     register(session, sheet, owner=pid, at=now)   출처 한 장을 넣고 수집을 시작할 수 있게 한다
     sheets(session, owner=pid)                    그 사람의 출처(없으면 모두)
-    to_record_for(session, source_id)             적재가 쓰는 변환기(rss)
+    to_record_for(session, source_id)             적재가 쓰는 변환기(rss·게시판)
 
 - 운영자 출처(코드 어댑터)와 id가 겹치면 안 된다. 출처 표(source)에도 한 줄을 둔다(게시물의 외래 키).
 - 사용자 출처는 소유자의 앱만 쓴다(앱 정의를 검사할 때 그 사람의 출처만 더한다). 공개는 운영자가
