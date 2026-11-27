@@ -136,6 +136,15 @@ class Labels(_Strict):
     results: dict[str, str] = {}
 
 
+class AgentUse(_Strict):
+    """앱의 에이전트가 쓸 도구(도구 게이트웨이, platform-services 5.2). 선언은 플랫폼이 고정하고 앱은 고르기만 한다.
+
+    비우면(칸이 없으면) 플랫폼의 도구를 모두 쓴다. 도구 이름은 저장할 때 검사한다(app_tools).
+    """
+
+    tools: list[str] = []
+
+
 class AppDefinition(_Strict):
     kind: Literal["app"]
     id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{1,62}$")]
@@ -149,6 +158,7 @@ class AppDefinition(_Strict):
     alerts: Alerts
     budget: Budget
     labels: Labels = Labels()
+    agent: AgentUse | None = None  # 기본값이라 내용 해시에 들어가지 않는다(기존 앱의 해시는 그대로)
 
     # --- 엔진이 쓰는 모양 ---
 

@@ -67,6 +67,7 @@ def agent_tools(
     today: Callable[[], date] = date.today,
     outbox: Outbox | None = None,
     preview: Preview | None = None,
+    known: Callable[[], Collection[str]] | None = None,
 ) -> list[Tool]:
     tools = [
         *doc_tools(parser, roots),
@@ -81,6 +82,7 @@ def agent_tools(
             preview=preview or backtest_preview(CASSETTES, factory),
             snapshots=ROOT / "data" / "snapshots",
             daily=int(os.environ.get(DAILY_ENV, "200000")),
+            known=known,
         ),
     ]
     if usage is not None:
@@ -101,6 +103,7 @@ def build_gateway(
     outbox: Outbox | None = None,
     preview: Preview | None = None,
 ) -> ToolGateway:
+    names: list[str] = []
     tools = agent_tools(
         factory,
         parser=parser,
@@ -110,10 +113,23 @@ def build_gateway(
         today=today,
         outbox=outbox,
         preview=preview,
+        known=lambda: names,
     )
+    names.extend(t.name for t in tools if chosen is None or t.name in chosen)  # 고를 수 있는 도구
     return ToolGateway(
         tools,
-        chosen=[t.name for t in tools] if chosen is None else chosen,
+        chosen=list(names),
         cipher=cipher,
         observer=usage,
+        chosen_by_app=picked_tools,
     )
+
+
+def picked_tools(db: Session, app_id: str) -> list[str] | None:
+    """세션의 앱이 앱 정의(agent.tools)로 고른 도구. 고르지 않았으면 None(모두)."""
+    from noticedelta import app_registry
+
+    app = app_registry.current(db, app_id) or (APP if app_id == APP.id else None)
+    if app is None or app.agent is None or not app.agent.tools:
+        return None
+    return list(app.agent.tools)

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ app_id }} · 판 비교 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>{{ app_id }}</h1>
+<p class="muted"><a href="/p/{{ token }}/apps">내 앱으로</a></p>
+<table>
+  <tr><th>판</th><th>상태</th><th>넣은 때</th></tr>
+  {% for v in versions %}
+  <tr><td>{{ v.version }}</td><td>{% if v.enabled_at %}켠 적 있음{% else %}초안{% endif %}</td><td>{{ v.created_at.strftime("%Y-%m-%d %H:%M") if v.created_at else "" }}</td></tr>
+  {% endfor %}
+</table>
+<form method="get" action="/p/{{ token }}/apps/{{ app_id }}">
+  <label>기준 판 <select name="a">{% for v in versions %}<option value="{{ v.version }}" {% if v.version == a %}selected{% endif %}>{{ v.version }}</option>{% endfor %}</select></label>
+  <label>바꾼 판 <select name="b">{% for v in versions %}<option value="{{ v.version }}" {% if v.version == b %}selected{% endif %}>{{ v.version }}</option>{% endfor %}</select></label>
+  <button type="submit">다시 돌려 나란히 보기</button>
+</form>
+{% if note %}<p class="note" role="alert">{{ note }}</p>{% endif %}
+{% if changes is not none %}
+<h2>판 {{ a }} → {{ b }}에서 고친 것</h2>
+{% if not changes %}<p class="muted">판 번호 말고는 같습니다.</p>{% endif %}
+<ul>{% for path, before, after in changes[:40] %}<li><code>{{ path }}</code>: {{ before if before is not none else "(없음)" }} → {{ after if after is not none else "(없음)" }}</li>{% endfor %}</ul>
+{% if changes | length > 40 %}<p class="muted">그 밖에 {{ changes | length - 40 }}곳을 더 고쳤습니다.</p>{% endif %}
+{% endif %}
+{% if result %}
+<h2>기록된 정정으로 다시 돌린 결과</h2>
+<p class="muted">녹화본만 써서 비용이 들지 않습니다. 녹화본이 없는 정정은 세지 못합니다(기준 {{ result.against_missing or 0 }}건, 바꾼 판 {{ result.missing_cassettes or 0 }}건).</p>
+<table>
+  <tr><th></th><th>판 {{ a }}</th><th>판 {{ b }}</th></tr>
+  {% for k, v in result.summary.items() %}
+  <tr><th>{{ k }}</th><td>{{ (result.against_summary or {}).get(k, "") }}</td><td>{{ v }}</td></tr>
+  {% endfor %}
+</table>
+{% if result.diff %}
+<p>판 {{ b }}에서 새로 생긴 알림 {{ result.diff.new }}개(맞는 알림 {{ result.diff.right_new }}, 가짜 알림 {{ result.diff.fake_new }}), 사라진 알림 {{ result.diff.gone }}개, 내용이 바뀐 알림 {{ result.diff.changed }}개.</p>
+{% if result.diff.broken_tests %}<p class="note" role="alert">맞다고 표시한 알림 {{ result.diff.broken_tests }}개가 판 {{ b }}에서 사라집니다(깨진 시험).</p>{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

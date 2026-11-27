@@ -101,8 +101,10 @@ def build_gateway_server(
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> MCPServer:
     server = MCPServer(name, instructions=INSTRUCTIONS + GATEWAY_NOTE)
+    with factory() as db:  # 세션의 앱이 고른 도구만 보인다(앱 정의의 agent.tools)
+        shown = set(gate.available(db, session_id))
     for tool in gate.tools.values():
-        if tool.name not in gate.chosen:
+        if tool.name not in shown:
             continue
         server.add_tool(
             gateway_call(gate, factory, session_id, tool, clock),
