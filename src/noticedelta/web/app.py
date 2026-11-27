@@ -31,7 +31,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
-from noticedelta import app_registry, people, vault
+from noticedelta import app_registry, managers, people, vault
 from noticedelta.agent import CASSETTES, DAILY_ENV, build_gateway
 from noticedelta.app_status import app_status, describe
 from noticedelta.app_tools import Preview, backtest_preview
@@ -272,6 +272,7 @@ def create_app(
                 raise HTTPException(404, "없는 링크입니다")
             # 에이전트 세션을 닫고 나가지 않은 효과를 버린다. 효과에 남은 인자(본문의 내 정보)도 지운다
             gate.forget_person(s, person_id, now=now())
+            managers.forget(s, person_id, at=now())  # 관리자 연결도 닫는다
             if not consent.delete_user(s, person_id, at=now()):
                 raise HTTPException(404, "없는 링크입니다")
             people.forget(s, person_id, at=now())
@@ -372,6 +373,92 @@ def create_app(
             gate.close_session(s, session_id, now=now(), by=f"person:{person_id}")
             s.commit()
         return RedirectResponse(f"/p/{token}/approvals", status_code=303)
+
+    # --- 관리자 (app-spec 6장): 기관이 구독자 여럿을 맡는다. 구독자가 초대를 받아들여야 한다 ---
+
+    @app.get("/p/{token}/manage", response_class=HTMLResponse)
+    def manage_page(request: Request, token: str, invite: str | None = None):
+        with session_factory() as s:
+            me = load(s, token).person_id
+            rows = []
+            for link in managers.managed(s, me, consent.APP.id):
+                try:
+                    values = managers.read(s, cipher, link.app_id, me, link.person_id, now=now())
+                except vault.VaultError:  # 동의를 거둔 사람은 보이지 않는다
+                    continue
+                data = my_programs(s, values, today())
+                rows.append({"person": link.person_id[:8], "since": link.created_at,
+                             "values": values, "counts": data.counts()})  # fmt: skip
+            s.commit()  # 접근 기록
+        ctx = {**common, "token": token, "rows": rows, "invite": invite}
+        return templates.TemplateResponse(request, "manage.html", ctx)
+
+    @app.post("/p/{token}/manage/invite")
+    async def manage_invite(request: Request, token: str):
+        form = dict(await request.form())
+        with session_factory() as s:
+            me = load(s, token).person_id
+            try:
+                code = managers.invite(s, consent.APP.id, me, label=str(form.get("label", "")),
+                                       at=now())  # fmt: skip
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+            s.commit()
+        return RedirectResponse(f"/p/{token}/manage?invite={code}", status_code=303)
+
+    @app.get("/invite/{code}", response_class=HTMLResponse)
+    def invite_landing(request: Request, code: str):
+        with session_factory() as s:
+            inv = managers.peek(s, code, at=now())
+            if inv is None:
+                raise HTTPException(404, "없거나 기한이 지난 초대입니다")
+            ctx = {**common, "code": code, "label": inv.label, "token": None}
+        return templates.TemplateResponse(request, "invite.html", ctx)
+
+    @app.post("/invite/{code}")
+    async def invite_open(request: Request, code: str):
+        """내 링크 주소를 붙여 넣으면 내 링크로 초대를 연다(토큰은 주소에만 둔다)."""
+        form = dict(await request.form())
+        mine = str(form.get("link", "")).strip().rstrip("/")
+        token = mine.rsplit("/p/", 1)[-1].split("/", 1)[0] if "/p/" in mine else mine
+        return RedirectResponse(f"/p/{token}/invite/{code}", status_code=303)
+
+    @app.get("/p/{token}/invite/{code}", response_class=HTMLResponse)
+    def invite_page(request: Request, token: str, code: str):
+        with session_factory() as s:
+            load(s, token)
+            inv = managers.peek(s, code, at=now())
+            if inv is None:
+                raise HTTPException(404, "없거나 기한이 지난 초대입니다")
+            ctx = {**common, "token": token, "code": code, "label": inv.label}
+        return templates.TemplateResponse(request, "invite.html", ctx)
+
+    @app.post("/p/{token}/invite/{code}")
+    def invite_accept(token: str, code: str):
+        with session_factory() as s:
+            me = load(s, token).person_id
+            try:
+                managers.accept(s, code, me, at=now(), text_version=consent.VERSION)
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+            s.commit()
+        return RedirectResponse(f"/p/{token}/managers", status_code=303)
+
+    @app.get("/p/{token}/managers", response_class=HTMLResponse)
+    def my_managers(request: Request, token: str):
+        with session_factory() as s:
+            links = managers.managers_of(s, load(s, token).person_id)
+            ctx = {**common, "token": token, "links": links}
+            return templates.TemplateResponse(request, "managers.html", ctx)
+
+    @app.post("/p/{token}/managers/{app_id}/{manager_id}/revoke")
+    def revoke_manager(token: str, app_id: str, manager_id: str):
+        with session_factory() as s:
+            me = load(s, token).person_id
+            if not managers.revoke(s, app_id, manager_id, me, at=now()):
+                raise HTTPException(404, "없는 관리자입니다")
+            s.commit()
+        return RedirectResponse(f"/p/{token}/managers", status_code=303)
 
     # --- 검증 화면: 내 앱의 상태와, 판 두 개를 다시 돌린 결과를 나란히 (app-spec 10장, ARCHITECTURE 10.2) ---
 

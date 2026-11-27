@@ -694,3 +694,27 @@ class UserSourceRow(Base):
     body: Mapped[dict] = mapped_column(JSONType)  # 출처 한 장(catalog.SourceSheet)
     registered_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
     removed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class ManageInviteRow(Base):
+    """관리자의 초대 링크 (app-spec 6장 관리자). 토큰은 해시로만 둔다. 기한 안에 여러 사람이 받을 수 있다."""
+
+    __tablename__ = "manage_invite"
+    token_hash: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    app_id: Mapped[str] = mapped_column(sa.String(64))
+    manager_id: Mapped[str] = mapped_column(sa.String(32), index=True)
+    label: Mapped[str] = mapped_column(sa.String(50))  # 구독자에게 보일 이름(예: 기관 이름)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+
+
+class ManageLinkRow(Base):
+    """관리자와 구독자의 연결. 구독자가 초대를 받아들여 생기고, 구독자가 끊는다(동의는 금고의 manage 용도)."""
+
+    __tablename__ = "manage_link"
+    app_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    manager_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    person_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    label: Mapped[str] = mapped_column(sa.String(50))
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
