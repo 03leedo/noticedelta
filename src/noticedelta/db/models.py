@@ -601,6 +601,8 @@ class AgentSessionRow(Base):
     last_seen_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
     status: Mapped[str] = mapped_column(sa.String(16), default="open")  # open / closed
     closed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # live(운영) / replay(재생). 재생 세션의 효과는 운영 워커·승인함이 건드리지 않고, 그 반대도 같다
+    mode: Mapped[str] = mapped_column(sa.String(8), default="live", server_default="live")
 
 
 class ToolActionRow(Base):

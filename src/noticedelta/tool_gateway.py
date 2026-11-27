@@ -27,6 +27,12 @@
 internal(플랫폼 안의 되돌릴 수 있는 상태)은 바로 반영하고, 도구가 결과에 넣은 undo 정보를 남겨
 되돌릴 수 있게 한다. 상태가 바뀔 때마다 action.* 봉투를 낸다.
 
+재생(5.16): replay를 주면 효과(external·internal)를 실행하지 않고 기록된 결과(원래 실행에서 같은
+도구·같은 인자로 확정된 효과, 나온 차례대로 하나씩)를 돌려준다. 기록이 없으면 "기록 없음"으로 failed.
+원래 실행의 기록은 recorded_effects가 읽는다. 재생 게이트웨이의 세션은 mode="replay"로 따로 열리고,
+운영 게이트웨이(live)와 재생 게이트웨이는 서로의 세션·효과·승인 카드를 건드리지 않는다. 그래도 재생은
+DB 사본에서 돌리기를 권한다(읽기 도구는 그대로 실행된다).
+
 비밀값(5.6): C 도구의 계정·토큰은 운영자가 도구를 만들 때 넣는다. 에이전트의 인자는 도구 서명에 있는
 칸만 받으므로 자격증명을 끼워 넣을 수 없다.
 
@@ -38,9 +44,10 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import re
 import time
-from collections import Counter
+from collections import Counter, defaultdict, deque
 from collections.abc import Callable, Collection, Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -126,6 +133,7 @@ class ToolGateway:
         decide_within: timedelta = DECIDE_WITHIN,
         max_effects: int = MAX_EFFECTS,
         chosen_by_app: Callable[[Session, str], Collection[str] | None] | None = None,
+        replay: Callable[[str, dict], dict | None] | None = None,
     ):
         """chosen_by_app: (db, 세션의 앱) → 그 앱이 고른 도구(앱 정의의 agent.tools). None이면 모두."""
         self.tools: dict[str, Tool] = {}
@@ -157,6 +165,9 @@ class ToolGateway:
         self.decide_within = decide_within
         self.max_effects = max_effects
         self.chosen_by_app = chosen_by_app
+        # 재생(platform-services 5.16): 효과를 실행하지 않고 기록된 결과를 돌려준다. (도구, 인자) → 결과
+        self.replay = replay
+        self.mode = "replay" if replay is not None else "live"
 
     # --- 세션 (5.3) ---
 
@@ -185,6 +196,7 @@ class ToolGateway:
                 AgentSessionRow.app_id == app_id,
                 AgentSessionRow.agent == agent,
                 AgentSessionRow.status == "open",
+                AgentSessionRow.mode == self.mode,
             )
             .order_by(AgentSessionRow.started_at.desc())
             .limit(1)
@@ -203,6 +215,7 @@ class ToolGateway:
                 started_at=now,
                 last_seen_at=now,
                 status="open",
+                mode=self.mode,
             )
             db.add(row)
             db.flush()
@@ -267,6 +280,8 @@ class ToolGateway:
         s = db.get(AgentSessionRow, session_id, with_for_update=True)
         if s is None or s.status != "open":
             raise SessionClosed(f"열린 세션이 아니다: {session_id}")
+        if (s.mode or "live") != self.mode:  # 운영과 재생은 서로의 세션을 쓰지 않는다
+            raise SessionClosed(f"{self.mode} 게이트웨이의 세션이 아니다: {session_id}")
         s.last_seen_at = now
         args = dict(arguments or {})
         before = set(s.flags)
@@ -317,12 +332,19 @@ class ToolGateway:
         db.commit()
         started = time.perf_counter()
         try:
-            raw = tool.handler(**args)
+            if (
+                self.replay is not None and tool.effect == "internal"
+            ):  # 재생: 상태를 다시 바꾸지 않는다
+                raw = self._replayed(tool.name, args)
+            else:
+                raw = tool.handler(**args)
         except Exception as e:
             reason = f"{type(e).__name__}: {e}"[:300]
             self._decide(db, s, name, "error", "run", reason, before, before, now)
             db.commit()
             self._observe(tool, args, None, e, started, 0)
+            if self.replay is not None and isinstance(e, LookupError):
+                return {"error": reason}  # 재생의 기록 없음은 달라진 자리로 드러낸다
             raise
         undo = raw.pop("undo", None) if isinstance(raw, dict) else None
         result, hidden = guard(raw)
@@ -339,7 +361,7 @@ class ToolGateway:
         s.flags = _flags(after)
         action_id = None
         if tool.effect == "internal":
-            action_id = self._internal(db, s, tool, args, undo, now)
+            action_id = self._internal(db, s, tool, args, undo, now, dict(result))
             result["action"] = {"id": action_id, "status": "committed", "undo": undo is not None}
         self._decide(db, s, name, "pass", "run", None, before, after, now, action_id)
         db.commit()
@@ -409,7 +431,14 @@ class ToolGateway:
         s.sources = [*s.sources, entry][-MAX_SOURCES:]
 
     def _internal(
-        self, db: Session, s: AgentSessionRow, tool: Tool, args: dict, undo: Any, now: datetime
+        self,
+        db: Session,
+        s: AgentSessionRow,
+        tool: Tool,
+        args: dict,
+        undo: Any,
+        now: datetime,
+        result: dict | None = None,
     ) -> str:
         a = ToolActionRow(
             id=events.new_ulid(now),
@@ -428,6 +457,7 @@ class ToolGateway:
             decided_by="policy:internal",
             committed_at=now,
             undo=undo if isinstance(undo, dict) else None,
+            result=result,  # 재생이 돌려줄 결과(지우기·보관 기한 정리 때 같이 지운다)
         )
         db.add(a)
         db.flush()
@@ -611,7 +641,7 @@ class ToolGateway:
         committing에 남은 효과는 운영자가 본다. 다른 트랜잭션 안에서 부르지 않는다.
         """
         late = db.scalars(
-            sa.select(ToolActionRow).where(
+            self._mine(sa.select(ToolActionRow)).where(
                 ToolActionRow.status == "held", ToolActionRow.decide_by <= now
             )
         ).all()
@@ -619,7 +649,7 @@ class ToolGateway:
             self._close(db, a, "expired", now)
         db.commit()
         due = db.scalars(
-            sa.select(ToolActionRow.id)
+            self._mine(sa.select(ToolActionRow.id))
             .where(ToolActionRow.status == "approved", ToolActionRow.commit_after <= now)
             .order_by(ToolActionRow.commit_after)
         ).all()
@@ -649,9 +679,14 @@ class ToolGateway:
                 continue
             arguments = dict(a.arguments)
             db.commit()  # 실행하는 동안 트랜잭션을 쥐지 않는다(도구가 자기 DB 세션을 열 수 있게)
-            try:
-                result, error = tool.handler(**arguments), None
-            except Exception as e:
+            try:  # 재생이면 메일을 다시 보내지 않고 기록된 결과를 돌려준다
+                result = (
+                    self._replayed(tool.name, arguments)
+                    if self.replay is not None
+                    else tool.handler(**arguments)
+                )
+                error = None
+            except Exception as e:  # 재생 콜백이 깨져도 committing에 남기지 않는다
                 result, error = None, f"{type(e).__name__}: {e}"[:300]
             a = self._action(db, action_id)
             if error is not None:
@@ -700,7 +735,7 @@ class ToolGateway:
         q = (
             sa.select(ToolActionRow, AgentSessionRow)
             .join(AgentSessionRow, AgentSessionRow.id == ToolActionRow.session_id)
-            .where(ToolActionRow.status.in_(("held", "approved")))
+            .where(ToolActionRow.status.in_(("held", "approved")), self._mode_is())
             .order_by(ToolActionRow.requested_at)
         )
         if person_id is not None:
@@ -744,6 +779,26 @@ class ToolGateway:
         }
 
     # --- 안쪽 ---
+
+    def _mode_is(self):
+        """이 게이트웨이의 세션인가(live / replay). 마이그레이션 전의 빈 값은 live로 본다."""
+        if self.mode == "live":
+            return sa.or_(AgentSessionRow.mode == "live", AgentSessionRow.mode.is_(None))
+        return AgentSessionRow.mode == self.mode
+
+    def _mine(self, q):
+        """효과를 고르는 질의를 이 게이트웨이의 세션 것으로 좁힌다."""
+        return q.join(AgentSessionRow, AgentSessionRow.id == ToolActionRow.session_id).where(
+            self._mode_is()
+        )
+
+    def _replayed(self, tool: str, arguments: dict) -> dict:
+        """재생: 기록된 결과(replayed: true). 없으면 LookupError로 그 효과를 failed로 둔다."""
+        recorded = self.replay(tool, arguments)
+        if recorded is None:
+            raise LookupError("재생: 기록 없음(같은 도구·인자로 확정된 효과가 없거나 다 썼다)")
+        body = recorded if isinstance(recorded, dict) else {"value": recorded}
+        return {**body, "replayed": True}
 
     @staticmethod
     def _take(db: Session, action_id: str, frm: tuple[str, ...], to: str) -> bool:
@@ -849,3 +904,58 @@ class ToolGateway:
         self.observer.record(
             tool, shown, result=result, error=error, duration_ms=ms, hidden_lines=hidden
         )
+
+
+def effect_key(tool: str, arguments: dict) -> str:
+    """효과를 가리키는 값: 도구와 인자(정렬한 JSON)의 해시."""
+    body = json.dumps({"tool": tool, "args": arguments}, sort_keys=True, ensure_ascii=False,
+                      default=str)  # fmt: skip
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def recorded_effects(
+    db: Session,
+    *,
+    app_id: str | None = None,
+    session_ids: Collection[str] | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> Callable[[str, dict], dict | None]:
+    """원래 실행에서 확정된 효과의 결과(재생 게이트웨이의 replay에 넘긴다).
+
+    운영(live) 세션의 것만 읽는다(앞선 재생의 결과를 다시 쓰지 않게). 앱·세션·기간으로 좁힐 수 있다.
+    같은 도구·인자의 효과가 여럿이면 요청한 차례대로 하나씩 돌려주고, 다 쓰면 None(기록 없음)이다.
+    internal 효과는 뒤에 되돌렸어도(undone) 그때 확정된 결과를 돌려준다.
+    """
+    q = (
+        sa.select(ToolActionRow.tool, ToolActionRow.arguments, ToolActionRow.result)
+        .join(AgentSessionRow, AgentSessionRow.id == ToolActionRow.session_id)
+        .where(
+            sa.or_(
+                sa.and_(ToolActionRow.effect == "external", ToolActionRow.status == "committed"),
+                sa.and_(
+                    ToolActionRow.effect == "internal",
+                    ToolActionRow.status.in_(("committed", "undoing", "undone")),
+                ),
+            ),
+            sa.or_(AgentSessionRow.mode == "live", AgentSessionRow.mode.is_(None)),
+        )
+        .order_by(ToolActionRow.requested_at, ToolActionRow.id)
+    )
+    if app_id is not None:
+        q = q.where(AgentSessionRow.app_id == app_id)
+    if session_ids is not None:
+        q = q.where(ToolActionRow.session_id.in_(list(session_ids)))
+    if since is not None:
+        q = q.where(ToolActionRow.requested_at >= since)
+    if until is not None:
+        q = q.where(ToolActionRow.requested_at < until)
+    queues: dict[str, deque] = defaultdict(deque)
+    for tool, args, result in db.execute(q).all():
+        queues[effect_key(tool, args or {})].append(result or {})
+
+    def take(tool: str, args: dict) -> dict | None:
+        queue = queues.get(effect_key(tool, args))
+        return queue.popleft() if queue else None
+
+    return take

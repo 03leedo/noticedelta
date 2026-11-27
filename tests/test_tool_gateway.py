@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from noticedelta import vault
 from noticedelta.db import make_engine, models
-from noticedelta.tool_gateway import ToolGateway
+from noticedelta.tool_gateway import SessionClosed, ToolGateway
 from noticedelta.tooling import Registry, Tool
 
 T0 = datetime(2026, 11, 25, 9, tzinfo=UTC)
@@ -349,3 +349,90 @@ def test_effects_run_without_holding_the_transaction(env):
     gate.commit_due(db, now=T0)
     assert db.get(models.ToolActionRow, out["id"]).status == "committed"
     assert db.get(models.Source, "mailed") is not None
+
+
+def test_replay_returns_recorded_effects_without_sending_again(env):
+    """5.16: 같은 기록을 다시 흘리면 메일은 실행하지 않고 기록된 결과를 돌려준다."""
+    from noticedelta.tool_gateway import recorded_effects
+
+    db, gate, _, sent, _, cipher = env
+    s = session(db, gate)
+    out = gate.call(db, s.id, "send_inquiry", {"to": AGENCY, "body": "문의"}, now=T0)["action"]
+    gate.commit_due(db, now=T0 + timedelta(minutes=10))
+    assert sent == [(AGENCY, "문의")]
+
+    # 같은 DB의 기록으로 다시 흘린다(재생 게이트웨이)
+    replay_sent = []
+    replayed, _ = build(replay_sent, [], cipher=cipher, replay=recorded_effects(db))
+    s2 = replayed.open_session(db, app_id=APP, agent="claude-code", person_id="p1", now=T0)
+    assert s2.id != s.id and s2.mode == "replay"  # 운영 세션을 잇지 않는다
+    again = replayed.call(db, s2.id, "send_inquiry", {"to": AGENCY, "body": "문의"}, now=T0)
+    other = replayed.call(db, s2.id, "send_inquiry", {"to": AGENCY, "body": "다른 글"}, now=T0)
+    replayed.commit_due(db, now=T0 + timedelta(minutes=10))
+    assert replay_sent == []  # 재생은 보내지 않는다
+    a = db.get(models.ToolActionRow, again["action"]["id"])
+    assert a.status == "committed" and a.result == {"sent": True, "replayed": True}
+    b = db.get(models.ToolActionRow, other["action"]["id"])
+    assert b.status == "failed" and "기록 없음" in b.result["error"]
+    assert db.get(models.ToolActionRow, out["id"]).result == {"sent": True}
+    # 앞선 재생의 결과는 다음 재생의 기록이 아니다
+    third, _ = build([], [], cipher=cipher, replay=recorded_effects(db))
+    s3 = third.open_session(db, app_id=APP, agent="r3", person_id="p1", now=T0)
+    for _ in range(2):  # 원래 한 번 나갔으니 두 번째는 기록 없음
+        third.call(db, s3.id, "send_inquiry", {"to": AGENCY, "body": "문의"}, now=T0)
+    third.commit_due(db, now=T0 + timedelta(minutes=10))
+    got = db.scalars(sa.select(models.ToolActionRow).where(
+        models.ToolActionRow.session_id == s3.id).order_by(models.ToolActionRow.id)).all()  # fmt: skip
+    assert [x.status for x in got] == ["committed", "failed"]
+
+
+def test_live_and_replay_gateways_do_not_touch_each_others_effects(env):
+    db, gate, _, sent, _, cipher = env
+    replay_sent = []
+    replayed, _ = build(replay_sent, [], cipher=cipher, replay=lambda tool, args: {"sent": True})
+    live = session(db, gate)
+    rs = replayed.open_session(db, app_id=APP, agent="claude-code", person_id="p1", now=T0)
+    gate.call(db, live.id, "send_inquiry", {"to": AGENCY, "body": "운영"}, now=T0)
+    replayed.call(db, rs.id, "send_inquiry", {"to": AGENCY, "body": "재생"}, now=T0)
+    assert [c["session"] for c in gate.inbox(db, person_id="p1")] == [live.id]
+    assert [c["session"] for c in replayed.inbox(db, person_id="p1")] == [rs.id]
+    replayed.commit_due(db, now=T0 + timedelta(minutes=10))  # 운영 효과를 재생으로 닫지 않는다
+    assert sent == [] and replay_sent == []
+    gate.commit_due(db, now=T0 + timedelta(minutes=10))
+    assert sent == [(AGENCY, "운영")]  # 재생 효과를 실제로 보내지 않는다
+    with pytest.raises(SessionClosed):
+        gate.call(db, rs.id, "read_notice", {"item_id": "x"}, now=T0)
+
+
+def test_replay_failures_do_not_leave_effects_committing(env):
+    db, _, _, _, _, cipher = env
+
+    def broken(tool, args):
+        raise RuntimeError("기록을 읽지 못함")
+
+    for replay, check in ((broken, "RuntimeError"), (lambda tool, args: "보냄", None)):
+        g, _ = build([], [], cipher=cipher, replay=replay)
+        s = g.open_session(db, app_id=APP, agent=f"r-{check}", person_id="p1", now=T0)
+        out = g.call(db, s.id, "send_inquiry", {"to": AGENCY, "body": "문의"}, now=T0)["action"]
+        g.commit_due(db, now=T0 + timedelta(minutes=10))
+        a = db.get(models.ToolActionRow, out["id"])
+        if check:
+            assert a.status == "failed" and check in a.result["error"]
+        else:  # 사전이 아닌 결과도 감싸서 확정한다
+            assert a.status == "committed" and a.result == {"value": "보냄", "replayed": True}
+
+
+def test_replay_does_not_redo_internal_effects(env):
+    from noticedelta.tool_gateway import recorded_effects
+
+    db, gate, _, _, board, cipher = env
+    s = session(db, gate)
+    gate.call(db, s.id, "tick", {"step": "서류"}, now=T0)
+    assert board == ["서류"]
+    replay_board = []
+    replayed, _ = build([], replay_board, cipher=cipher, replay=recorded_effects(db))
+    rs = replayed.open_session(db, app_id=APP, agent="claude-code", person_id="p1", now=T0)
+    out = replayed.call(db, rs.id, "tick", {"step": "서류"}, now=T0)
+    assert replay_board == [] and out["ok"] and out["replayed"]  # 상태를 다시 바꾸지 않는다
+    assert out["action"]["undo"] is False  # 바꾼 것이 없으니 되돌릴 것도 없다
+    assert "기록 없음" in replayed.call(db, rs.id, "tick", {"step": "다른"}, now=T0)["error"]

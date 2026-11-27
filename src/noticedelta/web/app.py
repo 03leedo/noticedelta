@@ -311,7 +311,7 @@ def create_app(
     def own_action(s: Session, person_id: str, action_id: str) -> ToolActionRow:
         a = s.get(ToolActionRow, action_id)
         owner = s.get(AgentSessionRow, a.session_id) if a is not None else None
-        if owner is None or owner.person_id != person_id:
+        if owner is None or owner.person_id != person_id or (owner.mode or "live") != "live":
             raise HTTPException(404, "없는 요청입니다")
         return a
 
@@ -322,7 +322,11 @@ def create_app(
             cards = gate.inbox(s, person_id=person_id)
             sessions = s.scalars(
                 sa.select(AgentSessionRow)
-                .where(AgentSessionRow.person_id == person_id, AgentSessionRow.status == "open")
+                .where(
+                    AgentSessionRow.person_id == person_id,
+                    AgentSessionRow.status == "open",
+                    AgentSessionRow.mode != "replay",  # 재생 세션은 운영 화면에 보이지 않는다
+                )
                 .order_by(AgentSessionRow.last_seen_at.desc())
             ).all()
             done = s.scalars(
@@ -330,6 +334,7 @@ def create_app(
                 .join(AgentSessionRow, AgentSessionRow.id == ToolActionRow.session_id)
                 .where(
                     AgentSessionRow.person_id == person_id,
+                    AgentSessionRow.mode != "replay",
                     ToolActionRow.status.not_in(("held", "approved")),
                 )
                 .order_by(ToolActionRow.requested_at.desc())
