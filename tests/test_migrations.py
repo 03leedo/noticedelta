@@ -132,3 +132,35 @@ def test_link_tokens_leave_the_database_when_people_get_ids(tmp_path):
         sub_app = s.scalars(sa.select(models.SubscriptionRow)).one().app_id
     assert row.idempotency_key == f"grant-alerts:{pid}:p1:deadline:v2"
     assert (row.app_id, row.app_version, sub_app) == ("grant-alerts", 1, "grant-alerts")
+
+
+def test_subscriptions_and_judgments_move_from_profile_to_person(tmp_path):
+    """0019: 외래 키를 사람으로 옮겨도 행이 남고, 프로필을 지워도 구독이 깨지지 않는다. 되돌릴 수도 있다."""
+    from alembic import command
+
+    url = f"sqlite:///{tmp_path / 'fk.db'}"
+    command.upgrade(migrate.config(url), "0018")
+    engine = make_engine(url)
+    with engine.begin() as conn:
+        conn.execute(sa.text("INSERT INTO person (id, created_at) VALUES ('p1', '2026-11-01')"))
+        conn.execute(sa.text("INSERT INTO profile (person_id, attributes) VALUES ('p1', '{}')"))
+        conn.execute(sa.text("INSERT INTO source (id, name) VALUES ('s', 's')"))
+        conn.execute(sa.text(
+            "INSERT INTO item (id, title, title_key, created_at) VALUES ('i1', 't', 't', '2026-11-01')"
+        ))  # fmt: skip
+        conn.execute(sa.text(
+            "INSERT INTO subscription (id, person_id, item_id, fields, app_id, app_version)"
+            " VALUES ('s1', 'p1', 'i1', '[]', 'grant-alerts', 1)"
+        ))  # fmt: skip
+    command.upgrade(migrate.config(url), "head")
+    fks = sa.inspect(engine).get_foreign_keys("subscription")
+    assert {fk["referred_table"] for fk in fks} >= {"person", "item"}
+    assert "profile" not in {fk["referred_table"] for fk in fks}
+    with engine.begin() as conn:
+        assert conn.execute(sa.text("SELECT person_id FROM subscription")).scalar() == "p1"
+        conn.execute(sa.text("PRAGMA foreign_keys=ON"))
+        conn.execute(sa.text("DELETE FROM profile"))  # 프로필은 이제 동의 기록일 뿐이다
+    assert diffs(engine) == []
+    command.downgrade(migrate.config(url), "0018")
+    fks = sa.inspect(make_engine(url)).get_foreign_keys("judgment")
+    assert "profile" in {fk["referred_table"] for fk in fks}
