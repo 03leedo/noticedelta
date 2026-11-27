@@ -541,3 +541,69 @@ def test_a_worker_reads_unknown_apps_from_the_registry_or_defers(env):
         app_registry.register(s, other_app(), at=datetime(2026, 10, 1, tzinfo=UTC))
         app_registry.enable(s, "rules-watch", 1, at=datetime(2026, 10, 1, tzinfo=UTC))
         assert env.ctx.for_app("rules-watch", s).app.id == "rules-watch"
+
+
+class StricterRules(RulesFromText):
+    """판 2의 추출: 같은 글에서 더 엄한 규칙(창업 N년 → N×6개월)을 뽑는다(앱 정의를 고친 셈)."""
+
+    def __call__(self, fields, segments):
+        out = super().__call__(fields, segments)
+        if "eligibility_rules" in out:
+            fv = out["eligibility_rules"]
+            rules = {
+                **fv.value,
+                "rules": [{**r, "value": r["value"] // 2} for r in fv.value["rules"]],
+            }
+            out["eligibility_rules"] = type(fv)(fv.name, fv.value_type, rules, fv.sources,
+                                                fv.confidence)  # fmt: skip
+        return out
+
+
+@pytest.mark.parametrize("mode", ["summary", "silent"])
+def test_switching_a_version_rejudges_quietly_and_summarises_once(env, mode):
+    """app-spec 7장: 판을 바꿔 판정이 달라져도 정정 알림을 내지 않는다. 요약은 사람마다 한 번."""
+    from noticedelta import app_registry
+    from noticedelta.pipeline import enqueue_rebase
+
+    v1 = other_app()
+    v2 = v1.model_copy(update={"version": 2})
+    env.ctx.extractor, env.ctx.extra_apps = RulesFromText(), (v1,)
+    env.ctx.extractor_for = lambda app: StricterRules() if app.version == 2 else RulesFromText()
+    env.ctx.vault = vault.load_cipher()
+    with env.factory() as s:
+        app_registry.register(s, v1, at=datetime(2026, 10, 1, tzinfo=UTC))
+        app_registry.enable(s, v1.id, 1, at=datetime(2026, 10, 1, tzinfo=UTC))
+        s.commit()
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    subscribe(env, "u2", "rules-watch", 72)  # 판 1: 창업 7년(84개월) 이내 → 해당
+    with env.factory() as s:
+        app_registry.register(s, v2, at=env.clock())
+        app_registry.enable(s, v1.id, 2, at=env.clock())
+        assert enqueue_rebase(s, v1.id, 2, mode, env.clock()) == 1
+        s.commit()
+    env.ctx.extra_apps, env.ctx._per_app = (v2,), {}  # 워커가 새 판을 읽었다
+    env.work()
+    env.clock.t += timedelta(minutes=15)
+    env.work()
+    with env.factory() as s:
+        alerts = s.scalars(sa.select(models.OutboxAlert)).all()
+        latest = s.scalars(
+            sa.select(models.JudgmentRow)
+            .where(models.JudgmentRow.person_id == "u2")
+            .order_by(models.JudgmentRow.created_at.desc())
+        ).first()
+        versions = {r.app_version for r in s.scalars(sa.select(models.FieldValueRow))
+                    if r.app_id == "rules-watch"}  # fmt: skip
+        switched = s.scalars(
+            sa.select(models.EventRow).where(models.EventRow.type == "app.version_switched")
+        ).one()
+    assert latest.result == "ineligible" and latest.app_version == 2  # 새 판(42개월)으로 비해당
+    assert versions == {1, 2}  # 앞 판 값은 다시 쓰지 않는다
+    assert all(a.payload.get("kind") == "version_switched" for a in alerts)  # 정정 알림은 없다
+    if mode == "summary":
+        [a] = alerts
+        assert a.status == "sent" and "1개 사업의 결과가 달라졌습니다" in a.payload["message"]
+    else:
+        assert alerts == []
+    assert switched.payload["people"] == 1 and switched.payload["changes"] == 1

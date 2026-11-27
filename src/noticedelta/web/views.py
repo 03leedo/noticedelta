@@ -96,9 +96,9 @@ def _current_fields(session: Session) -> dict[str, tuple[ItemVersion, dict[str, 
     out = {}
     for pv in pvs:
         rows = session.scalars(
-            sa.select(FieldValueRow).where(
-                FieldValueRow.item_version_id == pv.id, FieldValueRow.app_id == APP.id
-            )
+            sa.select(FieldValueRow)
+            .where(FieldValueRow.item_version_id == pv.id, FieldValueRow.app_id == APP.id)
+            .order_by(FieldValueRow.app_version)  # 판을 바꿔 다시 계산했으면 새 판의 값이 덮는다
         ).all()
         out[pv.item_id] = (pv, {r.name: r for r in rows})
     return out

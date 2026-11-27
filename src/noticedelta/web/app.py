@@ -290,6 +290,7 @@ def create_app(
                     "message": a.payload.get("message", ""),
                     "sent_at": a.sent_at,
                     "status": a.status,
+                    "kind": a.payload.get("kind"),
                 }
                 for a in inbox(s, person_id)
             ]

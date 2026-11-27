@@ -192,6 +192,15 @@ for _name, _about in [
     REGISTRY[_name] = EventType(_name, 1, _Action, _about)
 
 
+@event_type("app.version_switched", 1, "판을 바꿔 다시 계산했다(정정 알림 없음, 요약 또는 조용히)")
+class AppSwitched(_Payload):
+    app_id: str
+    version: int
+    mode: str
+    people: int  # 판정이 달라진 사람 수(누구인지는 남기지 않는다)
+    changes: int  # 달라진 (사람, 사업) 수
+
+
 @event_type("app.version_enabled", 1, "앱의 판 하나를 켰다")
 class AppEnabled(_Payload):
     app_id: str
