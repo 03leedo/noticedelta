@@ -76,7 +76,7 @@ BASE = json.loads((FOLDER / "bizinfo.json").read_text(encoding="utf-8"))
             lambda d: d["attachments"]["urls"].append("fileUrl"),
             "attachments: keys에 없는 키 fileUrl",
         ),
-        (lambda d: d["connector"].update(kind="html_list"), "connector.kind"),
+        (lambda d: d["connector"].update(kind="html_list"), "connector"),  # 아직 받지 않는 종류
     ],
 )
 def test_sheet_problems(change, expected):

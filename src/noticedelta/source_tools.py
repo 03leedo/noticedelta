@@ -1,0 +1,172 @@
+"""사용자 출처를 등록하는 도구 (source-catalog.md 4장): 플랫폼이 먼저 제안하고, 사람이 확인한다.
+
+    find_sources(query)     이미 있는 출처를 먼저 찾는다(운영자의 검증된 출처 + 내가 등록한 출처)
+    probe_source(url)       한 번 받아 보고 초안 한 장 + 최근 글 몇 개 + 사람에게 보일 문장을 낸다(A)
+    register_source(draft)  나만 쓰는 출처로 등록한다. 이용 조건에 동의하는 순간이라 늘 사람의 확인(C)
+
+주소는 받을 때마다 안전한지 본다(사설·내부 주소, 비표준 포트, 넘겨주기까지). 받은 글은 신뢰할 수 없는
+입력이다(probe_source는 A). 등록한 출처는 소유자의 앱만 쓴다(app_tools가 앱을 검사할 때 더한다).
+지금은 RSS·Atom 피드만 받는다. 게시판(html_list)과 파일 올리기(file_drop)는 아직이다.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+import httpx
+from sqlalchemy.orm import Session
+
+from noticedelta import user_sources
+from noticedelta.catalog import SourceSheet, check_sheet
+from noticedelta.sources import CATALOG, rss
+from noticedelta.tooling import Tool
+
+SAMPLES = 5
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _person(actor: str | None) -> str | None:
+    return actor.removeprefix("person:") if actor and actor.startswith("person:") else None
+
+
+def suggest_id(url: str) -> str:
+    u = httpx.URL(url)
+    raw = f"u_{u.host}_{u.path}".lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    return slug[: user_sources.MAX_ID].rstrip("_")  # 앱 정의가 쓰는 id 모양(영문 소문자·숫자·_)
+
+
+def draft_sheet(url: str, title: str) -> dict:
+    return {
+        "kind": "source",
+        "id": suggest_id(url),
+        "title": (title or httpx.URL(url).host)[:100],
+        "status": "private",
+        "owner": "person:?",  # 등록할 때 게이트웨이가 넣은 사람으로 바뀐다
+        "connector": {"kind": "rss", "url": url},
+        "fetch": {"every_hours": 6, "rate_per_second": 1},
+        "item": {"id": "guid", "title": "title", "url": "link"},
+        "keys": {k: {"about": about} for k, about in rss.KEYS.items()},
+        "terms": {"license": "등록한 사람이 이용 조건에 동의", "quote_limit": 300},
+    }
+
+
+def source_tools(
+    factory: Callable[[], Session],
+    *,
+    http: Callable[[], httpx.Client] = lambda: httpx.Client(timeout=20),
+    resolve: Callable[[str], bool] = rss._public,
+    now: Callable[[], datetime] = _now,
+) -> list[Tool]:
+    def find_sources(query: str = "", actor: str | None = None) -> dict:
+        """이미 있는 출처를 찾는다(운영자의 검증된 출처 + 내가 등록한 출처). 있으면 그것을 쓴다."""
+        with factory() as s:
+            mine = user_sources.sheets(s, owner=_person(actor)) if _person(actor) else {}
+        q = query.strip().lower()
+        out = []
+        for sheet in [*CATALOG.values(), *mine.values()]:
+            text = f"{sheet.id} {sheet.title}".lower()
+            if q and q not in text:
+                continue
+            out.append({
+                "id": sheet.id, "title": sheet.title, "status": sheet.status,
+                "keys": {k: v.about for k, v in sheet.keys.items()},
+            })  # fmt: skip
+        return {"sources": out}
+
+    def probe_source(url: str) -> dict:
+        """피드 주소를 한 번 받아 보고, 출처 한 장의 초안과 최근 글, 사람에게 보일 문장을 낸다."""
+        try:
+            with http() as client:
+                title, items = rss.fetch_feed(url, client, resolve=resolve)
+        except rss.UnsafeURL as e:
+            return {"error": f"받지 않는 주소: {e}"}
+        except Exception as e:  # 피드가 아니거나 받지 못함
+            return {"error": f"피드로 읽지 못했다: {e}"}
+        samples = [
+            {"title": it.get("title"), "published": it.get("published")} for it in items[:SAMPLES]
+        ]
+        recent = ", ".join(f"「{x['title']}」" for x in samples[:2] if x["title"])
+        draft = draft_sheet(url, title)
+        with factory() as s:  # 다른 사람이 같은 피드를 먼저 등록했으면 겹치지 않는 id를 제안한다
+            taken = user_sources.taken_ids(s, CATALOG)
+        base, n = draft["id"], 2
+        while draft["id"] in taken:
+            tail = f"_{n}"
+            draft["id"], n = base[: user_sources.MAX_ID - len(tail)] + tail, n + 1
+        say = f"이 피드에서 글 {len(items)}개를 찾았습니다." + (
+            f" 최근 글: {recent}." if recent else ""
+        )
+        return {
+            "draft": draft,
+            "samples": samples,
+            "say": say
+            + " 이 출처를 지켜볼까요? 등록하면 6시간마다 받고, 이용 조건에 동의한 것으로 남습니다.",
+        }
+
+    def check_draft(args: dict) -> str | None:
+        data = args.get("draft")
+        if not isinstance(data, dict):
+            return "draft는 출처 한 장(JSON 객체)이다. probe_source가 낸 것을 고쳐 쓴다"
+        sheet, found = check_sheet({**data, "owner": "person:check"})
+        if sheet is None:
+            return "; ".join(str(p) for p in found[:3])
+        bad = user_sources.problems(sheet, ())
+        return "; ".join(bad) if bad else None
+
+    def may_register(db: Session, person_id: str | None, args: dict) -> str | None:
+        if person_id is None:
+            return "사람이 정해지지 않은 세션은 출처를 등록할 수 없다(내 링크로 접속한다)"
+        sid = (args.get("draft") or {}).get("id")
+        if sid in user_sources.taken_ids(db, CATALOG):
+            # 남의 private 출처가 있다는 것은 드러내지 않는다
+            return (
+                f"이 id는 쓸 수 없다: {sid}. 다른 id를 쓰거나 probe_source가 새로 제안한 id를 쓴다"
+            )
+        return None
+
+    def register_source(draft: dict, actor: str | None) -> dict:
+        """나만 쓰는 출처로 등록한다. 사람의 확인을 받고 보류 시간 뒤에 등록된다."""
+        at = now()
+        data = {**draft, "owner": actor, "status": "private"}
+        data["terms"] = {**draft.get("terms", {}), "agreed_by": actor,
+                         "agreed_at": at.isoformat(timespec="seconds")}  # fmt: skip
+        sheet = SourceSheet.model_validate(data)
+        person = _person(actor)
+        if person is None:
+            raise PermissionError("사람이 정해지지 않았다")
+        with factory() as s:
+            user_sources.register(s, sheet, owner=person, at=at, operator=CATALOG, resolve=resolve)
+            s.commit()
+        return {
+            "registered": sheet.id,
+            "next": "다음 수집부터 받는다. 앱 정의의 sources에 이 id를 쓴다",
+        }
+
+    return [
+        Tool(
+            "find_sources", "이미 있는 출처를 찾는다(검증된 출처와 내가 등록한 출처).", find_sources
+        ),
+        Tool(
+            "probe_source",
+            "피드 주소를 한 번 받아 보고 출처 초안·최근 글·사람에게 보일 문장을 준다(등록하지 않는다).",
+            probe_source,
+            frozenset({"A"}),
+            logged_args=("url",),
+        ),
+        Tool(
+            "register_source",
+            "출처를 나만 쓰는 출처로 등록한다. 이용 조건에 동의하는 일이라 사람의 확인을 받는다.",
+            register_source,
+            frozenset({"C"}),
+            effect="external",
+            confirm=True,
+            authorize=may_register,
+            validate=check_draft,
+        ),
+    ]

@@ -101,7 +101,7 @@ def test_saving_a_draft_can_be_undone_and_bad_definitions_are_not_saved(env):
     sid = session(factory, gate, "p1")
     saved = call(factory, gate, sid, "save_app", definition=definition())
     bad = call(factory, gate, sid, "save_app", definition={**definition(version=2), "kind": "x"})
-    assert "error" in bad and "check_app" in bad["error"]
+    assert "check_app" in bad["blocked"]["reason"]
     with factory() as s:
         gate.undo(s, saved["action"]["id"], by="person:p1", now=T0)
         s.commit()

@@ -28,7 +28,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from noticedelta import drift
+from noticedelta import drift, user_sources
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
 from noticedelta.db.models import (
@@ -316,7 +316,8 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
     at = _when(run.get("started_at"))
     run_drift: dict[str, dict] = {}
     for source, body in run["sources"].items():
-        to_record = TO_RECORD.get(source)
+        # 운영자 출처는 코드 어댑터, 사용자 출처(rss)는 등록부의 장으로 바꾼다
+        to_record = TO_RECORD.get(source) or user_sources.to_record_for(session, source)
         if to_record is None:
             continue
         items = body.get("items", [])
@@ -386,8 +387,9 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
             if pv is not None:
                 summary.new_item_versions += 1
                 summary.new_version_ids.append(pv.id)
-        if body.get("error") is None:
-            # 이번 실행에 없는 게시물은 닫혔다(기업마당은 정정 때 원공고를 닫는다).
+        # 이번 실행에 없는 게시물은 닫혔다(기업마당은 정정 때 원공고를 닫는다). 피드(사용자 출처)는
+        # 최근 몇 개만 보여 주므로 빠졌다고 닫지 않는다
+        if body.get("error") is None and source in TO_RECORD:
             closed = session.scalars(
                 sa.select(Notice).where(
                     Notice.source_id == source,
