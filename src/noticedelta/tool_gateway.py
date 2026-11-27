@@ -27,6 +27,9 @@
 internal(플랫폼 안의 되돌릴 수 있는 상태)은 바로 반영하고, 도구가 결과에 넣은 undo 정보를 남겨
 되돌릴 수 있게 한다. 상태가 바뀔 때마다 action.* 봉투를 낸다.
 
+재생(6장): replay를 주면 보류가 끝난 효과를 실행하지 않고 기록된 결과(같은 도구·같은 인자로 확정된
+효과)를 돌려준다. 기록이 없으면 "기록 없음"으로 failed. 원래 실행의 기록은 recorded_effects가 읽는다.
+
 비밀값(5.6): C 도구의 계정·토큰은 운영자가 도구를 만들 때 넣는다. 에이전트의 인자는 도구 서명에 있는
 칸만 받으므로 자격증명을 끼워 넣을 수 없다.
 
@@ -38,6 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import re
 import time
 from collections import Counter
@@ -126,6 +130,7 @@ class ToolGateway:
         decide_within: timedelta = DECIDE_WITHIN,
         max_effects: int = MAX_EFFECTS,
         chosen_by_app: Callable[[Session, str], Collection[str] | None] | None = None,
+        replay: Callable[[str, dict], dict | None] | None = None,
     ):
         """chosen_by_app: (db, 세션의 앱) → 그 앱이 고른 도구(앱 정의의 agent.tools). None이면 모두."""
         self.tools: dict[str, Tool] = {}
@@ -157,6 +162,8 @@ class ToolGateway:
         self.decide_within = decide_within
         self.max_effects = max_effects
         self.chosen_by_app = chosen_by_app
+        # 재생(platform-services 6장): 효과를 실행하지 않고 기록된 결과를 돌려준다. (도구, 인자) → 결과
+        self.replay = replay
 
     # --- 세션 (5.3) ---
 
@@ -649,10 +656,18 @@ class ToolGateway:
                 continue
             arguments = dict(a.arguments)
             db.commit()  # 실행하는 동안 트랜잭션을 쥐지 않는다(도구가 자기 DB 세션을 열 수 있게)
-            try:
-                result, error = tool.handler(**arguments), None
-            except Exception as e:
-                result, error = None, f"{type(e).__name__}: {e}"[:300]
+            if self.replay is not None:  # 재생: 메일을 다시 보내지 않는다
+                recorded = self.replay(tool.name, arguments)
+                result, error = (
+                    ({**recorded, "replayed": True}, None)
+                    if recorded is not None
+                    else (None, "재생: 기록 없음(같은 도구·인자로 확정된 효과가 없다)")
+                )
+            else:
+                try:
+                    result, error = tool.handler(**arguments), None
+                except Exception as e:
+                    result, error = None, f"{type(e).__name__}: {e}"[:300]
             a = self._action(db, action_id)
             if error is not None:
                 a.result = {"error": error}
@@ -849,3 +864,21 @@ class ToolGateway:
         self.observer.record(
             tool, shown, result=result, error=error, duration_ms=ms, hidden_lines=hidden
         )
+
+
+def effect_key(tool: str, arguments: dict) -> str:
+    """효과를 가리키는 값: 도구와 인자(정렬한 JSON)의 해시."""
+    body = json.dumps({"tool": tool, "args": arguments}, sort_keys=True, ensure_ascii=False,
+                      default=str)  # fmt: skip
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def recorded_effects(db: Session) -> Callable[[str, dict], dict | None]:
+    """원래 실행에서 확정된 밖으로 나가는 효과의 결과(재생 게이트웨이의 replay에 넘긴다)."""
+    rows = db.execute(
+        sa.select(ToolActionRow.tool, ToolActionRow.arguments, ToolActionRow.result).where(
+            ToolActionRow.effect == "external", ToolActionRow.status == "committed"
+        )
+    ).all()
+    found = {effect_key(tool, args or {}): result or {} for tool, args, result in rows}
+    return lambda tool, args: found.get(effect_key(tool, args))

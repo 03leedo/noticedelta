@@ -349,3 +349,28 @@ def test_effects_run_without_holding_the_transaction(env):
     gate.commit_due(db, now=T0)
     assert db.get(models.ToolActionRow, out["id"]).status == "committed"
     assert db.get(models.Source, "mailed") is not None
+
+
+def test_replay_returns_recorded_effects_without_sending_again(env, tmp_path):
+    """6장: 같은 기록을 다시 흘리면 메일은 실행하지 않고 기록된 결과를 돌려준다."""
+    from noticedelta.tool_gateway import recorded_effects
+
+    db, gate, _, sent, _, cipher = env
+    s = session(db, gate)
+    out = gate.call(db, s.id, "send_inquiry", {"to": AGENCY, "body": "문의"}, now=T0)["action"]
+    gate.commit_due(db, now=T0 + timedelta(minutes=10))
+    assert sent == [(AGENCY, "문의")]
+
+    # 같은 DB의 기록으로 다시 흘린다(재생 게이트웨이)
+    replay_sent = []
+    replayed, _ = build(replay_sent, [], cipher=cipher, replay=recorded_effects(db))
+    s2 = replayed.open_session(db, app_id=APP, agent="replay", person_id="p1", now=T0)
+    again = replayed.call(db, s2.id, "send_inquiry", {"to": AGENCY, "body": "문의"}, now=T0)
+    other = replayed.call(db, s2.id, "send_inquiry", {"to": AGENCY, "body": "다른 글"}, now=T0)
+    replayed.commit_due(db, now=T0 + timedelta(minutes=10))
+    assert replay_sent == []  # 재생은 보내지 않는다
+    a = db.get(models.ToolActionRow, again["action"]["id"])
+    assert a.status == "committed" and a.result == {"sent": True, "replayed": True}
+    b = db.get(models.ToolActionRow, other["action"]["id"])
+    assert b.status == "failed" and "기록 없음" in b.result["error"]
+    assert db.get(models.ToolActionRow, out["id"]).result == {"sent": True}
