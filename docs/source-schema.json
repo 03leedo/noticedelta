@@ -77,6 +77,33 @@
       "title": "Fetch",
       "type": "object"
     },
+    "HtmlListConnector": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "html_list",
+          "title": "Kind",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "list": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "List",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "url",
+        "list"
+      ],
+      "title": "HtmlListConnector",
+      "type": "object"
+    },
     "Ignore": {
       "additionalProperties": false,
       "properties": {
@@ -289,6 +316,7 @@
       "discriminator": {
         "mapping": {
           "code": "#/$defs/CodeConnector",
+          "html_list": "#/$defs/HtmlListConnector",
           "rss": "#/$defs/RssConnector"
         },
         "propertyName": "kind"
@@ -299,6 +327,9 @@
         },
         {
           "$ref": "#/$defs/RssConnector"
+        },
+        {
+          "$ref": "#/$defs/HtmlListConnector"
         }
       ],
       "title": "Connector"

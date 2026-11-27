@@ -144,7 +144,7 @@ def test_unsafe_or_non_rss_drafts_are_refused(env):
     assert "받지 않는 주소" in probe["error"]
     draft = call(env, "p1", "probe_source", url=FEED)["draft"]
     code = {**draft, "connector": {"kind": "code", "adapter": "evil"}}
-    assert "rss만" in call(env, "p1", "register_source", draft=code)["error"]
+    assert "rss와 html_list" in call(env, "p1", "register_source", draft=code)["error"]
     fast = {**draft, "fetch": {"every_hours": 1, "rate_per_second": 5}}
     assert "초당" in call(env, "p1", "register_source", draft=fast)["error"]
 
