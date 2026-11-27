@@ -23,6 +23,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException, Request
@@ -376,10 +377,10 @@ def create_app(
 
     # --- 관리자 (app-spec 6장): 기관이 구독자 여럿을 맡는다. 구독자가 초대를 받아들여야 한다 ---
 
-    @app.get("/p/{token}/manage", response_class=HTMLResponse)
-    def manage_page(request: Request, token: str, invite: str | None = None):
+    def render_manage(request: Request, token: str, invite: str | None = None):
         with session_factory() as s:
             me = load(s, token).person_id
+            label = app_registry.manager_label(s, consent.APP.id, me)
             rows = []
             for link in managers.managed(s, me, consent.APP.id):
                 try:
@@ -390,21 +391,24 @@ def create_app(
                 rows.append({"person": link.person_id[:8], "since": link.created_at,
                              "values": values, "counts": data.counts()})  # fmt: skip
             s.commit()  # 접근 기록
-        ctx = {**common, "token": token, "rows": rows, "invite": invite}
+        ctx = {**common, "token": token, "rows": rows, "invite": invite, "label": label}
         return templates.TemplateResponse(request, "manage.html", ctx)
 
-    @app.post("/p/{token}/manage/invite")
-    async def manage_invite(request: Request, token: str):
-        form = dict(await request.form())
+    @app.get("/p/{token}/manage", response_class=HTMLResponse)
+    def manage_page(request: Request, token: str):
+        return render_manage(request, token)
+
+    @app.post("/p/{token}/manage/invite", response_class=HTMLResponse)
+    def manage_invite(request: Request, token: str):
         with session_factory() as s:
             me = load(s, token).person_id
             try:
-                code = managers.invite(s, consent.APP.id, me, label=str(form.get("label", "")),
-                                       at=now())  # fmt: skip
-            except ValueError as e:
-                raise HTTPException(400, str(e)) from e
+                code = managers.invite(s, consent.APP.id, me, at=now())
+            except managers.NotAManager as e:
+                raise HTTPException(403, str(e)) from e
             s.commit()
-        return RedirectResponse(f"/p/{token}/manage?invite={code}", status_code=303)
+        # 초대 주소는 이 응답에만 보인다(주소창·방문 기록에 남기지 않게 넘겨주지 않는다)
+        return render_manage(request, token, invite=code)
 
     @app.get("/invite/{code}", response_class=HTMLResponse)
     def invite_landing(request: Request, code: str):
@@ -419,8 +423,13 @@ def create_app(
     async def invite_open(request: Request, code: str):
         """내 링크 주소를 붙여 넣으면 내 링크로 초대를 연다(토큰은 주소에만 둔다)."""
         form = dict(await request.form())
-        mine = str(form.get("link", "")).strip().rstrip("/")
-        token = mine.rsplit("/p/", 1)[-1].split("/", 1)[0] if "/p/" in mine else mine
+        path = urlsplit(str(form.get("link", "")).strip()).path.rstrip("/")
+        token = path.rsplit("/p/", 1)[-1].split("/", 1)[0] if "/p/" in path else path.strip("/")
+        with session_factory() as s:
+            if people.resolve(s, token) is None:
+                raise HTTPException(
+                    400, "내 링크 주소가 아닙니다. 내 지원사업 화면의 주소를 붙여 넣습니다"
+                )
         return RedirectResponse(f"/p/{token}/invite/{code}", status_code=303)
 
     @app.get("/p/{token}/invite/{code}", response_class=HTMLResponse)

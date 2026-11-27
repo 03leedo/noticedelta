@@ -665,6 +665,7 @@ class AppMemberRow(Base):
     app_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
     person_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
     role: Mapped[str] = mapped_column(sa.String(16), primary_key=True)  # owner / manager
+    label: Mapped[str | None] = mapped_column(sa.String(50))  # 관리자: 운영자가 확인한 이름(기관)
     added_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
     removed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
@@ -712,9 +713,14 @@ class ManageLinkRow(Base):
     """관리자와 구독자의 연결. 구독자가 초대를 받아들여 생기고, 구독자가 끊는다(동의는 금고의 manage 용도)."""
 
     __tablename__ = "manage_link"
+    __table_args__ = (
+        sa.Index("ix_manage_link_manager_id", "manager_id"),
+        sa.Index("ix_manage_link_person_id", "person_id"),
+    )
     app_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
     manager_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
     person_id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
     label: Mapped[str] = mapped_column(sa.String(50))
+    keys: Mapped[list] = mapped_column(JSONType, default=list)  # 받아들인 때 맡긴 키(넓어지지 않게)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
