@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
 from noticedelta import app_registry
@@ -163,3 +164,38 @@ def test_reserved_ids_conflicts_and_races(env, tmp_path):
     data = definition("y-app")
     data.pop("owner")
     assert call(factory, gate, p1, "check_app", definition=data)["ok"]
+
+
+def test_enabling_a_new_version_starts_a_rebase_and_validates_the_mode(env):
+    factory, gate, _ = env
+    sid = session(factory, gate, "p1")
+    call(factory, gate, sid, "save_app", definition=definition())
+    call(factory, gate, sid, "save_app", definition=definition(version=2))
+
+    def enable(version, **extra):
+        out = call(factory, gate, sid, "enable_app", app_id="my-deadlines", version=version,
+                   **extra)  # fmt: skip
+        if "action" not in out:
+            return out
+        with factory() as s:
+            gate.approve(s, out["action"]["id"], by="person:p1", now=T0)
+            s.commit()
+            gate.commit_due(s, now=T0 + timedelta(minutes=10))
+            return s.get(models.ToolActionRow, out["action"]["id"]).result
+
+    assert enable(1)["rebase_items"] == 0  # 처음 켜는 것은 다시 계산할 것이 없다
+    assert "on_switch" in enable(2, on_switch="loud")["error"]
+    assert enable(2, on_switch="summary")["on_switch"] == "summary"
+    with factory() as s:
+        jobs = s.scalars(sa.select(models.Job).where(models.Job.kind == "switch")).all()
+        [job] = jobs
+        assert (job.payload["app"], job.payload["version"], job.payload["mode"]) == (
+            "my-deadlines",
+            2,
+            "summary",
+        )
+        assert job.payload["stamp"] and job.payload["since"]  # 켤 때마다 다른 묶음
+    out = call(
+        factory, gate, sid, "preview_app", app_id="my-deadlines", version=2, on_switch="summary"
+    )
+    assert "error" in out  # 미리 돌려 보기는 on_switch를 받지 않는다(TypeError 대신 이유)

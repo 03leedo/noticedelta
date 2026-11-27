@@ -85,6 +85,8 @@ def render(alert: OutboxAlert, title: str, labels: Mapping[str, str] | None = No
     """
     labels = labels or {}
     p = alert.payload
+    if p.get("kind") == "version_switched":  # 판 바꾸기 요약: 사업 하나의 정정이 아니다
+        return f"{p.get('app_title', alert.app_id)}: {p['text']}"
     field = labels.get(p["field"], p["field"])
     prefix = "[정정] 앞서 보낸 알림을 바로잡습니다. " if p.get("corrects") else ""
     if p["kind"] == "judgment_changed":

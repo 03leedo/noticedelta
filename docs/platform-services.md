@@ -125,6 +125,7 @@ ARCHITECTURE 7장 그대로다. A는 신뢰할 수 없는 입력(외부 문서, 
 | `verdict.changed` | 엔진 | `judgment` |
 | `alert.created` · `held` · `released` · `sent` · `corrected` · `superseded` · `discarded` | 알림 발송 | `outbox_alert.status` |
 | `app.version_enabled` | 앱 정의 | (앱 정의 2단계에서 생김) |
+| `app.version_switched` | 판 바꾸기(다시 계산 뒤) | 사람 수·바뀐 수만(누구인지 없음) |
 | `consent.granted`, `consent.withdrawn` | 금고 | `profile`의 동의 칸 |
 | `action.requested` · `held` · `approved` · `committed` · `discarded` · `blocked` | 게이트웨이 | 없음 |
 
@@ -147,7 +148,8 @@ ARCHITECTURE 7장 그대로다. A는 신뢰할 수 없는 입력(외부 문서, 
 | `alert.superseded` · `discarded` · 대량 영향 `held` · `released` · `sent` · `corrected` | 알림 발송(`notify`) |
 | `source.drift_held`, `source.drift_decided` | 형식 변화 감시(`drift`) |
 | `app.version_enabled` | 앱 정의(`app_registry.enable`) |
-| `consent.granted`, `consent.withdrawn` | 동의(`web/consent`) |
+| `app.version_switched` | 판 바꾸기 요약 작업(`pipeline.handle_switch`, 2026-11-27) |
+| `consent.granted`, `consent.withdrawn` | 동의(`web/consent`, 관리자 동의는 `managers`) |
 
 - **추적**: 작업 본문에 `trace`(묶음)와 `cause`(원인 봉투)를 실어 다음 작업으로 넘긴다. 수집 실행 하나가 묶음이 되고, 보낸 알림에서 원인을 거꾸로 따라가면 `alert.sent ← alert.created ← verdict.changed ← change.detected ← document.parsed ← document.version_created ← source.run_finished`로 끊기지 않는다(`tests/test_events.py`).
 - **구독**: 코드에 둔다(`events.subscribe`). 9장의 "작업 큐로 할까"를 작업 큐로 정했다. 첫 구독은 알림 발송이다. 영향 계산이 알림 발송 작업을 직접 넣던 것을 `alert.created` 구독으로 바꿨다(항목 판 하나에 한 번).
@@ -515,7 +517,7 @@ app-spec 3장의 "사람의 확인이 꼭 필요한 순간"(앱 켜기, 판 바�
 | 5 | 미리 돌려 보기, 비교, 앱 시험, 플랫폼 회귀 시험, 검증 화면 (app-spec 4·5). 2026-11-25 1차: 미리 돌려 보기·비교·라벨을 시험으로(app-spec 10.4), 재생 기준선으로 플랫폼 회귀 시험(`scripts/replay.py --save/--against`). 2026-11-27 검증 화면(웹 `/p/<토큰>/apps`: 내 앱의 상태, 판 두 개를 골라 고친 자리와 다시 돌린 결과를 나란히) | 판 두 개의 알림 차이, 플랫폼을 고칠 때 모든 앱의 결과 차이가 나온다 |
 | 6 | **개인정보 금고**: 값·동의·허가·암호화·지우기, 대량 판정이 금고 뷰를 읽음. 2026-11-25 1차(4.8), 2026-11-27 외래 키를 사람으로·보관 기한 정리. 서류·행 수준 보안은 쓰는 곳이 생길 때 | 동의 밖의 키를 읽는 길이 없다 |
 | 7 | **도구 게이트웨이**: 세션·판단·보류 후 확정·승인함, MCP의 B 도구(`check`, `explain`, `get_profile`), 앱을 만드는 조종 도구 (app-spec 6). 2026-11-26: 1~3차와 RQ6 파일럿 완료(5.10~5.13). 조종 도구는 8번과 함께 | B·C 도구가 게이트웨이를 거쳐야만 불린다. RQ6 파일럿 |
-| 8 | 사용자 출처 등록, 소유자·구독자·관리자, 예산, 상태 보고 (app-spec 7·8). 2026-11-27: 여러 앱이 섞이지 않고 돌기, 소유자, 앱별 예산, 상태 보고, 사용자 출처 등록 1차(RSS, source-catalog 4장), 관리자(app-spec 6장) 완료. 게시판 출처·판 바꾸기의 알림 처리는 아직 | 다른 사람이 만든 앱이 내 앱과 섞이지 않고 돈다 |
+| 8 | 사용자 출처 등록, 소유자·구독자·관리자, 예산, 상태 보고 (app-spec 7·8). 2026-11-27: 여러 앱이 섞이지 않고 돌기, 소유자, 앱별 예산, 상태 보고, 사용자 출처 등록 1차(RSS, source-catalog 4장), 관리자(app-spec 6장), 판 바꾸기의 알림 처리(app-spec 7장) 완료. 게시판 출처는 아직 | 다른 사람이 만든 앱이 내 앱과 섞이지 않고 돈다 |
 | 9 | 두 번째 앱 (app-spec 9) | **플랫폼 완성 기준: 두 번째 앱이 플랫폼 코드를 거의 고치지 않고 돈다(RQ7)** |
 
 **왜 이 순서인가**

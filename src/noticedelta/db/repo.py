@@ -175,3 +175,17 @@ def enqueue_alert(session: Session, alert: Alert) -> bool:
     except IntegrityError:
         return False
     return True
+
+
+def for_version(rows: list, version: int) -> list:
+    """한 판(사업 버전)에 앱의 여러 판 값이 있을 때(판 바꾸기로 다시 계산했다) 고른다.
+
+    켜져 있는 앱 판(version)의 값이 있으면 그것, 없으면 그보다 앞선 판 가운데 가장 새 것, 그것도 없으면
+    가장 새 것. 가장 큰 판 번호가 아니라 켠 판을 따르므로 앞 판으로 되돌려도 그 판의 값을 쓴다.
+    """
+    have = {r.app_version for r in rows}
+    if not have:
+        return []
+    older = [v for v in have if v <= version]
+    pick = version if version in have else (max(older) if older else max(have))
+    return [r for r in rows if r.app_version == pick]

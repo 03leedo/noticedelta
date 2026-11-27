@@ -13,6 +13,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from noticedelta.db import repo
 from noticedelta.db.models import FieldValueRow, Item, ItemVersion, SegmentRow
 from noticedelta.eligibility import RuleGroup, judge
 from noticedelta.eligibility.judge import Judgment
@@ -100,6 +101,9 @@ def _current_fields(session: Session) -> dict[str, tuple[ItemVersion, dict[str, 
                 FieldValueRow.item_version_id == pv.id, FieldValueRow.app_id == APP.id
             )
         ).all()
+        rows = repo.for_version(
+            rows, APP.version
+        )  # 앱의 여러 판 값이 있으면 켠 판의 것(파이프라인과 같게)
         out[pv.item_id] = (pv, {r.name: r for r in rows})
     return out
 

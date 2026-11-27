@@ -261,18 +261,30 @@ def app_tools(
         return preview(draft, on if on is not None and on.version != version else None)
 
     def validate_version(args: dict) -> str | None:
-        if not isinstance(args.get("app_id"), str) or not isinstance(args.get("version"), int):
+        if not isinstance(args.get("app_id"), str) or type(args.get("version")) is not int:
             return "app_id는 글자, version은 정수다"
         return None
 
-    def enable_app(app_id: str, version: int, actor: str | None) -> dict:
-        """판을 켠다. 소유자의 확인을 받고 보류 시간이 지나야 켜진다."""
+    def validate_enable(args: dict) -> str | None:
+        if args.get("on_switch", "silent") not in ("silent", "summary"):
+            return "on_switch는 silent(조용히 반영) 또는 summary(사람마다 한 번 요약)다"
+        return validate_version(args)
+
+    def enable_app(app_id: str, version: int, actor: str | None, on_switch: str = "silent") -> dict:
+        """판을 켠다. 소유자의 확인을 받고 보류 시간이 지나야 켜진다. 켜면 구독자가 있는 사업을 새 판으로
+        다시 계산한다(정정 알림은 내지 않는다). on_switch: silent(조용히) 또는 summary(사람마다 한 번 요약)."""
+        from noticedelta.pipeline import enqueue_rebase
+
         with factory() as s:  # 확정 때 다시 본다(그 사이 소유자가 바뀌었을 수 있다)
             if app_registry.OWNER not in app_registry.roles_of(s, app_id, _person(actor)):
                 raise PermissionError(f"{app_id}의 소유자가 아니다")
+            previous = app_registry.current(s, app_id)
             app_registry.enable(s, app_id, version, at=now())
+            items = 0
+            if previous is not None and previous.version != version:  # 처음 켜는 것이 아니면
+                items = enqueue_rebase(s, app_id, version, on_switch, now())
             s.commit()
-        return {"enabled": f"{app_id}@{version}"}
+        return {"enabled": f"{app_id}@{version}", "rebase_items": items, "on_switch": on_switch}
 
     def validate_status(args: dict) -> str | None:
         days = args.get("days", 7)
@@ -368,6 +380,6 @@ def app_tools(
             effect="external",
             confirm=True,
             authorize=existing_owner,
-            validate=validate_version,
+            validate=validate_enable,
         ),
     ]
