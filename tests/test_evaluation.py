@@ -393,3 +393,92 @@ def test_with_meta_takes_meta_fields_from_b0_and_the_rest_from_the_base():
         1,
         1,
     )  # 마감은 맞히고, 문의처 가짜 알림은 엔진 것 그대로
+
+
+def test_common_events_and_restrict_compare_methods_on_the_same_events(chain):
+    """한 방식이 판단하지 못한 정정은 모든 방식에서 빼고, 판단·호출·점수를 남은 정정으로 다시 센다."""
+    from noticedelta.evaluation import common_events, restrict
+    from noticedelta.evaluation.methods import NO_CASSETTE
+
+    def breaks_on_typo(fields, segments):
+        if any("오기 정정" in s.text for s in segments):
+            raise MissingCassette("k")
+        return fake_extractor(fields, segments)
+
+    methods = {**METHODS, "깨지는 엔진": lambda: Engine(breaks_on_typo, SPEC)}
+    rows = evaluate([chain], methods, LABELS)
+    broken = rows[-1]
+    # e2에서 끊기면 그 사업의 뒤 정정(e3)도 이전 값을 믿을 수 없어 판단하지 않는다
+    assert broken.notes == {"e2": NO_CASSETTE, "e3": NO_CASSETTE}
+    assert common_events(rows) == {"e1"}
+
+    b0, b2, engine, broken = restrict(rows, {"e1"}, LABELS)
+    assert (b2.events, b2.judged, b2.calls) == (1, 1, 1)
+    assert b2.input_chars == b2.costs["e1"]["input_chars"] < rows[1].input_chars
+    assert (b0.score.tp, b0.score.fn, b0.score.fp) == (1, 0, 0)  # e1의 마감만 남는다
+    assert broken.notes == {} and broken.judged == 1
+    assert common_events([]) == set()
+
+
+def test_a_stopped_program_passes_its_reason_to_later_events(chain):
+    """처음 추출이나 앞 정정이 끊긴 이유(호출 실패·예산 초과)를 뒤 정정이 이어받는다."""
+    from noticedelta.evaluation.methods import CALL_FAILED, OVER_BUDGET
+    from noticedelta.llm import BudgetExceeded, ProviderError
+
+    def fails_on_typo(fields, segments):
+        if any("오기 정정" in s.text for s in segments):
+            raise ProviderError("finish_reason=length")
+        return fake_extractor(fields, segments)
+
+    (row,) = evaluate([chain], {"엔진": lambda: Engine(fails_on_typo, SPEC)}, LABELS)
+    assert row.notes == {"e2": CALL_FAILED, "e3": CALL_FAILED}
+    assert row.costs["e2"]["calls"] == 1  # 보냈다가 실패한 호출은 센다(판단은 못 함)
+
+    def over(fields, segments):
+        raise BudgetExceeded("토큰 예산")
+
+    (row,) = evaluate([chain], {"B2": lambda: B2Full(over, SPEC)}, LABELS)
+    assert (
+        set(row.notes.values()) == {OVER_BUDGET} and row.calls == 0
+    )  # 보내지 않은 것은 세지 않는다
+
+
+def test_restrict_recounts_tokens_and_the_first_extraction_plan():
+    from noticedelta.evaluation import Row, Score, restrict, with_meta
+
+    labels = {
+        ("a1", "deadline"): Label("changed", "api_meta"),
+        ("a2", "deadline"): Label("unchanged"),
+        ("b1", "deadline"): Label("unchanged"),
+    }
+
+    def cost(tokens):
+        return {
+            "calls": 1,
+            "input_chars": tokens * 2,
+            "input_tokens": tokens,
+            "output_tokens": tokens // 10,
+            "planned_calls": 1,
+            "planned_tokens": tokens,
+        }
+
+    engine = Row(
+        "엔진", 3, 3, 3, 0, 0, 0, 0, 0,
+        {"a1": {"deadline"}, "a2": set(), "b1": {"deadline"}},
+        Score(), Score(), Score(),
+        costs={"a1": cost(100), "a2": cost(200), "b1": cost(400)},
+        start_costs=[(("a1", "a2"), {"planned_calls": 1, "planned_tokens": 1000}),
+                     (("b1",), {"planned_calls": 1, "planned_tokens": 5000})],
+    )  # fmt: skip
+    b0 = Row("B0", 3, 3, 0, 0, 0, 0, 0, 0, {"a1": {"deadline"}, "a2": set(), "b1": set()},
+             Score(), Score(), Score())  # fmt: skip
+    both = with_meta(engine, b0, ["deadline"], labels)
+    kept_engine, kept_both = restrict([engine, both], {"a1", "a2"}, labels)
+    assert (kept_engine.events, kept_engine.calls, kept_engine.input_tokens) == (2, 2, 300)
+    assert kept_engine.output_tokens == 30 and kept_engine.input_chars == 600
+    # 이벤트의 미리 세기 300 + 남은 사업(a)의 처음 추출 1000. b 사업의 5000은 빠진다
+    assert (kept_engine.planned_calls, kept_engine.planned_tokens) == (3, 1300)
+    assert (kept_engine.score.tp, kept_engine.score.fp) == (1, 0)
+    # 출처 값 줄도 같은 정정만 남고, 토큰은 엔진 줄과 같다
+    assert kept_both.predictions == {"a1": {"deadline"}, "a2": set()}
+    assert kept_both.input_tokens == kept_engine.input_tokens

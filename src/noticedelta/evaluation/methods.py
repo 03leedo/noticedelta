@@ -126,26 +126,34 @@ class _WithState:
         self.spec = spec
         self.meter = _Meter(extractor)
         self.fields: dict[str, FieldValue] | None = None  # None: 처음 상태를 만들지 못했다
+        self.stopped = NO_CASSETTE  # 끊긴 이유. 그 뒤 이벤트가 이어받는다
 
     def start(self, segments: Sequence[Segment]) -> None:
         try:
             self.fields = self.meter(set(self.spec.types), segments) if segments else {}
-        except _STOPS:
+        except _STOPS as e:
             self.fields = None
+            self.stopped = _note(e)
         self.start_cost = (
             self.meter.take()
         )  # 처음 추출은 이벤트 비용이 아니다(미리 세기에는 넣는다)
 
     def step(self, ev: EvalEvent) -> Outcome:
         if self.fields is None:
-            return Outcome(None, note=NO_CASSETTE)
+            return Outcome(None, note=self.stopped)
         try:
             changed = self._step(ev)
         except _STOPS as e:
             # 여기서 끊기면 뒤 이벤트의 이전 값도 믿을 수 없다. 이 사업은 여기까지만 잰다.
             self.fields = None
-            self.meter.take()
-            return Outcome(None, note=_note(e))
+            self.stopped = _note(e)
+            out = self.meter.take()
+            if not isinstance(e, ProviderError):
+                out = Outcome(None)  # 보내지 않았다(녹화본 없음, 예산 초과): 호출로 세지 않는다
+            # 보냈다가 실패했으면 이 정정에서 쓴 호출·글자·앞 호출의 토큰을 남긴다(판단은 못 함).
+            # 실패한 호출 자체의 토큰은 게이트웨이의 예산·live_tokens에만 들어간다
+            out.note = self.stopped
+            return out
         out = self.meter.take()
         out.changed = changed
         return out

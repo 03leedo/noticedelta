@@ -2,6 +2,7 @@
 
     make eval                                           # 개발 세트, 녹화본만 (LLM 비용 0)
     uv run python scripts/eval.py --split test          # 시험 세트 (측정 동결 때만 본다)
+    uv run python scripts/eval.py --split test --common # 모든 방식이 판단한 정정만으로 (같은 정정끼리 비교)
     uv run python scripts/eval.py --harness personal    # 엔진에 하네스를 켠 줄을 더한다
     uv run python scripts/eval.py --disagreements       # 엔진과 B2가 다르게 본 (이벤트, 필드) 목록
     uv run python scripts/eval.py --labeler claude --override me   # AI 라벨, 사람이 판정한 칸은 사람 답으로
@@ -33,6 +34,7 @@ from noticedelta.evaluation import (  # noqa: E402
     B3Diff,
     Engine,
     Fields,
+    common_events,
     disagreements,
     evaluate,
     input_sizes,
@@ -40,6 +42,7 @@ from noticedelta.evaluation import (  # noqa: E402
     load_labels,
     render,
     render_by_field,
+    restrict,
     with_meta,
 )
 from noticedelta.grants import KEYWORDS, META_FIELDS  # noqa: E402
@@ -72,6 +75,11 @@ def main() -> None:
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.REPLAY.value)
     ap.add_argument("--harness", choices=["public", "personal"], help="하네스를 켠 엔진을 더한다")
     ap.add_argument("--disagreements", action="store_true")
+    ap.add_argument(
+        "--common",
+        action="store_true",
+        help="모든 방식이 판단한 정정만으로 채점한다. 빠진 정정과 이유를 함께 낸다",
+    )
     ap.add_argument("--labeler", default="me", help="이 이름으로 단 라벨로 채점한다 (예: claude)")
     ap.add_argument(
         "--override",
@@ -143,18 +151,37 @@ def main() -> None:
         f"모델: {choice.name}/{choice.model} · 틀: {template} · 세트: {args.split} · 사업 {len(chains)}개 · 정정 이벤트 {events}건 · 라벨이 있는 이벤트 {labeled}건\n"
     )
     rows = evaluate(chains, methods, labels)
+    # 판단하지 못한 이유는 방식마다 (출처 값 줄은 엔진 줄과 같으므로 더하기 전에 모은다)
+    reasons = {
+        ev.event_id: [(r.name, r.notes[ev.event_id]) for r in rows if ev.event_id in r.notes]
+        for c in chains
+        for ev in c.events
+    }
     by_name = {r.name: r for r in rows}
     if "B0 메타 비교" in by_name and "변경 영향 엔진" in by_name and META_FIELDS:
         # 출처가 구조화해 준 필드(마감)는 출처 값으로, 나머지는 엔진으로 (앱 정의의 from: meta)
         rows.append(
             with_meta(by_name["변경 영향 엔진"], by_name["B0 메타 비교"], META_FIELDS, labels)
         )
-    print(render(rows, input_sizes(chains)))
+    order = [ev.event_id for c in chains for ev in c.events]
+    sizes = input_sizes(chains)
+    if args.common:
+        common = common_events(rows)
+        dropped = [e for e in order if e not in common]
+        print(f"모든 방식이 판단한 정정 {len(common)}건으로 채점한다. 빠진 정정 {len(dropped)}건:")
+        for e in dropped:
+            print(f"  {e} " + "; ".join(f"{name}: {note}" for name, note in reasons[e]))
+        print()
+        rows = restrict(rows, common, labels)
+        sizes = [sz for e, sz in zip(order, sizes, strict=True) if e in common]
+    print(render(rows, sizes))
     if labeled:
         print(f"\n필드별 (라벨: {args.labeler}):\n")
         print(render_by_field(rows, labels))
     if mode is Mode.PLAN:
-        n, t = sum(r.planned_calls for r in rows), sum(r.planned_tokens for r in rows)
+        # 출처 값 줄은 엔진 줄의 호출을 그대로 쓰므로 합계에 두 번 넣지 않는다
+        sent = [r for r in rows if " + 출처 값(" not in r.name]
+        n, t = sum(r.planned_calls for r in sent), sum(r.planned_tokens for r in sent)
         print(f"\n미리 세기 합계: 보낼 호출 {n}개, 입력 토큰 어림 {t:,} (토큰/글자 {ratio:.3f})")
     if budget is not None:
         print(f"\n토큰 예산: {budget.limit:,} 중 {budget.spent:,} 씀")

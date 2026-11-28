@@ -29,11 +29,13 @@ from noticedelta.evaluation.methods import (
 from noticedelta.evaluation.metrics import Label, Score, score, wilson
 from noticedelta.evaluation.run import (
     Row,
+    common_events,
     disagreements,
     evaluate,
     input_sizes,
     render,
     render_by_field,
+    restrict,
     with_meta,
 )
 
@@ -59,6 +61,8 @@ __all__ = [
     "render",
     "render_by_field",
     "with_meta",
+    "common_events",
+    "restrict",
     "score",
     "split_of",
     "wilson",
