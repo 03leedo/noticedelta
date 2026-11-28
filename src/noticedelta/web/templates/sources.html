@@ -10,6 +10,7 @@
   <span class="muted">{% if src.kind == "file_drop" %}파일 올리기{% elif src.kind == "html_list" %}게시판{% else %}피드{% endif %}</span></p>
   {% if src.kind == "file_drop" %}
   <p class="muted">「{{ src.item.id }}」 칸으로 줄을 가리키고 「{{ src.item.title }}」 칸을 제목으로 씁니다. 새 판을 올리면 다음 수집에서 바뀐 줄, 새 줄, 빠진 줄을 찾습니다.</p>
+  <p class="note">공고 목록용입니다. 개인정보가 든 파일은 올리지 마세요. 올린 줄은 수집한 공고처럼 보관되어, 내 정보를 지워도 파일만 지워지고 이미 받은 줄은 남습니다.</p>
   <form method="post" action="/p/{{ token }}/sources/{{ src.id }}/drop" enctype="multipart/form-data">
     <input type="file" name="file" accept=".csv,.json,.txt" required>
     <button type="submit">새 판 올리기 (CSV·JSON, {{ max_mb }}MB까지)</button>

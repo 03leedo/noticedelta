@@ -77,8 +77,10 @@ def parse(data: bytes, fmt: str) -> list[dict[str, str]]:
     if fmt == "json":
         try:
             body = json.loads(text)
-        except ValueError as e:
+        except json.JSONDecodeError as e:
             raise SourceError(f"JSON을 읽지 못했다: {e.msg} (줄 {e.lineno})") from None
+        except (ValueError, RecursionError) as e:  # 아주 큰 정수, 너무 깊은 중첩
+            raise SourceError(f"JSON을 읽지 못했다: {type(e).__name__}") from None
         if isinstance(body, dict) and isinstance(body.get("items"), list):
             body = body["items"]
         if not isinstance(body, list) or not all(isinstance(r, dict) for r in body):
@@ -98,6 +100,10 @@ def parse(data: bytes, fmt: str) -> list[dict[str, str]]:
         raise SourceError(f"줄이 너무 많다({MAX_ROWS}줄까지)")
     rows = []
     for r in raw_rows:
+        names = [_name(k) for k in r if k is not None and _name(k)]
+        dup = [h for h, n in Counter(names).items() if n > 1]
+        if dup:  # 공백만 다른 칸 이름: 한쪽 값이 말없이 덮이지 않게
+            raise SourceError(f"같은 이름의 칸이 둘 있다: {dup[:3]}")
         row = {_name(k): _cell(v) for k, v in r.items() if k is not None and _name(k)}
         if len(row) > MAX_COLUMNS:
             raise SourceError(f"칸이 너무 많다({MAX_COLUMNS}칸까지)")
@@ -164,6 +170,8 @@ def to_record(source_id: str, sheet) -> Callable[[dict], NoticeRecord]:
     """줄을 NoticeRecord로. 장의 keys에 적은 칸만 원본(raw)에 넣는다."""
     keys = list(sheet.keys)
     item = sheet.item
+    ignore = frozenset(sheet.ignore.keys)
+    url_keys = frozenset(sheet.ignore.url_keys)
 
     def convert(row: dict) -> NoticeRecord:
         rid = str(row.get(item.id) or "").strip()
@@ -184,6 +192,8 @@ def to_record(source_id: str, sheet) -> Callable[[dict], NoticeRecord]:
             apply_start=None,
             apply_end=None,
             raw=raw,
+            ignore=ignore,  # 장의 ignore.keys: 바뀌어도 새 판이 아니다
+            url_keys=url_keys,
         )
 
     return convert

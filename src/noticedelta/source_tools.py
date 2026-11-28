@@ -217,7 +217,7 @@ def source_tools(
             "next": "다음 수집부터 받는다. 앱 정의의 sources에 이 id를 쓴다",
         }
 
-    def probe_file(content: str, filename: str = "list.csv", title: str = "") -> dict:
+    def probe_file(content: str, filename: str = "", title: str = "") -> dict:
         """목록 파일(CSV·JSON)을 읽어 보고 파일 올리기 출처의 초안과 앞의 줄 몇 개를 낸다."""
         data = content.encode("utf-8")
         fmt = file_drop.format_of(filename, data)
@@ -257,7 +257,7 @@ def source_tools(
             )
         return None
 
-    def drop_file(source_id: str, content: str, filename: str = "list.csv",
+    def drop_file(source_id: str, content: str, filename: str = "upload",
                   actor: str | None = None) -> dict:  # fmt: skip
         """내 파일 올리기 출처에 새 판을 올린다. 다음 수집 실행에서 바뀐 줄을 찾는다."""
         person = _person(actor)
@@ -268,6 +268,12 @@ def source_tools(
                                          by=person, at=now())  # fmt: skip
             s.commit()
             out = {"source": source_id, "edition": row.seq, "rows": row.rows, "new": new}
+            sheet = user_sources._file_source(s, source_id, person)
+            extra = user_sources.ignored_columns(
+                sheet, file_drop.parse(row.body, sheet.connector.format)
+            )
+            if extra:
+                out["ignored_columns"] = extra  # 장에 없어 받지 않은 칸(장을 고쳐야 받는다)
             if new:
                 out["next"] = "다음 수집 실행에서 이 판을 읽고 바뀐 줄을 찾는다"
                 out["undo"] = {"drop_id": row.id, "by": person}
@@ -287,14 +293,16 @@ def source_tools(
         Tool(
             "probe_file",
             "목록 파일(CSV·JSON 글)을 읽어 보고 파일 올리기 출처의 초안(칸 이름이 키, 항목 id·제목 칸 제안)"
-            "과 앞의 줄 몇 개를 준다(등록하지 않는다).",
+            "과 앞의 줄 몇 개를 준다(등록하지 않는다). 공고 목록용이다: 개인정보가 든 파일은 쓰지 않는다"
+            "(올린 줄은 수집한 글처럼 보관된다).",
             probe_file,
             frozenset({"A"}),
             logged_args=("filename",),
         ),
         Tool(
             "drop_file",
-            "내가 등록한 파일 올리기 출처에 목록 파일의 새 판을 올린다. 되돌리면 그 판을 거둔다.",
+            "내가 등록한 파일 올리기 출처에 목록 파일의 새 판을 올린다. 되돌리면 그 판을 거둔다. 장에 적은"
+            " 칸이 모두 있어야 한다. 개인정보가 든 파일은 올리지 않는다.",
             drop_file,
             effect="internal",
             undo=undo_drop,

@@ -200,3 +200,52 @@ def test_upload_and_withdraw_on_the_web(env):
     assert client.post(f"/p/{other_token}/sources/drops/{d.id}/withdraw").status_code == 404
     assert client.post(f"/p/{token}/sources/drops/{d.id}/withdraw").status_code == 303
     assert "거둠" in client.get(f"/p/{token}/sources").text
+
+
+def test_review_fixes_detection_ignore_columns_and_odd_json(env, monkeypatch):
+    # 이름 없이 넘긴 JSON은 내용으로 가른다
+    probe = call(
+        env,
+        "p1",
+        "probe_file",
+        content='[{"no": 1, "title": "가나다"}, {"no": 2, "title": "라마"}]',
+    )
+    assert probe["draft"]["connector"]["format"] == "json" and probe["draft"]["id"] == "f_list"
+    # 아주 큰 정수, 공백만 다른 칸 이름
+    with pytest.raises(SourceError, match="JSON을 읽지 못했다"):
+        file_drop.parse(b'[{"id": ' + b"1" * 5000 + b"}]", "json")
+    with pytest.raises(SourceError, match="같은 이름"):
+        file_drop.parse('[{"사업명": "a", "사업명 ": "b"}]'.encode(), "json")
+    # 장의 ignore.keys는 바뀌어도 새 판이 아니다
+    from noticedelta.catalog import SourceSheet
+
+    draft = call(env, "p1", "probe_file", content=V1, filename="p.csv")["draft"]
+    sheet = SourceSheet.model_validate(
+        {**draft, "owner": "person:p1", "ignore": {"keys": ["링크"]}}
+    )
+    convert = file_drop.to_record("f_p", sheet)
+    a, b = (convert({**file_drop.parse(V1.encode(), "csv")[0], "링크": u}) for u in ("x", "y"))
+    assert a.content_hash == b.content_hash
+    # 칸이 빠지거나 이름이 바뀐 판은 받지 않는다(모든 줄이 변경으로 잡히지 않게). 새 칸은 알린다
+    sid = register(env)
+    renamed = V1.replace("마감", "마감일")
+    assert (
+        "칸이 파일에 없다"
+        in call(env, "p1", "drop_file", source_id=sid, content=renamed)["blocked"]["reason"]
+    )
+    no_id = "사업명,마감,링크\n가,2026-12-01,\n"
+    assert "번호" in call(env, "p1", "drop_file", source_id=sid, content=no_id)["blocked"]["reason"]
+    wider = V1.replace("링크\n", "링크,담당\n").replace("org.example/1\n", "org.example/1,김\n")
+    assert call(env, "p1", "drop_file", source_id=sid, content=wider)["ignored_columns"] == ["담당"]
+    # 동시에 올려 판 번호가 겹치면 다시 세어 넣는다
+    factory, _, _ = env
+    real, stale = user_sources._next_seq, iter([1])
+    monkeypatch.setattr(user_sources, "_next_seq", lambda s, i: next(stale, None) or real(s, i))
+    with factory() as s:
+        row, new = user_sources.drop(s, sid, V2.encode(), "v2.csv", by="p1", at=T0)
+        s.commit()
+        assert new and row.seq == 2
+    with factory() as s:
+        user_sources.forget(s, "p1", at=T0)
+        s.commit()
+        assert {d.filename for d in user_sources.drops(s, sid)} == {""}  # 파일 이름도 지운다

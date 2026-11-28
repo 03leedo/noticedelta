@@ -22,7 +22,8 @@ from collections.abc import Callable, Collection
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, defer
 
 import noticedelta.sources.file_drop as file_drop
 from noticedelta import events
@@ -171,13 +172,21 @@ def _file_source(session: Session, source_id: str, owner: str) -> SourceSheet:
 def check_drop(sheet: SourceSheet, data: bytes) -> list[dict[str, str]]:
     """올릴 수 있는 판인지 보고 줄들을 낸다. 고칠 것이 있으면 SourceError."""
     rows = file_drop.parse(data, sheet.connector.format)
+    missing = sorted(set(sheet.keys) - set(file_drop.columns(rows)))
+    if missing:  # 칸 이름이 바뀌면 모든 줄이 "값이 비었다"는 변경으로 잡힌다: 받지 않는다
+        raise SourceError(
+            f"장에 적은 칸이 파일에 없다: {missing[:5]}. 칸 이름이 바뀌었으면 원래 이름으로 고쳐 "
+            "올리거나 출처를 새로 등록한다"
+        )
     why = file_drop.id_problem(rows, sheet.item.id)
     if why is not None:
         raise SourceError(why)
-    missing = sorted({sheet.item.id, sheet.item.title} - set(file_drop.columns(rows)))
-    if missing:
-        raise SourceError(f"장에 적은 칸이 파일에 없다: {missing}")
     return rows
+
+
+def ignored_columns(sheet: SourceSheet, rows: list[dict[str, str]]) -> list[str]:
+    """파일에 있지만 장에 없어 받지 않는 칸(올린 사람에게 알린다)."""
+    return [c for c in file_drop.columns(rows) if c not in sheet.keys]
 
 
 def current_drop(session: Session, source_id: str) -> SourceDropRow | None:
@@ -194,14 +203,22 @@ def current_drop(session: Session, source_id: str) -> SourceDropRow | None:
     )
 
 
-def drops(session: Session, source_id: str) -> list[SourceDropRow]:
-    return list(
-        session.scalars(
-            sa.select(SourceDropRow)
-            .where(SourceDropRow.source_id == source_id)
-            .order_by(SourceDropRow.seq.desc())
-        ).all()
+def drops(session: Session, source_id: str, *, limit: int | None = None) -> list[SourceDropRow]:
+    """판의 기록(최근 것부터). 파일 내용(body)은 읽지 않는다."""
+    q = (
+        sa.select(SourceDropRow)
+        .options(defer(SourceDropRow.body))
+        .where(SourceDropRow.source_id == source_id)
+        .order_by(SourceDropRow.seq.desc())
     )
+    return list(session.scalars(q if limit is None else q.limit(limit)).all())
+
+
+def _next_seq(session: Session, source_id: str) -> int:
+    top = session.scalar(
+        sa.select(sa.func.max(SourceDropRow.seq)).where(SourceDropRow.source_id == source_id)
+    )
+    return (top or 0) + 1
 
 
 def drop(
@@ -211,30 +228,29 @@ def drop(
     sheet = _file_source(session, source_id, by)
     rows = check_drop(sheet, data)
     digest = hashlib.sha256(data).hexdigest()
-    latest = current_drop(session, source_id)
-    if latest is not None and latest.sha256 == digest:
-        return latest, False
-    seq = (
-        session.scalar(
-            sa.select(sa.func.max(SourceDropRow.seq)).where(SourceDropRow.source_id == source_id)
+    for _ in range(3):  # 같은 출처에 동시에 올리면 판 번호가 겹친다: 다시 세어 넣는다
+        latest = current_drop(session, source_id)
+        if latest is not None and latest.sha256 == digest:
+            return latest, False
+        row = SourceDropRow(
+            id=events.new_ulid(at),
+            source_id=source_id,
+            seq=_next_seq(session, source_id),
+            sha256=digest,
+            filename=(filename or "upload")[:200],
+            size=len(data),
+            rows=len(rows),
+            body=data,
+            uploaded_at=at,
+            uploaded_by=by,
         )
-        or 0
-    ) + 1
-    row = SourceDropRow(
-        id=events.new_ulid(at),
-        source_id=source_id,
-        seq=seq,
-        sha256=digest,
-        filename=(filename or "upload")[:200],
-        size=len(data),
-        rows=len(rows),
-        body=data,
-        uploaded_at=at,
-        uploaded_by=by,
-    )
-    session.add(row)
-    session.flush()
-    return row, True
+        try:
+            with session.begin_nested():
+                session.add(row)
+        except IntegrityError:
+            continue
+        return row, True
+    raise ValueError("같은 출처에 다른 판을 올리는 중이다. 잠시 뒤 다시 올린다")
 
 
 def withdraw_drop(session: Session, drop_id: str, *, by: str, at: datetime) -> bool:
@@ -265,7 +281,11 @@ def read_current(session: Session, source_id: str) -> list[NoticeRecord]:
 
 
 def forget(session: Session, person_id: str, *, at: datetime) -> int:
-    """사람이 정보를 지울 때: 그 사람의 출처를 멈추고 올린 파일의 내용을 지운다(판의 기록은 남는다)."""
+    """사람이 정보를 지울 때: 그 사람의 출처를 멈추고 올린 파일의 내용과 이름을 지운다.
+
+    판의 줄 수·시각은 남는다. 이미 수집한 줄(게시물과 수집 실행 기록)은 다른 출처의 글처럼 남는다
+    (재생을 위해 수집 기록은 고치지 않는다, source-catalog 6장). 그래서 개인정보가 든 파일은 받지 않는다고
+    올리는 화면과 도구 설명에 적는다."""
     if not _ready(session):
         return 0
     mine = session.scalars(
@@ -278,7 +298,9 @@ def forget(session: Session, person_id: str, *, at: datetime) -> int:
     cleared = session.execute(
         sa.update(SourceDropRow)
         .where(SourceDropRow.uploaded_by == person_id, SourceDropRow.body.is_not(None))
-        .values(body=None, withdrawn_at=sa.func.coalesce(SourceDropRow.withdrawn_at, at))
+        .values(
+            body=None, filename="", withdrawn_at=sa.func.coalesce(SourceDropRow.withdrawn_at, at)
+        )
         .execution_options(synchronize_session=False)
     ).rowcount
     return len(mine) + cleared

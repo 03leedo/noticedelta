@@ -509,7 +509,7 @@ def create_app(
             rows = []
             for sid, sheet in user_sources.sheets(s, owner=person_id).items():
                 kind = sheet.connector.kind
-                drops = user_sources.drops(s, sid)[:10] if kind == "file_drop" else []
+                drops = user_sources.drops(s, sid, limit=10) if kind == "file_drop" else []
                 rows.append({"id": sid, "title": sheet.title, "kind": kind, "item": sheet.item,
                              "drops": drops})  # fmt: skip
             ctx = {
