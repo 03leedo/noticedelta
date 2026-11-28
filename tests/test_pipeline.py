@@ -320,16 +320,113 @@ def test_change_only_in_keys_the_app_does_not_read_carries_values_without_llm(en
         by_name = {}
         for r in rows:
             by_name.setdefault(r.name, []).append(r.value)
-        # 판마다 두 필드. 자격은 앞 판 값을 옮겼고(이 앱은 본문을 읽지 않는다), 마감은 출처 값이
-        # 바뀌어 새 값이다(읽는 키 밖에서 바뀌어도 출처 값 필드는 본다)
-        assert {n: len(v) for n, v in by_name.items()} == {"deadline": 2, "eligibility_rules": 2}
-        assert by_name["eligibility_rules"][0] == by_name["eligibility_rules"][1]
+        # 제목만 읽는 앱은 본문·첨부의 조각을 보지 않아 자격 규칙을 뽑지 않는다(조각 단위 거르기).
+        # 마감은 출처 값이 바뀌어 새 값이다(읽는 키 밖에서 바뀌어도 출처 값 필드는 본다)
+        assert {n: len(v) for n, v in by_name.items()} == {"deadline": 2}
         assert sorted(by_name["deadline"]) == ["2026-11-07", "2026-11-14"]
         assert s.scalar(sa.select(sa.func.count()).select_from(models.OutboxAlert)) == 0
         detected = s.scalars(
             sa.select(models.EventRow).where(models.EventRow.type == "change.detected")
         ).all()
         assert any(e.payload.get("keys") for e in detected)  # 봉투에도 바뀐 키가 남는다
+
+
+def test_each_app_sees_only_segments_from_keys_it_reads(env):
+    """app-spec 9장: 본문 조각마다 원본 키를 적고, 앱은 자기가 읽는 키의 조각만 추출에 쓴다."""
+    from noticedelta.grants import APP
+
+    seen = []
+
+    def extractor(fields, segments):
+        seen.append(sorted(s.text for s in segments))
+        return {}
+
+    narrow = [
+        u.model_copy(update={"read": ["pblancNm", "reqstBeginEndDe"], "attachments": False})
+        if u.id == "bizinfo"
+        else u
+        for u in APP.sources
+    ]
+    env.ctx.app = APP.model_copy(update={"sources": narrow})
+    env.ctx.extractor = extractor
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    assert seen == [["신청 기간: 2026-10-13 ~ 2026-11-07"]]  # 개요(bsnsSumryCn)·첨부 조각은 없다
+    with env.factory() as s:
+        body = s.scalars(
+            sa.select(models.SegmentRow).where(
+                models.SegmentRow.locator["source"].as_string() == "body"
+            )
+        ).all()
+        assert sorted(tuple(r.locator["keys"]) for r in body) == [
+            ("bsnsSumryCn",),
+            ("reqstBeginEndDe",),
+        ]
+
+
+def test_body_keys_are_written_only_when_the_parts_split_the_same_way():
+    from noticedelta.ingest import body_segments
+    from noticedelta.sources.base import body_parts
+
+    body, keys = body_parts([(("a",), "첫째 문단"), (("b", "c"), "둘째: 값"), (("d",), "")])
+    stored = [[list(k), len(x)] for k, x in keys]
+    segs = body_segments(body, stored)
+    assert [s.locator["keys"] for s in segs] == [["a"], ["b", "c"]]
+    assert all("keys" not in s.locator for s in body_segments(body, None))  # 예전 판
+    assert all("keys" not in s.locator for s in body_segments(body, [[["a"], 3]]))  # 맞지 않음
+    plain = body_segments(body, None)
+    assert [(s.kind, s.text) for s in segs] == [(s.kind, s.text) for s in plain]  # 조각은 그대로
+
+
+def test_app_view_keeps_lineages_seen_in_either_version_and_drops_unread_attachments():
+    """리뷰(#81): 옛 판에서 보이던 근거가 새 판에서 다른 키로 넘어가도 바뀐 것으로 잡고, 첨부를 읽지
+    않는 앱에게는 읽지 못한 첨부의 lineage를 넘기지 않는다."""
+    from noticedelta.app_view import change_view, first_view
+    from noticedelta.grants import APP
+    from noticedelta.matching import ChangeSet
+    from noticedelta.segments import Segment
+
+    def seg(lineage, keys=None, source="body"):
+        loc = {"source": source, **({"keys": keys} if keys is not None else {})}
+        return Segment("paragraph", lineage, lineage, loc, 0, lineage)
+
+    narrow = [
+        u.model_copy(update={"read": ["reqstBeginEndDe"], "attachments": False})
+        if u.id == "bizinfo"
+        else u
+        for u in APP.sources
+    ]
+    app = APP.model_copy(update={"sources": narrow})
+    old = [seg("L1"), seg("L2", ["reqstBeginEndDe"]), seg("A1", source="att:x")]
+    new = [seg("L1", ["bsnsSumryCn"]), seg("L2", ["reqstBeginEndDe"]), seg("L3", ["trgetNm"])]
+    change = ChangeSet(new, added=["L3"], removed=["A1"], modified=["L1"], unchanged=["L2"])
+    view, kept, unknown = change_view(app, "bizinfo", change, old, {"A1"})
+    assert view.modified == ["L1"]  # 옛 판(키 없음)에서 보였다
+    assert view.added == [] and view.removed == [] and unknown == set()
+    assert [s.lineage_id for s in kept] == ["L1", "L2"]
+    assert [s.lineage_id for s in first_view(app, "bizinfo", new)] == ["L2"]
+    same = change_view(APP, "bizinfo", change, old, {"A1"})  # 지원사업 앱: 그대로
+    assert same[0] is change and same[1] is old and same[2] == {"A1"}
+
+
+def test_backfill_writes_keys_to_old_versions_and_their_segments(env):
+    from noticedelta.ingest import backfill_body_keys
+    from noticedelta.programs import TO_RECORD
+
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    with env.factory() as s:
+        for v in s.scalars(sa.select(models.NoticeVersion)):
+            v.body_keys = None  # 키를 적기 전에 만든 판처럼
+        for r in s.scalars(sa.select(models.SegmentRow)):
+            r.locator = {k: v for k, v in r.locator.items() if k != "keys"}
+        s.commit()
+        stats = backfill_body_keys(s, TO_RECORD.get)
+        s.commit()
+        assert stats == {"keyed": 1}
+        body = [r for r in s.scalars(sa.select(models.SegmentRow)) if r.locator["source"] == "body"]
+        assert body and all(r.locator.get("keys") for r in body)
+        assert backfill_body_keys(s, TO_RECORD.get) == {}  # 두 번 돌려도 같다
 
 
 def test_a_fixed_past_clock_still_runs_every_job(env):

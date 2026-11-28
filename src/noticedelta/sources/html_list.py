@@ -262,6 +262,7 @@ def to_record(source_id: str) -> Callable[[dict], NoticeRecord]:
             raise SourceError("글 주소가 없다")
         rec = feed({"guid": raw.get("guid") or raw["link"], "title": raw.get("title"),
                     "link": raw["link"], "description": raw.get("date") or ""})  # fmt: skip
-        return replace(rec, raw={k: raw.get(k) for k in KEYS})
+        keys = tuple((("date",) if ks == ("description",) else ks, t) for ks, t in rec.body_keys)
+        return replace(rec, raw={k: raw.get(k) for k in KEYS}, body_keys=keys)
 
     return convert

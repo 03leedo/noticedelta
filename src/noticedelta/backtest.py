@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from noticedelta.app_view import change_view, first_view
 from noticedelta.appspec import AppDefinition
 from noticedelta.eligibility import Judgment, RuleGroup, judge
 from noticedelta.evaluation.dataset import Chain
@@ -114,25 +115,31 @@ def backtest(
     for chain in chains:
         events += len(chain.events)
         try:
-            fields = extractor(set(types), chain.first_segments) if chain.first_segments else {}
+            first = first_view(
+                app, chain.source, chain.first_segments
+            )  # 운영과 같게 앱이 읽는 조각만
+            fields = extractor(set(types), first) if first else {}
         except _STOPS:
             missing += [ev.event_id for ev in chain.events]
             continue
         judgments = _judgments(fields, rules_field, profiles)
         for i, ev in enumerate(chain.events):
+            change, old, unknown = change_view(
+                app, chain.source, ev.change, ev.old_segments, ev.unknown
+            )
             try:
                 res = run_impact(
                     item_id=chain.item_id,
                     to_version_id=ev.event_id,
-                    change=ev.change,
+                    change=change,
                     old_fields=fields,
                     extractor=extractor,
                     subscriptions=subs,
                     profiles=profiles,
                     old_judgments=judgments,
                     candidate_detector=detector,
-                    old_segments=ev.old_segments,
-                    unknown_lineages=ev.unknown,
+                    old_segments=old,
+                    unknown_lineages=unknown,
                     app_id=app.id,
                     app_version=app.version,
                     alert_fields=app.alert_fields(),

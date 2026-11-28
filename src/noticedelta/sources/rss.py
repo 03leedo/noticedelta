@@ -26,7 +26,7 @@ from xml.parsers import expat
 
 import httpx
 
-from noticedelta.sources.base import NoticeRecord, SourceError
+from noticedelta.sources.base import NoticeRecord, SourceError, body_parts
 
 MAX_BYTES = 2_000_000
 MAX_ITEMS = 200
@@ -237,7 +237,9 @@ def to_record(source_id: str) -> Callable[[dict], NoticeRecord]:
             raise SourceError("글을 가리키는 값(guid·link)이 없다")
         if len(guid) > 100:  # 게시물 id 칸에 맞춘다(자르면 겹칠 수 있어 해시로)
             guid = "h:" + hashlib.sha256(guid.encode("utf-8")).hexdigest()[:40]
-        body = "\n\n".join(x for x in (raw.get("title"), raw.get("description")) if x)
+        body, body_keys = body_parts(
+            [(("title",), raw.get("title") or ""), (("description",), raw.get("description") or "")]
+        )
         return NoticeRecord(
             source=source_id,
             external_id=guid,
@@ -245,6 +247,7 @@ def to_record(source_id: str) -> Callable[[dict], NoticeRecord]:
             org=None,  # 기관이 없으면 항목을 묶지 않는다(게시물 하나가 항목 하나)
             url=str(raw.get("link") or "") or None,
             body=body,
+            body_keys=body_keys,
             apply_start=None,
             apply_end=None,
             raw={k: raw.get(k) for k in KEYS},

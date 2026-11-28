@@ -22,6 +22,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta import app_registry, flight, vault
+from noticedelta.app_view import change_view
 from noticedelta.appspec import AppDefinition, MetaRef
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
@@ -419,6 +420,19 @@ def _for_app(app: AppDefinition, event: ChangeEvent) -> bool:
     if source is None:  # 출처를 모르면(예전 기록) 받는다
         return True
     return app.reads_change(source, c.get("keys"), bool(c.get("attachments")))
+
+
+def _app_view(session: Session, app: AppDefinition, pv: ItemVersion, step):
+    """이 앱이 보는 조각만 남긴 단계 (app_view.py). 모두 보이면 단계를 그대로 돌려준다."""
+    source = session.scalar(
+        sa.select(Notice.source_id)
+        .join(NoticeVersion, NoticeVersion.notice_id == Notice.id)
+        .where(NoticeVersion.id == pv.notice_version_id)
+    )
+    change, old, unknown = change_view(app, source, step.change, step.old_segments, step.unknown)
+    if change is step.change and old is step.old_segments and unknown == set(step.unknown):
+        return step
+    return replace(step, change=change, old_segments=old, unknown=unknown)
 
 
 # --- 영향 계산 (설계 7.7) ---
@@ -870,6 +884,7 @@ def _impact_handler(ctx: Context, *, seed: bool = True) -> Handler:
             app_registry.seed(session, ctx.app, at=ctx.now())
 
         meta = _meta_fields(session, ctx.app, pv.notice_version_id)
+        step = _app_view(session, ctx.app, pv, step)  # 이 앱이 읽는 키의 조각만
         if job.payload.get("rebase") is not None:
             _rebase(ctx, session, job, pv, step, meta)
             return

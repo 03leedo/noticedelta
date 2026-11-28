@@ -115,6 +115,7 @@ def upsert_notice_version(
             content_hash=rec.content_hash,
             body=rec.body,
             raw=rec.raw,
+            body_keys=[[list(keys), len(text)] for keys, text in rec.body_keys],
         )
         try:
             with session.begin_nested():

@@ -11,6 +11,12 @@ from urllib.parse import unquote
 from noticedelta.text import canonical_text
 
 
+def body_parts(parts: Iterable[tuple[Iterable[str], str]]) -> tuple[str, tuple]:
+    """(키들, 글) 목록에서 빈 글을 빼고 (본문, body_keys)를 만든다. 본문은 글을 빈 줄 둘로 잇는다."""
+    kept = tuple((tuple(keys), text) for keys, text in parts if text)
+    return "\n\n".join(text for _, text in kept), kept
+
+
 def stable_url(url: str, drop: Iterable[str] = ()) -> str:
     """호출마다 바뀌는 쿼리 값(drop)을 뺀 주소. 같은 파일이면 같은 문자열이다.
 
@@ -83,6 +89,9 @@ class NoticeRecord:
     ignore: frozenset[str] = frozenset()  # 바뀌어도 변경이 아닌 키(조회수, 일괄 수정 시각 등)
     url_keys: frozenset[str] = frozenset()  # 첨부 주소가 든 키. 항목 버전은 받은 파일로 비교한다
     attachment_hosts: frozenset[str] = frozenset()  # 첨부를 받아도 되는 호스트. 비면 받지 않는다
+    # 본문(body)을 이룬 조각과 그 원본 키: ((키들, 글), …). 글을 빈 줄 하나를 두고 이으면 body다.
+    # 조각마다 어느 키에서 왔는지 적어 앱이 자기가 읽는 키의 조각만 보게 한다(app-spec 9장). 비면 모른다
+    body_keys: tuple[tuple[tuple[str, ...], str], ...] = ()
 
     @property
     def content_hash(self) -> str:

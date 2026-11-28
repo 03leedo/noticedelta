@@ -22,7 +22,7 @@ from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
-from noticedelta.sources.base import NoticeRecord, SourceError
+from noticedelta.sources.base import NoticeRecord, SourceError, body_parts
 
 MAX_BYTES = 2_000_000
 MAX_ROWS = 2000
@@ -181,7 +181,9 @@ def to_record(source_id: str, sheet) -> Callable[[dict], NoticeRecord]:
             rid = "h:" + hashlib.sha256(rid.encode("utf-8")).hexdigest()[:40]
         raw = {k: row.get(k, "") for k in keys}
         link = str(row.get(item.url) or "") if item.url else ""
-        body = "\n".join(f"{k}: {v}" for k, v in raw.items() if v and k != item.id)
+        body, body_keys = body_parts(
+            ((k,), f"{k}: {v}") for k, v in raw.items() if v and k != item.id
+        )
         return NoticeRecord(
             source=source_id,
             external_id=rid,
@@ -189,6 +191,7 @@ def to_record(source_id: str, sheet) -> Callable[[dict], NoticeRecord]:
             org=None,  # 기관이 없으면 항목을 묶지 않는다(줄 하나가 항목 하나)
             url=link if link.startswith(("http://", "https://")) else None,
             body=body,
+            body_keys=body_keys,
             apply_start=None,
             apply_end=None,
             raw=raw,

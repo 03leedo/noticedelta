@@ -225,15 +225,25 @@ _ULID = re.compile(r"(?<![0-9A-Z])[0-9A-HJKMNP-TV-Z]{26}(?![0-9A-Z])")
 
 
 class Namer:
-    """DB의 ID를 자연 키로 바꾼다. 모르는 ID는 "<id>"(비교에서 빠진다)."""
+    """DB의 ID를 자연 키로 바꾼다. 모르는 ID는 "<id>"(비교에서 빠진다).
+
+    마이그레이션하지 않은 원래 DB도 읽으므로 판(notice_version)은 쓰는 칸만 고른다(뒤에 생긴 칸을 읽지 않게).
+    """
 
     def __init__(self, session: Session):
         self.s = session
         self.names: dict[str, str] = {}
 
-    def _notice(self, nv: NoticeVersion) -> str:
-        n = self.s.get(Notice, nv.notice_id)
+    def _notice(self, notice_id: str) -> str:
+        n = self.s.get(Notice, notice_id)
         return f"{n.source_id}/{n.external_id}"
+
+    def _version(self, id_: str):
+        return self.s.execute(
+            sa.select(NoticeVersion.notice_id, NoticeVersion.version_no).where(
+                NoticeVersion.id == id_
+            )
+        ).first()
 
     def name(self, id_: str) -> str:
         if id_ in self.names:
@@ -246,11 +256,11 @@ class Namer:
                 out = f"ev:{env.type}/{self.canon(env.idempotency_key)}"
         elif (pv := self.s.get(ItemVersion, id_)) is not None:
             out = f"{self.name(pv.item_id)}@v{pv.version_no}"
-        elif (nv := self.s.get(NoticeVersion, id_)) is not None:
-            out = f"nv:{self._notice(nv)}@{nv.version_no}"
+        elif (nv := self._version(id_)) is not None:
+            out = f"nv:{self._notice(nv.notice_id)}@{nv.version_no}"
         elif self.s.get(Item, id_) is not None:
             first = self.s.scalar(
-                sa.select(NoticeVersion)
+                sa.select(NoticeVersion.notice_id)
                 .join(ItemVersion, ItemVersion.notice_version_id == NoticeVersion.id)
                 .where(ItemVersion.item_id == id_)
                 .order_by(ItemVersion.version_no)

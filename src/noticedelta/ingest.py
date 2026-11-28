@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 import httpx
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
-from noticedelta.db.models import Attachment, Notice, NoticeVersion, ParseCache
+from noticedelta.db.models import Attachment, Notice, NoticeVersion, ParseCache, SegmentRow
 from noticedelta.parsing import (
     PARSEABLE_MIMES,
     ParsedDocument,
@@ -155,13 +157,101 @@ def _source_id(att: Attachment) -> str:
     return f"att:{att.blob_key[:12]}"
 
 
+def body_segments(body: str, body_keys: list | None) -> list[Segment]:
+    """본문의 조각. 조각마다 원본 키(locator.keys)를 적는다(app-spec 9장: 앱은 읽는 키의 조각만 본다).
+
+    조각은 본문 전체를 한 번에 나눈 것 그대로다(키를 적는다고 조각이 달라지지 않는다). 부분마다 따로
+    나눈 결과가 전체를 나눈 결과와 글자까지 같을 때만 키를 적고, 아니면(예전 판, 부분 경계를 넘는 조각)
+    적지 않는다. 키가 없는 조각은 그 출처를 읽는 모든 앱이 본다.
+    """
+    segments = segment_document([body], source="body") if body else []
+    keys = _part_keys(body, body_keys)
+    if keys is None:
+        return segments
+    flat: list[tuple[str, str]] = []
+    owners: list[list[str]] = []
+    for part_keys, text in keys:
+        for s in segment_document([text], source="body"):
+            flat.append((s.kind, s.text))
+            owners.append(sorted(part_keys))
+    if flat != [(s.kind, s.text) for s in segments]:
+        return segments
+    return [
+        replace(s, locator={**s.locator, "keys": k}) for s, k in zip(segments, owners, strict=True)
+    ]
+
+
+def _part_keys(body: str, body_keys: list | None) -> list[tuple[list[str], str]] | None:
+    """[[키들, 글자 수], …]를 본문에서 잘라 (키들, 글)로. 빈 줄 하나를 두고 이은 것과 맞지 않으면 None."""
+    if not body or not body_keys:
+        return None
+    out, pos = [], 0
+    for i, (keys, n) in enumerate(body_keys):
+        if i and body[pos : pos + 2] != "\n\n":
+            return None
+        pos += 2 if i else 0
+        out.append((list(keys), body[pos : pos + n]))
+        pos += n
+    return out if pos == len(body) else None
+
+
+def backfill_body_keys(
+    session: Session, convert_for: Callable[[str], Callable[[dict], NoticeRecord] | None]
+) -> Counter:
+    """키를 적기 전에 만든 판(body_keys가 없음)에 본문 부분의 키를 채우고, 저장된 본문 조각에도 적는다.
+
+    지금 어댑터로 원본(raw)을 다시 바꿔 본문이 저장된 본문과 글자까지 같을 때만 채운다. 저장된 본문 조각은
+    다시 나눈 조각과 (종류, 글)이 차례대로 모두 같을 때만 키를 적는다(조각 자체는 바꾸지 않는다).
+    """
+    stats: Counter = Counter()
+    rows = session.execute(
+        sa.select(NoticeVersion.id, Notice.source_id, NoticeVersion.body, NoticeVersion.raw)
+        .join(Notice, Notice.id == NoticeVersion.notice_id)
+        .where(NoticeVersion.body_keys.is_(None))
+    ).all()
+    for version_id, source, body, raw in rows:
+        convert = convert_for(source)
+        if convert is None:
+            stats["no_adapter"] += 1
+            continue
+        try:
+            rec = convert(raw or {})
+        except Exception:  # 옛 원본을 지금 어댑터가 못 읽는다: 그 판은 키 없이 둔다
+            stats["unreadable"] += 1
+            continue
+        if rec.body != (body or ""):
+            stats["body_differs"] += 1
+            continue
+        keys = [[list(k), len(text)] for k, text in rec.body_keys]
+        session.get(NoticeVersion, version_id).body_keys = keys
+        fresh = [s for s in body_segments(rec.body, keys) if "keys" in s.locator]
+        stored = [
+            r
+            for r in session.scalars(
+                sa.select(SegmentRow)
+                .where(SegmentRow.notice_version_id == version_id)
+                .order_by(SegmentRow.ord)
+            )
+            if r.locator.get("source") == "body"
+        ]
+        if not fresh or [(r.kind, r.text) for r in stored] != [(s.kind, s.text) for s in fresh]:
+            stats["version_only"] += 1  # 판에는 적었지만 저장된 조각과 맞지 않거나 본문이 없다
+            continue
+        for r, s in zip(stored, fresh, strict=True):
+            r.locator = {**r.locator, "keys": s.locator["keys"]}
+        stats["keyed"] += 1
+    session.flush()
+    return stats
+
+
 def version_segments(session: Session, version: NoticeVersion, store: BlobStore) -> list[Segment]:
     """버전 하나의 조각 전체: API 본문, 그다음 파싱에 성공한 첨부들(공고문 본 파일 먼저).
 
     조각 위치(locator)의 source는 "body" 또는 "att:<원문 해시 앞 12자>"이고, 첨부 조각에는
-    파일 이름·역할을 더한다. 파일 이름이 바뀌어도 내용이 같으면 같은 source다.
+    파일 이름·역할을 더한다. 파일 이름이 바뀌어도 내용이 같으면 같은 source다. 본문 조각에는 원본 키를
+    더한다(keys, 알 수 있을 때만. body_segments).
     """
-    segments = segment_document([version.body], source="body") if version.body else []
+    segments = body_segments(version.body, version.body_keys)
     rows = session.scalars(
         sa.select(Attachment).where(
             Attachment.notice_version_id == version.id, Attachment.parse_status == "ok"
