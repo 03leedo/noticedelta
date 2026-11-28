@@ -388,8 +388,9 @@ def load_run(session: Session, path: Path, store: BlobStore, summary: LoadSummar
                 summary.new_item_versions += 1
                 summary.new_version_ids.append(pv.id)
         # 이번 실행에 없는 게시물은 닫혔다(기업마당은 정정 때 원공고를 닫는다). 피드(사용자 출처)는
-        # 최근 몇 개만 보여 주므로 빠졌다고 닫지 않는다
-        if body.get("error") is None and source in TO_RECORD:
+        # 최근 몇 개만 보여 주므로 빠졌다고 닫지 않는다. 올린 파일의 판은 목록 전체라 닫는다(빈 판은 빼고)
+        full = source in TO_RECORD or (seen_ids and user_sources.full_list(session, source))
+        if body.get("error") is None and full:
             closed = session.scalars(
                 sa.select(Notice).where(
                     Notice.source_id == source,

@@ -39,6 +39,7 @@ LAYERS: dict[str, list[str]] = {
         "snapshot",
         "sources.attachments",
         "sources.base",
+        "sources.file_drop",  # 파일 올리기 커넥터: CSV·JSON 판을 줄로, 칸 제안
         "sources.html_list",  # 게시판(글 목록 페이지) 커넥터: 목록 위치를 찾아 제안
         "sources.http",
         "sources.resilience",

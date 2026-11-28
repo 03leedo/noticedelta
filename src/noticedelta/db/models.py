@@ -699,6 +699,27 @@ class UserSourceRow(Base):
     removed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
+class SourceDropRow(Base):
+    """파일 올리기 출처(file_drop)에 올린 판 하나 (source-catalog.md 3장). 판의 순서는 seq(올린 차례).
+
+    수집은 거두지 않은 마지막 판을 읽는다. 같은 파일(sha256)을 다시 올리면 새 판이 아니다.
+    """
+
+    __tablename__ = "source_drop"
+    __table_args__ = (sa.UniqueConstraint("source_id", "seq", name="uq_source_drop_seq"),)
+    id: Mapped[str] = mapped_column(sa.String(26), primary_key=True)  # ULID
+    source_id: Mapped[str] = mapped_column(sa.String(64), index=True)  # user_source.id
+    seq: Mapped[int] = mapped_column(sa.Integer)
+    sha256: Mapped[str] = mapped_column(sa.String(64))
+    filename: Mapped[str] = mapped_column(sa.String(200))
+    size: Mapped[int] = mapped_column(sa.Integer)
+    rows: Mapped[int] = mapped_column(sa.Integer)
+    body: Mapped[bytes | None] = mapped_column(sa.LargeBinary)  # 지우면 None(기록은 남는다)
+    uploaded_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    uploaded_by: Mapped[str] = mapped_column(sa.String(32))  # person id
+    withdrawn_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
 class ManageInviteRow(Base):
     """관리자의 초대 링크 (app-spec 6장 관리자). 토큰은 해시로만 둔다. 기한 안에 여러 사람이 받을 수 있다."""
 

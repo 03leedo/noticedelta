@@ -77,6 +77,30 @@
       "title": "Fetch",
       "type": "object"
     },
+    "FileDropConnector": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "file_drop",
+          "title": "Kind",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "csv",
+            "json"
+          ],
+          "title": "Format",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "format"
+      ],
+      "title": "FileDropConnector",
+      "type": "object"
+    },
     "HtmlListConnector": {
       "additionalProperties": false,
       "properties": {
@@ -316,6 +340,7 @@
       "discriminator": {
         "mapping": {
           "code": "#/$defs/CodeConnector",
+          "file_drop": "#/$defs/FileDropConnector",
           "html_list": "#/$defs/HtmlListConnector",
           "rss": "#/$defs/RssConnector"
         },
@@ -330,6 +355,9 @@
         },
         {
           "$ref": "#/$defs/HtmlListConnector"
+        },
+        {
+          "$ref": "#/$defs/FileDropConnector"
         }
       ],
       "title": "Connector"

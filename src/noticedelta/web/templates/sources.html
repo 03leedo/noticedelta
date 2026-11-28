@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}내 출처 · NoticeDelta{% endblock %}
+{% block body %}
+<h1>내 출처</h1>
+<p class="muted"><a href="/p/{{ token }}">내 지원사업으로</a> · 출처 등록은 에이전트가 제안하고, 승인함에서 확인합니다.</p>
+{% if not sources %}<p class="muted">내가 등록한 출처가 없습니다.</p>{% endif %}
+{% for src in sources %}
+<article class="card">
+  <p><strong>{{ src.title }}</strong> <code>{{ src.id }}</code>
+  <span class="muted">{% if src.kind == "file_drop" %}파일 올리기{% elif src.kind == "html_list" %}게시판{% else %}피드{% endif %}</span></p>
+  {% if src.kind == "file_drop" %}
+  <p class="muted">「{{ src.item.id }}」 칸으로 줄을 가리키고 「{{ src.item.title }}」 칸을 제목으로 씁니다. 새 판을 올리면 다음 수집에서 바뀐 줄, 새 줄, 빠진 줄을 찾습니다.</p>
+  <form method="post" action="/p/{{ token }}/sources/{{ src.id }}/drop" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".csv,.json,.txt" required>
+    <button type="submit">새 판 올리기 (CSV·JSON, {{ max_mb }}MB까지)</button>
+  </form>
+  {% if src.drops %}
+  <table>
+    <tr><th>판</th><th>파일</th><th>줄</th><th>올린 때</th><th></th></tr>
+    {% for d in src.drops %}
+    <tr>
+      <td>{{ d.seq }}</td><td>{{ d.filename }}</td><td>{{ d.rows }}</td>
+      <td>{{ d.uploaded_at.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td>{% if d.withdrawn_at %}<span class="muted">거둠</span>{% else %}
+        <form method="post" action="/p/{{ token }}/sources/drops/{{ d.id }}/withdraw"><button type="submit">거두기</button></form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted">아직 올린 판이 없습니다.</p>{% endif %}
+  {% endif %}
+</article>
+{% endfor %}
+{% endblock %}
