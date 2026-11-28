@@ -32,7 +32,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
-from noticedelta import app_registry, managers, people, vault
+from noticedelta import app_registry, managers, people, user_sources, vault
 from noticedelta.agent import CASSETTES, DAILY_ENV, build_gateway
 from noticedelta.app_status import app_status, describe
 from noticedelta.app_tools import Preview, backtest_preview
@@ -49,6 +49,8 @@ from noticedelta.grants import SIDO
 from noticedelta.metrics import collect, prometheus_text
 from noticedelta.names import FIELD_NAMES, RESULT_NAMES
 from noticedelta.notify import inbox
+from noticedelta.sources import file_drop
+from noticedelta.sources.base import SourceError
 from noticedelta.tool_gateway import ToolGateway
 from noticedelta.web import consent
 from noticedelta.web.history_views import alert_evidence, program_detail
@@ -274,6 +276,7 @@ def create_app(
             # 에이전트 세션을 닫고 나가지 않은 효과를 버린다. 효과에 남은 인자(본문의 내 정보)도 지운다
             gate.forget_person(s, person_id, now=now())
             managers.forget(s, person_id, at=now())  # 관리자 연결도 닫는다
+            user_sources.forget(s, person_id, at=now())  # 내 출처를 멈추고 올린 파일을 지운다
             if not consent.delete_user(s, person_id, at=now()):
                 raise HTTPException(404, "없는 링크입니다")
             people.forget(s, person_id, at=now())
@@ -496,6 +499,56 @@ def create_app(
                 .order_by(AppDefinitionRow.version)
             ).all()
         )
+
+    # --- 내 출처 (source-catalog.md 4장): 등록한 출처를 보고, 파일 올리기 출처에 새 판을 올린다 ---
+
+    @app.get("/p/{token}/sources", response_class=HTMLResponse)
+    def sources_page(request: Request, token: str):
+        with session_factory() as s:
+            person_id = load(s, token).person_id
+            rows = []
+            for sid, sheet in user_sources.sheets(s, owner=person_id).items():
+                kind = sheet.connector.kind
+                drops = user_sources.drops(s, sid, limit=10) if kind == "file_drop" else []
+                rows.append({"id": sid, "title": sheet.title, "kind": kind, "item": sheet.item,
+                             "drops": drops})  # fmt: skip
+            ctx = {
+                **common,
+                "token": token,
+                "sources": rows,
+                "max_mb": file_drop.MAX_BYTES // 10**6,
+            }
+            return templates.TemplateResponse(request, "sources.html", ctx)
+
+    @app.post("/p/{token}/sources/{source_id}/drop")
+    async def drop_upload(request: Request, token: str, source_id: str):
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(400, "올릴 파일을 고르세요")
+        data = await upload.read(file_drop.MAX_BYTES + 1)
+        with session_factory() as s:
+            person_id = load(s, token).person_id
+            try:
+                user_sources.drop(s, source_id, data, upload.filename or "upload", by=person_id,
+                                  at=now())  # fmt: skip
+            except user_sources.NotYours as e:
+                raise HTTPException(404, "없는 출처입니다") from e
+            except (ValueError, SourceError) as e:
+                raise HTTPException(400, str(e)) from e
+            s.commit()
+        return RedirectResponse(f"/p/{token}/sources", status_code=303)
+
+    @app.post("/p/{token}/sources/drops/{drop_id}/withdraw")
+    def drop_withdraw(token: str, drop_id: str):
+        with session_factory() as s:
+            person_id = load(s, token).person_id
+            try:
+                user_sources.withdraw_drop(s, drop_id, by=person_id, at=now())
+            except (user_sources.NotYours, ValueError) as e:
+                raise HTTPException(404, "없는 판입니다") from e
+            s.commit()
+        return RedirectResponse(f"/p/{token}/sources", status_code=303)
 
     @app.get("/p/{token}/apps", response_class=HTMLResponse)
     def apps_page(request: Request, token: str):

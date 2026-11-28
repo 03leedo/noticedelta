@@ -54,14 +54,15 @@ def alert(text: str) -> None:
 
 
 def user_feeds(http: httpx.Client) -> dict:
-    """사용자가 등록한 출처(RSS·게시판)의 받기 함수. DB는 마이그레이션 없이 읽기만 한다(없으면 빈 것)."""
+    """사용자가 등록한 출처(RSS·게시판·파일)의 받기 함수. DB는 마이그레이션 없이 읽기만 한다(없으면 빈 것)."""
     from sqlalchemy.orm import sessionmaker
 
     from noticedelta.db import make_engine
-    from noticedelta.user_sources import sheets
+    from noticedelta.user_sources import read_current, sheets
 
     try:
-        with sessionmaker(make_engine(database_url()))() as s:
+        factory = sessionmaker(make_engine(database_url()))
+        with factory() as s:
             found = sheets(s)
     except Exception as e:  # DB가 없거나 열리지 않아도 운영자 출처는 받는다
         print(f"사용자 출처를 읽지 못했습니다: {type(e).__name__}", file=sys.stderr)
@@ -92,12 +93,31 @@ def user_feeds(http: httpx.Client) -> dict:
 
         return page
 
+    def dropped(source_id: str):
+        """파일 올리기: 소유자가 올린 마지막 판을 읽는다(밖으로 받으러 가지 않는다)."""
+
+        def page(n: int):
+            if n > 1:
+                return []
+            try:
+                with factory() as s:
+                    return read_current(s, source_id)
+            except Exception as e:  # 표가 없는 예전 DB, 깨진 판: 이 출처만 실패로
+                raise SourceError(f"올린 판을 읽지 못했다: {type(e).__name__}") from None
+
+        return page
+
+    files = {sid for sid, sh in found.items() if sh.connector.kind == "file_drop"}
     due = {
         sid: sh
         for sid, sh in found.items()
-        if sid not in last or now - last[sid] >= timedelta(hours=sh.fetch.every_hours)
-    }  # 장에 적은 주기(every_hours)보다 자주 받지 않는다
-    return {sid: feed(sid, sh) for sid, sh in due.items()}
+        if sid not in files
+        and (sid not in last or now - last[sid] >= timedelta(hours=sh.fetch.every_hours))
+    }  # 장에 적은 주기(every_hours)보다 자주 받지 않는다. 올린 파일은 실행마다 읽는다(같으면 변경 없음)
+    return {
+        **{sid: feed(sid, sh) for sid, sh in due.items()},
+        **{sid: dropped(sid) for sid in files},
+    }
 
 
 def last_fetched(runs: Path, ids: set[str]) -> dict[str, datetime]:

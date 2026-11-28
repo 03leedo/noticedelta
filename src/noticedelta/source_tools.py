@@ -3,11 +3,13 @@
     find_sources(query)     이미 있는 출처를 먼저 찾는다(운영자의 검증된 출처 + 내가 등록한 출처)
     probe_source(url)       한 번 받아 보고 초안 한 장 + 최근 글 몇 개 + 사람에게 보일 문장을 낸다(A)
     register_source(draft)  나만 쓰는 출처로 등록한다. 이용 조건에 동의하는 순간이라 늘 사람의 확인(C)
+    probe_file(content)     목록 파일(CSV·JSON)을 읽어 보고 파일 올리기 출처의 초안을 낸다(A)
+    drop_file(source_id, content)   내 파일 올리기 출처에 새 판을 올린다(internal, 되돌리면 그 판을 거둔다)
 
 주소는 받을 때마다 안전한지 본다(사설·내부 주소, 비표준 포트, 넘겨주기까지). 받은 글은 신뢰할 수 없는
 입력이다(probe_source는 A). 등록한 출처는 소유자의 앱만 쓴다(app_tools가 앱을 검사할 때 더한다).
-RSS·Atom 피드와 게시판(html_list: 되풀이되는 글 목록의 위치를 플랫폼이 찾아 제안한다)을 받는다.
-파일 올리기(file_drop)는 아직이다.
+RSS·Atom 피드와 게시판(html_list: 되풀이되는 글 목록의 위치를 플랫폼이 찾아 제안한다), 파일 올리기
+(file_drop: 사람이 목록 파일의 새 판을 올린다. 칸 이름이 키다)를 받는다. 큰 파일은 웹에서 올린다.
 """
 
 from __future__ import annotations
@@ -22,11 +24,12 @@ from sqlalchemy.orm import Session
 
 from noticedelta import user_sources
 from noticedelta.catalog import SourceSheet, check_sheet
-from noticedelta.sources import CATALOG, html_list, rss
+from noticedelta.sources import CATALOG, file_drop, html_list, rss
 from noticedelta.sources.base import SourceError
 from noticedelta.tooling import Tool
 
 SAMPLES = 5
+MAX_TOOL_FILE = 500_000  # 도구로 올리는 파일(글자). 인자로 기록에 남으므로 작게, 큰 파일은 웹에서
 
 
 def _now() -> datetime:
@@ -64,6 +67,26 @@ def board_sheet(url: str, title: str, list_path: str) -> dict:
     sheet["connector"] = {"kind": "html_list", "url": url, "list": list_path}
     sheet["keys"] = {k: {"about": about} for k, about in html_list.KEYS.items()}
     return sheet
+
+
+def file_sheet(title: str, filename: str, fmt: str, rows: list[dict], guess: dict) -> dict:
+    stem = re.sub(r"\.[a-z0-9]+$", "", filename.lower())
+    slug = re.sub(r"[^a-z0-9]+", "_", f"f_{stem}").strip("_")[: user_sources.MAX_ID].rstrip("_")
+    item = {"id": guess["id"], "title": guess["title"]}
+    if guess.get("url"):
+        item["url"] = guess["url"]
+    return {
+        "kind": "source",
+        "id": slug if len(slug) > 2 else "f_list",
+        "title": (title or filename or "올린 목록")[:100],
+        "status": "private",
+        "owner": "person:?",
+        "connector": {"kind": "file_drop", "format": fmt},
+        "fetch": {"every_hours": 6, "rate_per_second": 1},  # 올린 파일은 수집 실행마다 읽는다
+        "item": item,
+        "keys": {c: {"about": f"올린 파일의 칸 「{c}」"} for c in file_drop.columns(rows)},
+        "terms": {"license": "올린 사람이 쓸 권리를 가진 파일", "quote_limit": 300},
+    }
 
 
 def page_title(page: str) -> str:
@@ -194,9 +217,98 @@ def source_tools(
             "next": "다음 수집부터 받는다. 앱 정의의 sources에 이 id를 쓴다",
         }
 
+    def probe_file(content: str, filename: str = "", title: str = "") -> dict:
+        """목록 파일(CSV·JSON)을 읽어 보고 파일 올리기 출처의 초안과 앞의 줄 몇 개를 낸다."""
+        data = content.encode("utf-8")
+        fmt = file_drop.format_of(filename, data)
+        try:
+            rows = file_drop.parse(data, fmt)
+        except SourceError as e:
+            return {"error": str(e)}
+        guess = file_drop.propose(rows)
+        if guess["id"] is None:
+            return {"error": "비지 않고 줄마다 다른 칸이 없다. 항목을 가리킬 칸(예: 번호)을 하나 만든다",
+                    "columns": file_drop.columns(rows)}  # fmt: skip
+        draft = unique_id(file_sheet(title, filename, fmt, rows, guess))
+        samples = [{k: r.get(k, "") for k in (guess["id"], guess["title"])} for r in rows[:SAMPLES]]
+        return {
+            "draft": draft,
+            "samples": samples,
+            "say": f"이 파일에서 {len(rows)}줄을 읽었습니다. 「{guess['id']}」 칸으로 줄을 가리키고, "
+            f"「{guess['title']}」 칸을 제목으로 씁니다. 이 목록을 출처로 등록할까요? 등록한 뒤 새 판을 "
+            "올리면 바뀐 줄을 알려 드립니다.",
+            "next": "등록(register_source)한 뒤 drop_file로 이 파일을 첫 판으로 올린다",
+        }
+
+    def may_drop(db: Session, person_id: str | None, args: dict) -> str | None:
+        if person_id is None:
+            return "사람이 정해지지 않은 세션은 파일을 올릴 수 없다(내 링크로 접속한다)"
+        try:
+            sheet = user_sources._file_source(db, str(args.get("source_id")), person_id)
+            user_sources.check_drop(sheet, str(args.get("content", "")).encode("utf-8"))
+        except (PermissionError, ValueError, SourceError) as e:
+            return str(e)[:300]
+        return None
+
+    def small_file(args: dict) -> str | None:
+        if len(str(args.get("content", ""))) > MAX_TOOL_FILE:
+            return (
+                f"도구로는 {MAX_TOOL_FILE:,}자까지 올린다. 큰 파일은 웹의 내 출처 화면에서 올린다"
+            )
+        return None
+
+    def drop_file(source_id: str, content: str, filename: str = "upload",
+                  actor: str | None = None) -> dict:  # fmt: skip
+        """내 파일 올리기 출처에 새 판을 올린다. 다음 수집 실행에서 바뀐 줄을 찾는다."""
+        person = _person(actor)
+        if person is None:
+            raise PermissionError("사람이 정해지지 않았다")
+        with factory() as s:
+            row, new = user_sources.drop(s, source_id, content.encode("utf-8"), filename,
+                                         by=person, at=now())  # fmt: skip
+            s.commit()
+            out = {"source": source_id, "edition": row.seq, "rows": row.rows, "new": new}
+            sheet = user_sources._file_source(s, source_id, person)
+            extra = user_sources.ignored_columns(
+                sheet, file_drop.parse(row.body, sheet.connector.format)
+            )
+            if extra:
+                out["ignored_columns"] = extra  # 장에 없어 받지 않은 칸(장을 고쳐야 받는다)
+            if new:
+                out["next"] = "다음 수집 실행에서 이 판을 읽고 바뀐 줄을 찾는다"
+                out["undo"] = {"drop_id": row.id, "by": person}
+            else:
+                out["next"] = "마지막 판과 같은 파일이라 새 판이 아니다"
+        return out
+
+    def undo_drop(drop_id: str, by: str) -> None:
+        with factory() as s:
+            user_sources.withdraw_drop(s, drop_id, by=by, at=now())
+            s.commit()
+
     return [
         Tool(
             "find_sources", "이미 있는 출처를 찾는다(검증된 출처와 내가 등록한 출처).", find_sources
+        ),
+        Tool(
+            "probe_file",
+            "목록 파일(CSV·JSON 글)을 읽어 보고 파일 올리기 출처의 초안(칸 이름이 키, 항목 id·제목 칸 제안)"
+            "과 앞의 줄 몇 개를 준다(등록하지 않는다). 공고 목록용이다: 개인정보가 든 파일은 쓰지 않는다"
+            "(올린 줄은 수집한 글처럼 보관된다).",
+            probe_file,
+            frozenset({"A"}),
+            logged_args=("filename",),
+        ),
+        Tool(
+            "drop_file",
+            "내가 등록한 파일 올리기 출처에 목록 파일의 새 판을 올린다. 되돌리면 그 판을 거둔다. 장에 적은"
+            " 칸이 모두 있어야 한다. 개인정보가 든 파일은 올리지 않는다.",
+            drop_file,
+            effect="internal",
+            undo=undo_drop,
+            authorize=may_drop,
+            validate=small_file,
+            logged_args=("source_id", "filename"),
         ),
         Tool(
             "probe_source",
