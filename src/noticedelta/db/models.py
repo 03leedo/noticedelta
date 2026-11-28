@@ -216,6 +216,8 @@ class NoticeVersion(Base):
     content_hash: Mapped[str] = mapped_column(sa.String(64))
     body: Mapped[str] = mapped_column(sa.Text, default="")
     raw: Mapped[dict] = mapped_column(JSONType, default=dict)
+    # 본문을 이룬 부분의 원본 키와 글자 수: [[키들, 글자 수], …] (빈 줄 하나를 두고 이은 차례). 예전 판은 None
+    body_keys: Mapped[list | None] = mapped_column(JSONType)
 
 
 class Attachment(Base):

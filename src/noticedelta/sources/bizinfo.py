@@ -25,6 +25,7 @@ from noticedelta.sources.base import (
     AttachmentRef,
     NoticeRecord,
     SourceError,
+    body_parts,
     normalize_service_key,
     stable_url,
 )
@@ -121,7 +122,7 @@ def to_record(item: dict) -> NoticeRecord:
         if k in raw:
             raw[k] = _stable_urls(raw[k])
     start, end = _period(item.get("reqstBeginEndDe"))
-    blocks = [html_to_text(item.get("bsnsSumryCn") or "")]
+    blocks = [(("bsnsSumryCn",), html_to_text(item.get("bsnsSumryCn") or ""))]
     for label, k in [
         ("지원 대상", "trgetNm"),
         ("신청 기간", "reqstBeginEndDe"),
@@ -129,14 +130,16 @@ def to_record(item: dict) -> NoticeRecord:
         ("문의처", "refrncNm"),
     ]:
         if str(item.get(k) or "").strip():
-            blocks.append(f"{label}: {html_to_text(str(item[k]))}")
+            blocks.append(((k,), f"{label}: {html_to_text(str(item[k]))}"))
+    body, body_keys = body_parts(blocks)
     return NoticeRecord(
         source="bizinfo",
         external_id=str(item["pblancId"]),
         title=str(item.get("pblancNm") or "").strip(),
         org=item.get("excInsttNm") or item.get("jrsdInsttNm") or None,
         url=item.get("pblancUrl") or None,
-        body="\n\n".join(b for b in blocks if b),
+        body=body,
+        body_keys=body_keys,
         apply_start=start,
         apply_end=end,
         attachments=_attachments(item),

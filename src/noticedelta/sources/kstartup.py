@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 
 from noticedelta.catalog import load_sheet
-from noticedelta.sources.base import NoticeRecord, normalize_service_key
+from noticedelta.sources.base import NoticeRecord, body_parts, normalize_service_key
 from noticedelta.sources.http import get_json
 from noticedelta.sources.resilience import CircuitBreaker, RateLimiter
 
@@ -61,18 +61,24 @@ def _clean(value) -> str:
 
 def to_record(item: dict) -> NoticeRecord:
     blocks = [
-        f"{label}: {_clean(item[k])}" for label, k in _BODY_FIELDS if str(item.get(k) or "").strip()
+        ((k,), f"{label}: {_clean(item[k])}")
+        for label, k in _BODY_FIELDS
+        if str(item.get(k) or "").strip()
     ]
     start, end = _ymd(item.get("pbanc_rcpt_bgng_dt")), _ymd(item.get("pbanc_rcpt_end_dt"))
     if start or end:
-        blocks.append(f"접수 기간: {start or ''} ~ {end or ''}")
+        blocks.append(
+            (("pbanc_rcpt_bgng_dt", "pbanc_rcpt_end_dt"), f"접수 기간: {start or ''} ~ {end or ''}")
+        )
+    body, body_keys = body_parts(blocks)
     return NoticeRecord(
         source="kstartup",
         external_id=str(item["pbanc_sn"]),
         title=_clean(item.get("biz_pbanc_nm") or ""),
         org=item.get("pbanc_ntrp_nm") or None,
         url=item.get("detl_pg_url") or None,
-        body="\n\n".join(blocks),
+        body=body,
+        body_keys=body_keys,
         apply_start=start,
         apply_end=end,
         attachments=[],
