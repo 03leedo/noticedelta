@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from noticedelta.evaluation.dataset import Chain
 from noticedelta.evaluation.methods import Method
@@ -29,6 +29,8 @@ class Row:
     score: Score
     score_meta: Score  # API 메타로 보이는 변경만 양성으로
     score_text: Score  # 본문·첨부에서만 보이는 변경만 양성으로
+    costs: dict[str, dict[str, int]] = field(default_factory=dict)  # 이벤트마다 _SUMS 값
+    notes: dict[str, str] = field(default_factory=dict)  # 판단하지 못한 이벤트의 이유
 
 
 def evaluate(
@@ -41,6 +43,8 @@ def evaluate(
     for name, make in methods.items():
         predictions: dict[str, set[str] | None] = {}
         total = dict.fromkeys(_SUMS, 0)
+        costs: dict[str, dict[str, int]] = {}
+        notes: dict[str, str] = {}
         for chain in chains:
             method = make()
             method.start(chain.first_segments)
@@ -51,6 +55,9 @@ def evaluate(
             for ev in chain.events:
                 out = method.step(ev)
                 predictions[ev.event_id] = out.changed
+                costs[ev.event_id] = {k: getattr(out, k) for k in _SUMS}
+                if out.changed is None:
+                    notes[ev.event_id] = out.note
                 for k in _SUMS:
                     total[k] += getattr(out, k)
         rows.append(
@@ -68,9 +75,46 @@ def evaluate(
                 score=score(predictions, labels),
                 score_meta=score(predictions, labels, visible_in=("api_meta",)),
                 score_text=score(predictions, labels, visible_in=TEXT_ONLY),
+                costs=costs,
+                notes=notes,
             )
         )
     return rows
+
+
+def common_events(rows: Sequence[Row]) -> set[str]:
+    """모든 방식이 판단한 이벤트. 방식끼리 같은 정정으로 비교할 때 쓴다(시험 세트 동결 표)."""
+    if not rows:
+        return set()
+    return set.intersection(*({e for e, p in r.predictions.items() if p is not None} for r in rows))
+
+
+def restrict(
+    rows: Sequence[Row], events: set[str], labels: Mapping[tuple[str, str], Label]
+) -> list[Row]:
+    """이 이벤트들만 남긴 표. 판단·토큰·점수를 그 이벤트들로 다시 센다(다시 돌리지 않는다).
+
+    처음 추출의 미리 세기는 사업 단위라 넣지 않는다(녹화본으로 채점할 때 쓰는 표다).
+    """
+    out = []
+    for r in rows:
+        preds = {e: p for e, p in r.predictions.items() if e in events}
+        sums = {k: sum(r.costs.get(e, {}).get(k, 0) for e in preds) for k in _SUMS}
+        out.append(
+            replace(
+                r,
+                events=len(preds),
+                judged=sum(p is not None for p in preds.values()),
+                predictions=preds,
+                score=score(preds, labels),
+                score_meta=score(preds, labels, visible_in=("api_meta",)),
+                score_text=score(preds, labels, visible_in=TEXT_ONLY),
+                costs={e: c for e, c in r.costs.items() if e in preds},
+                notes={e: n for e, n in r.notes.items() if e in preds},
+                **sums,
+            )
+        )
+    return out
 
 
 def disagreements(a: Row, b: Row) -> list[tuple[str, str]]:
@@ -217,4 +261,6 @@ def with_meta(
         score=score(preds, labels),
         score_meta=score(preds, labels, visible_in=("api_meta",)),
         score_text=score(preds, labels, visible_in=TEXT_ONLY),
+        costs=base.costs,
+        notes=base.notes,
     )

@@ -393,3 +393,28 @@ def test_with_meta_takes_meta_fields_from_b0_and_the_rest_from_the_base():
         1,
         1,
     )  # 마감은 맞히고, 문의처 가짜 알림은 엔진 것 그대로
+
+
+def test_common_events_and_restrict_compare_methods_on_the_same_events(chain):
+    """한 방식이 판단하지 못한 정정은 모든 방식에서 빼고, 판단·호출·점수를 남은 정정으로 다시 센다."""
+    from noticedelta.evaluation import common_events, restrict
+    from noticedelta.evaluation.methods import NO_CASSETTE
+
+    def breaks_on_typo(fields, segments):
+        if any("오기 정정" in s.text for s in segments):
+            raise MissingCassette("k")
+        return fake_extractor(fields, segments)
+
+    methods = {**METHODS, "깨지는 엔진": lambda: Engine(breaks_on_typo, SPEC)}
+    rows = evaluate([chain], methods, LABELS)
+    broken = rows[-1]
+    # e2에서 끊기면 그 사업의 뒤 정정(e3)도 이전 값을 믿을 수 없어 판단하지 않는다
+    assert broken.notes == {"e2": NO_CASSETTE, "e3": NO_CASSETTE}
+    assert common_events(rows) == {"e1"}
+
+    b0, b2, engine, broken = restrict(rows, {"e1"}, LABELS)
+    assert (b2.events, b2.judged, b2.calls) == (1, 1, 1)
+    assert b2.input_chars == b2.costs["e1"]["input_chars"] < rows[1].input_chars
+    assert (b0.score.tp, b0.score.fn, b0.score.fp) == (1, 0, 0)  # e1의 마감만 남는다
+    assert broken.notes == {} and broken.judged == 1
+    assert common_events([]) == set()
