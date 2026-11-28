@@ -33,6 +33,7 @@ class Chain:
     item_id: str
     first_segments: list[Segment]  # 첫 버전. 방식마다 여기서 처음 상태를 만든다
     events: list[EvalEvent]
+    source: str | None = None  # 출처 id(앱이 읽는 키의 조각만 보게, app_view)
 
 
 def split_of(item_id: str) -> str:
@@ -78,7 +79,14 @@ def load_chains(
             continue
         first: list[Segment] = []
         events = []
+        source = None
         for step in replay(session, item_id):
+            if source is None:
+                source = session.scalar(
+                    sa.select(Notice.source_id)
+                    .join(NoticeVersion, NoticeVersion.notice_id == Notice.id)
+                    .where(NoticeVersion.id == step.to_version.notice_version_id)
+                )
             if step.from_version is None:
                 first = step.change.segments
                 continue
@@ -96,7 +104,7 @@ def load_chains(
                 )
             )
         if events:
-            chains.append(Chain(item_id, first, events))
+            chains.append(Chain(item_id, first, events, source))
     return chains
 
 

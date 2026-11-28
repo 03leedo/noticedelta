@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 import httpx
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
-from noticedelta.db.models import Attachment, Notice, NoticeVersion, ParseCache
+from noticedelta.db.models import Attachment, Notice, NoticeVersion, ParseCache, SegmentRow
 from noticedelta.parsing import (
     PARSEABLE_MIMES,
     ParsedDocument,
@@ -191,6 +193,55 @@ def _part_keys(body: str, body_keys: list | None) -> list[tuple[list[str], str]]
         out.append((list(keys), body[pos : pos + n]))
         pos += n
     return out if pos == len(body) else None
+
+
+def backfill_body_keys(
+    session: Session, convert_for: Callable[[str], Callable[[dict], NoticeRecord] | None]
+) -> Counter:
+    """키를 적기 전에 만든 판(body_keys가 없음)에 본문 부분의 키를 채우고, 저장된 본문 조각에도 적는다.
+
+    지금 어댑터로 원본(raw)을 다시 바꿔 본문이 저장된 본문과 글자까지 같을 때만 채운다. 저장된 본문 조각은
+    다시 나눈 조각과 (종류, 글)이 차례대로 모두 같을 때만 키를 적는다(조각 자체는 바꾸지 않는다).
+    """
+    stats: Counter = Counter()
+    rows = session.execute(
+        sa.select(NoticeVersion.id, Notice.source_id, NoticeVersion.body, NoticeVersion.raw)
+        .join(Notice, Notice.id == NoticeVersion.notice_id)
+        .where(NoticeVersion.body_keys.is_(None))
+    ).all()
+    for version_id, source, body, raw in rows:
+        convert = convert_for(source)
+        if convert is None:
+            stats["no_adapter"] += 1
+            continue
+        try:
+            rec = convert(raw or {})
+        except Exception:  # 옛 원본을 지금 어댑터가 못 읽는다: 그 판은 키 없이 둔다
+            stats["unreadable"] += 1
+            continue
+        if rec.body != (body or ""):
+            stats["body_differs"] += 1
+            continue
+        keys = [[list(k), len(text)] for k, text in rec.body_keys]
+        session.get(NoticeVersion, version_id).body_keys = keys
+        fresh = [s for s in body_segments(rec.body, keys) if "keys" in s.locator]
+        stored = [
+            r
+            for r in session.scalars(
+                sa.select(SegmentRow)
+                .where(SegmentRow.notice_version_id == version_id)
+                .order_by(SegmentRow.ord)
+            )
+            if r.locator.get("source") == "body"
+        ]
+        if not fresh or [(r.kind, r.text) for r in stored] != [(s.kind, s.text) for s in fresh]:
+            stats["version_only"] += 1  # 판에는 적었지만 저장된 조각과 맞지 않거나 본문이 없다
+            continue
+        for r, s in zip(stored, fresh, strict=True):
+            r.locator = {**r.locator, "keys": s.locator["keys"]}
+        stats["keyed"] += 1
+    session.flush()
+    return stats
 
 
 def version_segments(session: Session, version: NoticeVersion, store: BlobStore) -> list[Segment]:

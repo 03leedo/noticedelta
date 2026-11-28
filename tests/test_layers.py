@@ -52,6 +52,7 @@ LAYERS: dict[str, list[str]] = {
     ],
     "엔진": [
         "app_registry",  # 앱 정의의 원본(DB): 판 넣기, 켜기
+        "app_view",  # 앱이 보는 조각: 앱이 읽는 키의 본문 조각과 첨부(운영·미리 돌려 보기 공용)
         "app_status",  # 앱 상태 보고: 수집·형식 변화·파싱·붙잡힌 알림·예산
         "backtest",  # 미리 돌려 보기와 판 비교(app-spec 10장)
         "budgets",  # 앱별 LLM 예산과 하루 전체 한도

@@ -22,6 +22,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from noticedelta import app_registry, flight, vault
+from noticedelta.app_view import change_view
 from noticedelta.appspec import AppDefinition, MetaRef
 from noticedelta.blobstore import BlobStore
 from noticedelta.db import repo
@@ -56,7 +57,6 @@ from noticedelta.impact import (
 from noticedelta.ingest import parse_attachments
 from noticedelta.jobs import Deferred, Handler, PermanentError, TransientError, enqueue
 from noticedelta.llm.gateway import BudgetExceeded
-from noticedelta.matching import ChangeSet
 from noticedelta.names import ALERT_LABELS
 from noticedelta.notify import Channel, InboxChannel, deliver, note, prepare
 from noticedelta.parsing import Parser, ParserUnavailable
@@ -422,51 +422,17 @@ def _for_app(app: AppDefinition, event: ChangeEvent) -> bool:
     return app.reads_change(source, c.get("keys"), bool(c.get("attachments")))
 
 
-def _visible(use, seg) -> bool:
-    """앱이 이 조각을 보는가: 본문 조각은 원본 키가 앱이 읽는 키와 겹칠 때(키를 모르면 본다), 첨부 조각은
-    첨부를 읽는 앱만."""
-    src = seg.locator.get("source")
-    if src not in (None, "body"):
-        return use.attachments
-    keys = seg.locator.get("keys")
-    return keys is None or not set(use.read).isdisjoint(keys)
-
-
 def _app_view(session: Session, app: AppDefinition, pv: ItemVersion, step):
-    """이 앱이 보는 판의 조각만 남긴 단계 (app-spec 9장: 조각 단위로 앱이 읽는 것 기준).
-
-    같은 출처의 다른 키를 읽는 앱의 조각이 이 앱의 추출·영향 계산에 섞이지 않게 한다. 모두 보이면 단계를
-    그대로 돌려준다(앱 하나일 때와 같은 입력). lineage는 새 판에 있으면 새 판의 조각으로, 사라진 것은
-    옛 판의 조각으로 본다(옛 판의 조각에는 키가 없을 수 있다).
-    """
+    """이 앱이 보는 조각만 남긴 단계 (app_view.py). 모두 보이면 단계를 그대로 돌려준다."""
     source = session.scalar(
         sa.select(Notice.source_id)
         .join(NoticeVersion, NoticeVersion.notice_id == Notice.id)
         .where(NoticeVersion.id == pv.notice_version_id)
     )
-    use = next((u for u in app.sources if u.id == source), None)
-    change, old = step.change, step.old_segments
-    if use is None or (
-        all(_visible(use, s) for s in change.segments) and all(_visible(use, s) for s in old)
-    ):
+    change, old, unknown = change_view(app, source, step.change, step.old_segments, step.unknown)
+    if change is step.change and old is step.old_segments and unknown == set(step.unknown):
         return step
-    now = {s.lineage_id: _visible(use, s) for s in change.segments}
-    before = {s.lineage_id: _visible(use, s) for s in old}
-
-    def seen(lineage) -> bool:
-        return now[lineage] if lineage in now else before.get(lineage, True)
-
-    def keep(ids):
-        return [i for i in ids if seen(i)]
-
-    view = ChangeSet(
-        [s for s in change.segments if seen(s.lineage_id)],
-        keep(change.added),
-        keep(change.removed),
-        keep(change.modified),
-        keep(change.unchanged),
-    )
-    return replace(step, change=view, old_segments=[s for s in old if seen(s.lineage_id)])
+    return replace(step, change=change, old_segments=old, unknown=unknown)
 
 
 # --- 영향 계산 (설계 7.7) ---

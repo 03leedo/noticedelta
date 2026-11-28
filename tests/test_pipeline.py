@@ -378,6 +378,57 @@ def test_body_keys_are_written_only_when_the_parts_split_the_same_way():
     assert [(s.kind, s.text) for s in segs] == [(s.kind, s.text) for s in plain]  # 조각은 그대로
 
 
+def test_app_view_keeps_lineages_seen_in_either_version_and_drops_unread_attachments():
+    """리뷰(#81): 옛 판에서 보이던 근거가 새 판에서 다른 키로 넘어가도 바뀐 것으로 잡고, 첨부를 읽지
+    않는 앱에게는 읽지 못한 첨부의 lineage를 넘기지 않는다."""
+    from noticedelta.app_view import change_view, first_view
+    from noticedelta.grants import APP
+    from noticedelta.matching import ChangeSet
+    from noticedelta.segments import Segment
+
+    def seg(lineage, keys=None, source="body"):
+        loc = {"source": source, **({"keys": keys} if keys is not None else {})}
+        return Segment("paragraph", lineage, lineage, loc, 0, lineage)
+
+    narrow = [
+        u.model_copy(update={"read": ["reqstBeginEndDe"], "attachments": False})
+        if u.id == "bizinfo"
+        else u
+        for u in APP.sources
+    ]
+    app = APP.model_copy(update={"sources": narrow})
+    old = [seg("L1"), seg("L2", ["reqstBeginEndDe"]), seg("A1", source="att:x")]
+    new = [seg("L1", ["bsnsSumryCn"]), seg("L2", ["reqstBeginEndDe"]), seg("L3", ["trgetNm"])]
+    change = ChangeSet(new, added=["L3"], removed=["A1"], modified=["L1"], unchanged=["L2"])
+    view, kept, unknown = change_view(app, "bizinfo", change, old, {"A1"})
+    assert view.modified == ["L1"]  # 옛 판(키 없음)에서 보였다
+    assert view.added == [] and view.removed == [] and unknown == set()
+    assert [s.lineage_id for s in kept] == ["L1", "L2"]
+    assert [s.lineage_id for s in first_view(app, "bizinfo", new)] == ["L2"]
+    same = change_view(APP, "bizinfo", change, old, {"A1"})  # 지원사업 앱: 그대로
+    assert same[0] is change and same[1] is old and same[2] == {"A1"}
+
+
+def test_backfill_writes_keys_to_old_versions_and_their_segments(env):
+    from noticedelta.ingest import backfill_body_keys
+    from noticedelta.programs import TO_RECORD
+
+    env.collect("2026-11-07", pdf(RULES, DOCS))
+    env.work()
+    with env.factory() as s:
+        for v in s.scalars(sa.select(models.NoticeVersion)):
+            v.body_keys = None  # 키를 적기 전에 만든 판처럼
+        for r in s.scalars(sa.select(models.SegmentRow)):
+            r.locator = {k: v for k, v in r.locator.items() if k != "keys"}
+        s.commit()
+        stats = backfill_body_keys(s, TO_RECORD.get)
+        s.commit()
+        assert stats == {"keyed": 1}
+        body = [r for r in s.scalars(sa.select(models.SegmentRow)) if r.locator["source"] == "body"]
+        assert body and all(r.locator.get("keys") for r in body)
+        assert backfill_body_keys(s, TO_RECORD.get) == {}  # 두 번 돌려도 같다
+
+
 def test_a_fixed_past_clock_still_runs_every_job(env):
     # 작업 큐가 주입한 시계로 등록해야 과거 시각으로 다시 흘려도 작업을 꺼낸다(재생, platform-services 3.7)
     env.clock.t = datetime(2026, 10, 23, 1, tzinfo=UTC)
