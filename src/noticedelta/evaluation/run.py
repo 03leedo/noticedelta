@@ -31,6 +31,8 @@ class Row:
     score_text: Score  # 본문·첨부에서만 보이는 변경만 양성으로
     costs: dict[str, dict[str, int]] = field(default_factory=dict)  # 이벤트마다 _SUMS 값
     notes: dict[str, str] = field(default_factory=dict)  # 판단하지 못한 이벤트의 이유
+    # 사업마다 처음 추출의 미리 세기: (그 사업의 이벤트들, {planned_calls, planned_tokens})
+    start_costs: list[tuple[tuple[str, ...], dict[str, int]]] = field(default_factory=list)
 
 
 def evaluate(
@@ -45,6 +47,7 @@ def evaluate(
         total = dict.fromkeys(_SUMS, 0)
         costs: dict[str, dict[str, int]] = {}
         notes: dict[str, str] = {}
+        start_costs: list[tuple[tuple[str, ...], dict[str, int]]] = []
         for chain in chains:
             method = make()
             method.start(chain.first_segments)
@@ -52,6 +55,15 @@ def evaluate(
             if first is not None:  # 처음 추출은 이벤트 비용이 아니지만 미리 세기에는 든다
                 total["planned_calls"] += first.planned_calls
                 total["planned_tokens"] += first.planned_tokens
+                start_costs.append(
+                    (
+                        tuple(ev.event_id for ev in chain.events),
+                        {
+                            "planned_calls": first.planned_calls,
+                            "planned_tokens": first.planned_tokens,
+                        },
+                    )
+                )
             for ev in chain.events:
                 out = method.step(ev)
                 predictions[ev.event_id] = out.changed
@@ -77,6 +89,7 @@ def evaluate(
                 score_text=score(predictions, labels, visible_in=TEXT_ONLY),
                 costs=costs,
                 notes=notes,
+                start_costs=start_costs,
             )
         )
     return rows
@@ -94,12 +107,16 @@ def restrict(
 ) -> list[Row]:
     """이 이벤트들만 남긴 표. 판단·토큰·점수를 그 이벤트들로 다시 센다(다시 돌리지 않는다).
 
-    처음 추출의 미리 세기는 사업 단위라 넣지 않는다(녹화본으로 채점할 때 쓰는 표다).
+    처음 추출의 미리 세기는 남은 이벤트가 하나라도 있는 사업의 것만 더한다(--plan --common).
     """
     out = []
     for r in rows:
         preds = {e: p for e, p in r.predictions.items() if e in events}
         sums = {k: sum(r.costs.get(e, {}).get(k, 0) for e in preds) for k in _SUMS}
+        for ids, cost in r.start_costs:
+            if any(e in preds for e in ids):
+                for k, v in cost.items():
+                    sums[k] += v
         out.append(
             replace(
                 r,
@@ -111,6 +128,7 @@ def restrict(
                 score_text=score(preds, labels, visible_in=TEXT_ONLY),
                 costs={e: c for e, c in r.costs.items() if e in preds},
                 notes={e: n for e, n in r.notes.items() if e in preds},
+                start_costs=[(ids, c) for ids, c in r.start_costs if any(e in preds for e in ids)],
                 **sums,
             )
         )
@@ -263,4 +281,5 @@ def with_meta(
         score_text=score(preds, labels, visible_in=TEXT_ONLY),
         costs=base.costs,
         notes=base.notes,
+        start_costs=base.start_costs,
     )

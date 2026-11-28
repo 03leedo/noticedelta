@@ -179,7 +179,9 @@ def main() -> None:
         print(f"\n필드별 (라벨: {args.labeler}):\n")
         print(render_by_field(rows, labels))
     if mode is Mode.PLAN:
-        n, t = sum(r.planned_calls for r in rows), sum(r.planned_tokens for r in rows)
+        # 출처 값 줄은 엔진 줄의 호출을 그대로 쓰므로 합계에 두 번 넣지 않는다
+        sent = [r for r in rows if " + 출처 값(" not in r.name]
+        n, t = sum(r.planned_calls for r in sent), sum(r.planned_tokens for r in sent)
         print(f"\n미리 세기 합계: 보낼 호출 {n}개, 입력 토큰 어림 {t:,} (토큰/글자 {ratio:.3f})")
     if budget is not None:
         print(f"\n토큰 예산: {budget.limit:,} 중 {budget.spent:,} 씀")
